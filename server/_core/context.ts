@@ -49,25 +49,6 @@ export async function createContext(
     }
   }
 
-  // Legacy: Dev bypass for OAuth (if still needed during development)
-  if (!user && process.env.DISABLE_AUTH === "true") {
-    console.log("[Context] DISABLE_AUTH=true - auto-authenticated as Dev User");
-    user = {
-      id: 1,
-      username: "dev",
-      password: "",
-      openId: "dev-local-user",
-      name: "Dev User",
-      email: "dev@localhost",
-      loginMethod: "dev",
-      role: "admin",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      lastSignedIn: new Date().toISOString(),
-    };
-    return { req: opts.req, res: opts.res, user };
-  }
-
   // Legacy: Try OAuth if available
   if (!user && ENV.oAuthServerUrl) {
     try {
