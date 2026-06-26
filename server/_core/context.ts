@@ -15,7 +15,10 @@ export async function createContext(
   let user: User | null = null;
 
   // Dev bypass: when OAuth is not configured, use a mock local user
-  const isDevMode = !ENV.oAuthServerUrl && !ENV.isProduction;
+  // Force dev mode if DISABLE_AUTH is set to "true"
+  const forceDevMode = process.env.DISABLE_AUTH === "true";
+  const isDevMode = forceDevMode || (!ENV.oAuthServerUrl && !ENV.isProduction);
+  
   if (isDevMode) {
     user = {
       id: 1,
