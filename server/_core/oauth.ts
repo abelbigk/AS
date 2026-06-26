@@ -30,6 +30,8 @@ export function registerOAuthRoutes(app: Express) {
 
       await db.upsertUser({
         openId: userInfo.openId,
+        username: userInfo.openId, // Use openId as username for OAuth users
+        password: "", // OAuth users don't have passwords
         name: userInfo.name || null,
         email: userInfo.email ?? null,
         loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,

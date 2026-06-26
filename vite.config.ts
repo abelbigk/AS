@@ -167,6 +167,13 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      external: (id) => {
+        // Externalize Capacitor plugins for web builds
+        // They will be loaded dynamically only on native platforms
+        return id.startsWith('@capacitor/');
+      },
+    },
   },
   server: {
     host: true,

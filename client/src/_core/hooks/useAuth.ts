@@ -36,6 +36,8 @@ export function useAuth(options?: UseAuthOptions) {
       }
       throw error;
     } finally {
+      // Clear JWT token
+      localStorage.removeItem("auth_token");
       utils.auth.me.setData(undefined, null);
       await utils.auth.me.invalidate();
     }

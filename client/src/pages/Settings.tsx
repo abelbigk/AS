@@ -2,11 +2,12 @@ import { useEffect, useState, useMemo } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Moon, Sun, Monitor, Loader2 } from "lucide-react";
+import { Moon, Sun, Monitor, Loader2, Lock, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ContentCard from "@/components/ContentCard";
 import CategorizeContentDialog from "@/components/CategorizeContentDialog";
 import type { ContentItem } from "@/types";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 const DARK_IMAGE = "https://images.unsplash.com/photo-1550684376-efcbd6e3f031?w=1600&q=80";
 const LIGHT_IMAGE = "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600&q=80";
@@ -18,13 +19,33 @@ const THEME_OPTIONS = [
 
 export default function Settings() {
   const { theme, setTheme: setThemeContext } = useTheme();
+  const { user, logout } = useAuth();
   const [selectedTheme, setSelectedTheme] = useState<"light" | "dark">(
     (theme as "light" | "dark") || "dark"
   );
   const [contentToCategorize, setContentToCategorize] = useState<ContentItem | null>(null);
+  
+  // Change password state
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const setThemeMutation = trpc.preferences.setTheme.useMutation({
     onSuccess: () => toast.success("Theme updated"),
+  });
+
+  const changePasswordMutation = trpc.auth.changePassword.useMutation({
+    onSuccess: () => {
+      toast.success("Password changed successfully");
+      setShowChangePassword(false);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to change password");
+    },
   });
 
   const { data: uncategorizedContent, isLoading: uncategorizedLoading } = trpc.content.listUncategorized.useQuery();
@@ -37,6 +58,36 @@ export default function Settings() {
     setSelectedTheme(newTheme);
     setThemeContext?.(newTheme);
     setThemeMutation.mutate(newTheme);
+  };
+
+  const handleChangePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (newPassword.length < 6) {
+      toast.error("New password must be at least 6 characters");
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    
+    changePasswordMutation.mutate({
+      currentPassword,
+      newPassword,
+    });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      localStorage.removeItem("auth_token");
+      toast.success("Logged out successfully");
+      window.location.href = "/login";
+    } catch (error) {
+      toast.error("Failed to logout");
+    }
   };
 
   return (
@@ -163,6 +214,138 @@ export default function Settings() {
                 <p className="text-gray-500 dark:text-white/50 text-sm">All your contents are neatly categorized</p>
               </div>
             )}
+          </div>
+
+          {/* Account Section */}
+          <div className="rounded-2xl bg-white dark:bg-white/10 backdrop-blur-sm border border-gray-200 dark:border-white/15 p-6 mt-4">
+            <h2 className="text-xl font-semibold font-playfair text-gray-900 dark:text-white mb-5">Account</h2>
+            
+            {user && (
+              <div className="mb-6 p-4 rounded-xl bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/5">
+                <p className="text-sm text-gray-500 dark:text-white/50 mb-1">Logged in as</p>
+                <p className="font-semibold text-gray-900 dark:text-white">{user.username}</p>
+              </div>
+            )}
+
+            {/* Change Password */}
+            <div className="space-y-3">
+              {!showChangePassword ? (
+                <button
+                  onClick={() => setShowChangePassword(true)}
+                  className="group w-full flex items-center justify-between p-4 rounded-xl border-2 border-gray-200 dark:border-white/10 hover:border-gray-900 dark:hover:border-white transition-all bg-white dark:bg-black/40"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-gray-900 dark:group-hover:bg-white transition-colors">
+                      <Lock className="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-white dark:group-hover:text-black transition-colors" />
+                    </div>
+                    <div className="text-left">
+                      <p className="font-semibold text-gray-900 dark:text-white">Change Password</p>
+                      <p className="text-xs text-gray-500 dark:text-white/50">Update your password</p>
+                    </div>
+                  </div>
+                  <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              ) : (
+                <div className="p-5 rounded-xl border-2 border-gray-900 dark:border-white bg-gray-50 dark:bg-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-gray-900 dark:text-white">Change Password</h3>
+                    <button
+                      onClick={() => {
+                        setShowChangePassword(false);
+                        setCurrentPassword("");
+                        setNewPassword("");
+                        setConfirmPassword("");
+                      }}
+                      className="text-sm text-gray-500 dark:text-white/60 hover:text-gray-900 dark:hover:text-white font-medium"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  
+                  <form onSubmit={handleChangePassword} className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Current Password
+                      </label>
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full px-4 py-2.5 rounded-lg border-2 border-gray-200 dark:border-white/10 bg-white dark:bg-black/40 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/40 focus:outline-none focus:border-gray-900 dark:focus:border-white text-sm"
+                        placeholder="Enter current password"
+                        required
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        New Password
+                      </label>
+                      <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-4 py-2.5 rounded-lg border-2 border-gray-200 dark:border-white/10 bg-white dark:bg-black/40 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/40 focus:outline-none focus:border-gray-900 dark:focus:border-white text-sm"
+                        placeholder="Enter new password"
+                        minLength={6}
+                        required
+                      />
+                      <p className="text-xs text-gray-500 dark:text-white/50 mt-1">
+                        Minimum 6 characters
+                      </p>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Confirm New Password
+                      </label>
+                      <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="w-full px-4 py-2.5 rounded-lg border-2 border-gray-200 dark:border-white/10 bg-white dark:bg-black/40 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/40 focus:outline-none focus:border-gray-900 dark:focus:border-white text-sm"
+                        placeholder="Confirm new password"
+                        minLength={6}
+                        required
+                      />
+                    </div>
+                    
+                    <button
+                      type="submit"
+                      disabled={changePasswordMutation.isPending}
+                      className="w-full py-3 bg-gray-900 dark:bg-white text-white dark:text-black font-semibold rounded-lg hover:bg-black dark:hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                    >
+                      {changePasswordMutation.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Changing Password...</span>
+                        </>
+                      ) : (
+                        <span>Change Password</span>
+                      )}
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* Logout Button */}
+              <button
+                onClick={handleLogout}
+                className="group w-full flex items-center justify-between p-4 rounded-xl border-2 border-gray-900 dark:border-white hover:bg-gray-900 dark:hover:bg-white transition-all bg-white dark:bg-black/40"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-gray-900 dark:bg-white group-hover:bg-white dark:group-hover:bg-black flex items-center justify-center transition-colors">
+                    <LogOut className="w-5 h-5 text-white dark:text-black group-hover:text-black dark:group-hover:text-white transition-colors" />
+                  </div>
+                  <div className="text-left">
+                    <p className="font-semibold text-gray-900 dark:text-white group-hover:text-white dark:group-hover:text-black transition-colors">Logout</p>
+                    <p className="text-xs text-gray-500 dark:text-white/50 group-hover:text-white/70 dark:group-hover:text-black/50 transition-colors">Sign out of your account</p>
+                  </div>
+                </div>
+              </button>
+            </div>
           </div>
 
         </div>

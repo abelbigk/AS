@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Content Organizer</string>
-    <string name="title_activity_main">Content Organizer</string>
+    <string name="app_name">AS</string>
+    <string name="title_activity_main">AS</string>
     <string name="package_name">com.contentorganizer.app</string>
     <string name="custom_url_scheme">com.contentorganizer.app</string>
 </resources>

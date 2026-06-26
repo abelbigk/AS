@@ -11,6 +11,7 @@ import Queued from "./pages/Queued";
 import Done from "./pages/Done";
 import Add from "./pages/Add";
 import Settings from "./pages/Settings";
+import Login from "./pages/Login";
 import Navigation from "./components/Navigation";
 import { useAuth } from "./_core/hooks/useAuth";
 import { useEffect } from "react";
@@ -25,22 +26,25 @@ function ScrollToTop() {
   return null;
 }
 
-const isOAuthConfigured = Boolean(import.meta.env.VITE_OAUTH_PORTAL_URL && import.meta.env.VITE_APP_ID);
-
 import PullToRefresh from "./components/PullToRefresh";
+import { useAndroidBackButton } from "./hooks/useAndroidBackButton";
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
+  const [location] = useLocation();
   const initCategories = trpc.categories.initializePredefined.useMutation();
+  
+  // Handle Android back button
+  useAndroidBackButton();
 
-  // Initialize predefined categories on first load
+  // Initialize predefined categories on first load after auth
   useEffect(() => {
-    if ((isAuthenticated || !isOAuthConfigured) && !initCategories.isPending) {
+    if (isAuthenticated && !initCategories.isPending) {
       initCategories.mutate();
     }
   }, [isAuthenticated]);
 
-  // Still checking auth — don't flash 404
+  // Still checking auth — show loading spinner
   if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black">
@@ -49,9 +53,15 @@ function Router() {
     );
   }
 
-  // If OAuth is configured and user isn't logged in, show 404/login
-  if (isOAuthConfigured && !isAuthenticated) {
-    return <NotFound />;
+  // If not authenticated and not on login page, show login
+  if (!isAuthenticated && location !== "/login") {
+    return <Login />;
+  }
+
+  // If authenticated and on login page, redirect to home
+  if (isAuthenticated && location === "/login") {
+    window.location.href = "/";
+    return null;
   }
 
   return (
@@ -60,6 +70,7 @@ function Router() {
       <div className="flex-1 pb-24 md:pb-0 md:pt-24">
         <PullToRefresh>
           <Switch>
+            <Route path={"/login"} component={Login} />
             <Route path={"/"} component={Home} />
             <Route path={"/category/:id"} component={CategoryDetail} />
             <Route path={"/subcategory/:id"} component={SubcategoryDetail} />
@@ -73,7 +84,7 @@ function Router() {
           </Switch>
         </PullToRefresh>
       </div>
-      <Navigation />
+      {isAuthenticated && <Navigation />}
     </div>
   );
 }

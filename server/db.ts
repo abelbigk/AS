@@ -44,6 +44,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 
   if (existing.length > 0) {
     await db.update(users).set({
+      username: user.username ?? existing[0].username,
+      password: user.password ?? existing[0].password,
       name: user.name ?? existing[0].name,
       email: user.email ?? existing[0].email,
       loginMethod: user.loginMethod ?? existing[0].loginMethod,
@@ -52,6 +54,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   } else {
     await db.insert(users).values({
       openId: user.openId,
+      username: user.username,
+      password: user.password,
       name: user.name ?? null,
       email: user.email ?? null,
       loginMethod: user.loginMethod ?? null,

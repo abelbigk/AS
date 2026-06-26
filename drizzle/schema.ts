@@ -3,10 +3,12 @@ import { sql } from "drizzle-orm";
 
 export const users = sqliteTable("users", {
   id: int("id").primaryKey({ autoIncrement: true }),
-  openId: text("openId").notNull().unique(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(), // hashed with bcrypt
+  openId: text("openId").unique(),
   name: text("name"),
   email: text("email"),
-  loginMethod: text("loginMethod"),
+  loginMethod: text("loginMethod").default("local"),
   role: text("role", { enum: ["user", "admin"] }).default("user").notNull(),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
   updatedAt: text("updatedAt").default(sql`(current_timestamp)`).notNull(),

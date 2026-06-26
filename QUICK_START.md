@@ -1,5 +1,27 @@
 # 🚀 Quick Start Guide - Deploy & Build APK
 
+## ⚠️ IMPORTANT: Authentication Setup First!
+
+Before deploying, you need to set up authentication:
+
+### 1. Run Database Migration
+```bash
+npx tsx server/migrateAuth.ts
+```
+
+### 2. Create Admin User
+```bash
+npx tsx server/createDefaultAdmin.ts
+```
+
+This creates:
+- **Username**: `admin`
+- **Password**: `admin123`
+
+✅ **Change this password immediately after first login!**
+
+---
+
 ## Step 1: Push to GitHub (5 minutes)
 
 ### Option A: Private Repository (Recommended for your code)
@@ -61,18 +83,39 @@ You can deploy to Render without GitHub:
    ```
    NODE_ENV=production
    PORT=3000
-   R2_ACCOUNT_ID=your_value_from_env
-   R2_ACCESS_KEY_ID=your_value_from_env
-   R2_SECRET_ACCESS_KEY=your_value_from_env
-   R2_BUCKET=your_value_from_env
-   R2_PUBLIC_URL=your_value_from_env
+   JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+   TURSO_DATABASE_URL=your_turso_url
+   TURSO_AUTH_TOKEN=your_turso_token
+   R2_ACCOUNT_ID=your_r2_account_id
+   R2_ACCESS_KEY_ID=your_r2_access_key
+   R2_SECRET_ACCESS_KEY=your_r2_secret_key
+   R2_BUCKET=your_bucket_name
+   R2_PUBLIC_URL=your_r2_public_url
    ```
+   
+   ⚠️ **IMPORTANT**: Use a strong, unique `JWT_SECRET` for production!
 
 5. **Deploy**:
    - Click "Create Web Service"
    - Wait 3-5 minutes for build to complete
    - You'll get a URL like: `https://content-organizer-xxxx.onrender.com`
    - **Copy this URL!** You'll need it for the APK
+
+6. **Create Admin User on Production** (IMPORTANT!):
+   
+   After deployment succeeds, you need to create an admin user on production:
+   
+   **Option A: SSH into Render and run**:
+   ```bash
+   node dist/createDefaultAdmin.js
+   ```
+   
+   **Option B: Register from the login page**:
+   - Visit your Render URL
+   - Click "Don't have an account? Register"
+   - First user automatically becomes admin
+   
+   ⚠️ **Change the default password immediately after first login!**
 
 ---
 
@@ -112,6 +155,7 @@ You can deploy to Render without GitHub:
    - Transfer APK to your phone
    - Enable "Install from unknown sources" in Settings
    - Open the APK file and install
+   - **Login with your admin credentials**
 
 ---
 
@@ -119,9 +163,20 @@ You can deploy to Render without GitHub:
 
 Your app is now:
 - ✅ Backend hosted on Render (FREE)
+- ✅ Secure authentication with username/password
+- ✅ JWT tokens with 7-day sessions
 - ✅ APK built and ready (~10MB)
 - ✅ All media stored in Cloudflare R2
 - ✅ Total app size: Well under 50MB!
+
+## Authentication Features:
+
+- ✅ Login page (username/password)
+- ✅ Change password in Settings
+- ✅ Logout button in Settings
+- ✅ 7-day session duration
+- ✅ Secure password hashing
+- ✅ First user becomes admin automatically
 
 ---
 
@@ -161,8 +216,18 @@ Your app is now:
 
 ## Troubleshooting:
 
+**"Please login (10001)" Error?**
+- Clear app data or localStorage
+- Login again
+- Check JWT_SECRET is set on Render
+
+**Can't login?**
+- Verify admin user was created on production
+- Check username/password are correct
+- View Render logs for errors
+
 **Build fails on Render?**
-- Check environment variables are correct
+- Check environment variables are correct (especially JWT_SECRET)
 - View logs in Render dashboard
 
 **APK won't install?**
@@ -173,4 +238,7 @@ Your app is now:
 - Check the URL in `capacitor.config.ts` is correct
 - Make sure Render deployment is live (green status)
 
-Need help? Check the logs in Render dashboard!
+**Token expired after 7 days?**
+- Just login again to get a new token
+
+Need help? Check the logs in Render dashboard or see `AUTHENTICATION.md` for more details!
