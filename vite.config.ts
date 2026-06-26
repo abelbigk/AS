@@ -169,9 +169,9 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       external: (id) => {
-        // Externalize Capacitor plugins for web builds
-        // They will be loaded dynamically only on native platforms
-        return id.startsWith('@capacitor/');
+        // Only externalize @capacitor/app for dynamic imports
+        // @capacitor/core needs to be bundled as it's used directly
+        return id === '@capacitor/app';
       },
     },
   },
