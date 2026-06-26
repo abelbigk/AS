@@ -19,7 +19,14 @@ export async function createContext(
   const forceDevMode = process.env.DISABLE_AUTH === "true";
   const isDevMode = forceDevMode || (!ENV.oAuthServerUrl && !ENV.isProduction);
   
+  console.log("[Context] DISABLE_AUTH:", process.env.DISABLE_AUTH);
+  console.log("[Context] forceDevMode:", forceDevMode);
+  console.log("[Context] isDevMode:", isDevMode);
+  console.log("[Context] oAuthServerUrl:", ENV.oAuthServerUrl);
+  console.log("[Context] isProduction:", ENV.isProduction);
+  
   if (isDevMode) {
+    console.log("[Context] Using dev mode - auto-authenticated as Dev User");
     user = {
       id: 1,
       openId: "dev-local-user",
