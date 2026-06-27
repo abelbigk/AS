@@ -179,6 +179,10 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
     const newOrder = arrayMove(filtered, oldIndex, newIndex);
     
+    // Update UI immediately (optimistic update)
+    const deletedMedia = existingMedia.filter(m => deletedMediaIds.includes(m.id));
+    utils.media.listByContent.setData({ contentItemId: item.id }, [...deletedMedia, ...newOrder]);
+    
     // Store the new order locally - will be saved when user clicks Save
     setReorderedMediaIds(newOrder.map(m => m.id));
   };
