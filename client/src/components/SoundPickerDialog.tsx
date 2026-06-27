@@ -401,7 +401,10 @@ export default function SoundPickerDialog({
         <div onClick={onClose} className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
 
         {/* Dialog */}
-        <div className="relative w-full max-w-md max-h-[88vh] bg-zinc-900 border border-white/10 rounded-3xl overflow-hidden flex flex-col shadow-2xl">
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          className="relative w-full max-w-md max-h-[88vh] bg-zinc-900 border border-white/10 rounded-3xl overflow-hidden flex flex-col shadow-2xl"
+        >
           {/* Header */}
           <div className="p-5 border-b border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2">
