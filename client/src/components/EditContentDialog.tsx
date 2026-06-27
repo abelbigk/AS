@@ -608,7 +608,16 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
               {existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).map((m) => (
                 <div key={m.id} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10">
                   {m.type === "video" ? (
-                    <video src={m.url} className="w-full h-full object-cover" />
+                    <div className="relative w-full h-full">
+                      <video 
+                        src={m.url} 
+                        poster={item.posterImageUrl || undefined}
+                        className="w-full h-full object-cover" 
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <Play className="w-6 h-6 text-white/80" fill="white" />
+                      </div>
+                    </div>
                   ) : (
                     <img src={m.url} className="w-full h-full object-cover" alt="" />
                   )}
@@ -621,7 +630,16 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
               {mediaFiles.map((m, i) => (
                 <div key={`new-${i}`} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10 border border-blue-500/30">
                   {m.type === "video" ? (
-                    <video src={m.preview} className="w-full h-full object-cover" />
+                    <div className="relative w-full h-full">
+                      <video 
+                        src={m.preview} 
+                        className="w-full h-full object-cover"
+                        preload="metadata"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <Play className="w-6 h-6 text-white/80" fill="white" />
+                      </div>
+                    </div>
                   ) : (
                     <img src={m.preview} className="w-full h-full object-cover" alt="" />
                   )}
