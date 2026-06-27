@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Moon, Sun, Monitor, Loader2, Lock, LogOut } from "lucide-react";
+import { Moon, Sun, Monitor, Loader2, Lock, LogOut, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ContentCard from "@/components/ContentCard";
 import CategorizeContentDialog from "@/components/CategorizeContentDialog";
@@ -17,6 +17,39 @@ const THEME_OPTIONS = [
   { value: "dark", label: "Dark Mode", icon: Moon, desc: "Sleek & modern" },
 ] as const;
 
+// Helper function to calculate time remaining from JWT token
+function getTokenTimeRemaining(): string | null {
+  const token = localStorage.getItem("auth_token");
+  if (!token) return null;
+
+  try {
+    // Decode JWT payload (middle part of token)
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const exp = payload.exp; // expiration timestamp in seconds
+    
+    if (!exp) return null;
+    
+    const now = Math.floor(Date.now() / 1000);
+    const remainingSeconds = exp - now;
+    
+    if (remainingSeconds <= 0) return "Expired";
+    
+    const days = Math.floor(remainingSeconds / 86400);
+    const hours = Math.floor((remainingSeconds % 86400) / 3600);
+    
+    if (days > 0) {
+      return `${days}d ${hours}h`;
+    } else if (hours > 0) {
+      return `${hours}h`;
+    } else {
+      const minutes = Math.floor(remainingSeconds / 60);
+      return `${minutes}m`;
+    }
+  } catch {
+    return null;
+  }
+}
+
 export default function Settings() {
   const { theme, setTheme: setThemeContext } = useTheme();
   const { user, logout } = useAuth();
@@ -24,6 +57,15 @@ export default function Settings() {
     (theme as "light" | "dark") || "dark"
   );
   const [contentToCategorize, setContentToCategorize] = useState<ContentItem | null>(null);
+  const [sessionTimeRemaining, setSessionTimeRemaining] = useState<string | null>(null);
+  
+  // Update session time every minute
+  useEffect(() => {
+    const updateTime = () => setSessionTimeRemaining(getTokenTimeRemaining());
+    updateTime();
+    const interval = setInterval(updateTime, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
   
   // Change password state
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -345,6 +387,14 @@ export default function Settings() {
                   </div>
                 </div>
               </button>
+
+              {/* Session Time Remaining */}
+              {sessionTimeRemaining && (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-500 dark:text-white/40">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Session expires in {sessionTimeRemaining}</span>
+                </div>
+              )}
             </div>
           </div>
 
