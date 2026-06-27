@@ -22,6 +22,7 @@ interface SoundPickerDialogProps {
   onSelect: (sound: Sound | null) => void;
   currentSoundId?: number | null;
   contentId?: number | null;
+  zIndex?: number;
 }
 
 // ─── Audio Preview with Timeline ─────────────────────────────────────────────
@@ -263,6 +264,7 @@ export default function SoundPickerDialog({
   onSelect,
   currentSoundId,
   contentId,
+  zIndex = 10010,
 }: SoundPickerDialogProps) {
   const [activeTab, setActiveTab] = useState<"existing" | "upload">("existing");
   const [searchQuery, setSearchQuery] = useState("");
@@ -394,7 +396,7 @@ export default function SoundPickerDialog({
 
   return (
     <>
-      <div className="fixed inset-0 z-[10010] flex items-center justify-center p-4">
+      <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex }}>
         {/* Backdrop */}
         <div onClick={onClose} className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
 

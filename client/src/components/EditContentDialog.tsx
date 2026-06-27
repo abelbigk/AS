@@ -799,6 +799,8 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
       onClose={() => setIsSoundPickerOpen(false)}
       onSelect={(sound) => setSelectedSound(sound)}
       currentSoundId={selectedSound?.id}
+      contentId={item.id}
+      zIndex={(z ?? 50) + 100}
     />
     </>
   );
