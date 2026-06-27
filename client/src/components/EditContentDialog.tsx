@@ -11,8 +11,6 @@ import { Loader2, X, Film, ImagePlus, AlertTriangle, Music, Volume2, VolumeX, Pl
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { uploadFile, uploadMultipleFiles, deleteUploadedKey } from "@/lib/upload";
-import type { Sound } from "@/types";
-import SoundPickerDialog from "./SoundPickerDialog";
 import ImageInput, { type ImageResult } from "./ImageInput";
 import UploadProgress from "./UploadProgress";
 import { Badge } from "@/components/ui/badge";
@@ -37,8 +35,6 @@ interface EditContentDialogProps {
     posterCropData?: string | null;
     categoryIds: number[];
     subcategoryIds: number[];
-    soundId?: number | null;
-    sound?: Sound | null;
   };
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,45 +58,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   const [dialogPosition, setDialogPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-
-  // Sound States
-  const [selectedSound, setSelectedSound] = useState<Sound | null>(item.sound || null);
-  const [isSoundPickerOpen, setIsSoundPickerOpen] = useState(false);
-  const [isPlayingEditPreview, setIsPlayingEditPreview] = useState(false);
-  const editPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  const toggleEditPreview = () => {
-    if (!selectedSound) return;
-    if (isPlayingEditPreview) {
-      if (editPreviewAudioRef.current) {
-        editPreviewAudioRef.current.pause();
-        editPreviewAudioRef.current.src = "";
-        editPreviewAudioRef.current = null;
-      }
-      setIsPlayingEditPreview(false);
-    } else {
-      const audio = new Audio(selectedSound.url);
-      audio.play().catch(err => {
-        console.error(err);
-        toast.error("Could not play sound preview");
-      });
-      audio.addEventListener("ended", () => {
-        setIsPlayingEditPreview(false);
-      });
-      editPreviewAudioRef.current = audio;
-      setIsPlayingEditPreview(true);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (editPreviewAudioRef.current) {
-        editPreviewAudioRef.current.pause();
-        editPreviewAudioRef.current.src = "";
-      }
-    };
-  }, []);
-  
 
   // Track mid-save uploads for rollback on cancel
   const rollbackRef = useRef<{ coverKey: string | null; mediaIds: number[] }>({ coverKey: null, mediaIds: [] });
@@ -356,7 +313,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
         posterImageKey: removePoster ? undefined : key,
         posterCropData: removePoster ? undefined : cropData,
         removePoster,
-        soundId: selectedSound ? selectedSound.id : null,
       });
       contentUpdated = true;
 
@@ -550,58 +506,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
             />
           </div>
 
-          {/* Sound control option */}
-          {((existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).length ?? 0) > 0 || mediaFiles.length > 0) && (
-            <div className="space-y-2">
-              <Label className="text-[var(--glass-muted)] block">Background Sound</Label>
-              <div className="p-3.5 rounded-2xl border border-[var(--glass-border)] bg-[var(--foreground)]/3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Music className="w-4 h-4 text-blue-500 shrink-0" />
-                  {selectedSound ? (
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-[var(--foreground)] truncate leading-tight">
-                        {selectedSound.title}
-                      </p>
-                      <p className="text-[10px] text-[var(--foreground)]/40 truncate mt-0.5">
-                        {selectedSound.name}
-                      </p>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-[var(--foreground)]/50">No background sound</span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {selectedSound && (
-                    <button
-                      type="button"
-                      onClick={toggleEditPreview}
-                      className="p-1.5 rounded-xl bg-[var(--foreground)]/5 hover:bg-[var(--foreground)]/10 text-[var(--foreground)]/60 hover:text-[var(--foreground)] transition-all cursor-pointer flex items-center justify-center"
-                      title={isPlayingEditPreview ? "Pause preview" : "Listen preview"}
-                    >
-                      {isPlayingEditPreview ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
-                    </button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      if (isPlayingEditPreview && editPreviewAudioRef.current) {
-                        editPreviewAudioRef.current.pause();
-                        setIsPlayingEditPreview(false);
-                      }
-                      setIsSoundPickerOpen(true);
-                    }}
-                    className="h-8 px-3 text-[10px] font-semibold uppercase tracking-wider rounded-xl bg-[var(--foreground)]/5 hover:bg-[var(--foreground)]/10 text-[var(--foreground)]/80 hover:text-[var(--foreground)] border-[var(--glass-border)] cursor-pointer"
-                  >
-                    {selectedSound ? "Change" : "Add Sound"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="space-y-2">
             <Label className="text-[var(--glass-muted)] block">Photos &amp; Videos</Label>
             <div className="grid grid-cols-3 gap-2">
@@ -793,15 +697,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
         </AlertDialogPrimitive.Content>
       </AlertDialogPrimitive.Portal>
     </AlertDialogPrimitive.Root>
-
-    <SoundPickerDialog
-      isOpen={isSoundPickerOpen}
-      onClose={() => setIsSoundPickerOpen(false)}
-      onSelect={(sound) => setSelectedSound(sound)}
-      currentSoundId={selectedSound?.id}
-      contentId={item.id}
-      zIndex={(z ?? 50) + 100}
-    />
     </>
   );
 }
