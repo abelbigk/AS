@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, X, Film, ImagePlus, AlertTriangle, Music, Volume2, VolumeX, Play, Pause } from "lucide-react";
+import { Loader2, X, Film, ImagePlus, AlertTriangle, Music, Volume2, VolumeX, Play, Pause, GripVertical } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { uploadFile, uploadMultipleFiles, deleteUploadedKey } from "@/lib/upload";
@@ -24,6 +24,21 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface EditContentDialogProps {
   item: {
@@ -39,6 +54,79 @@ interface EditContentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   zIndex?: number;
+}
+
+// Sortable media item component
+interface SortableMediaItemProps {
+  id: string;
+  media: { type: "image" | "video"; url?: string; preview?: string; isNew?: boolean };
+  onDelete: () => void;
+}
+
+function SortableMediaItem({ id, media, onDelete }: SortableMediaItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const src = media.url || media.preview || "";
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10",
+        media.isNew && "border border-blue-500/30",
+        isDragging && "z-50 cursor-grabbing"
+      )}
+    >
+      {/* Drag handle */}
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="absolute top-1 left-1 bg-black/60 rounded-full p-1 text-white hover:bg-black/80 transition-colors cursor-grab active:cursor-grabbing z-10"
+      >
+        <GripVertical className="w-3 h-3" />
+      </button>
+
+      {/* Media content */}
+      {media.type === "video" ? (
+        <div className="relative w-full h-full">
+          {media.url ? (
+            <video src={src} preload="metadata" className="w-full h-full object-cover" />
+          ) : (
+            <img src={src} className="w-full h-full object-cover" alt="" />
+          )}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <Play className="w-6 h-6 text-white/80" fill="white" />
+          </div>
+        </div>
+      ) : (
+        <img src={src} className="w-full h-full object-cover" alt="" />
+      )}
+
+      {/* Delete button */}
+      <button
+        type="button"
+        onClick={onDelete}
+        className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors z-10"
+      >
+        <X className="w-3 h-3" />
+      </button>
+    </div>
+  );
 }
 
 export default function EditContentDialog({ item, open, onOpenChange, zIndex }: EditContentDialogProps) {
@@ -153,6 +241,62 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
   const [mediaFiles, setMediaFiles] = useState<{ file: File; preview: string; type: "image" | "video" }[]>([]);
   const [deletedMediaIds, setDeletedMediaIds] = useState<number[]>([]);
+  const [orderedMediaItems, setOrderedMediaItems] = useState<Array<{
+    id: string;
+    mediaId?: number;
+    fileIndex?: number;
+    type: "image" | "video";
+    url?: string;
+    preview?: string;
+    isNew: boolean;
+  }>>([]);
+
+  // Initialize ordered media items when dialog opens or existing media changes
+  useEffect(() => {
+    if (open && existingMedia) {
+      const existing = existingMedia
+        .filter(m => !deletedMediaIds.includes(m.id))
+        .map(m => ({
+          id: `existing-${m.id}`,
+          mediaId: m.id,
+          type: m.type,
+          url: m.url,
+          isNew: false,
+        }));
+      
+      const newItems = mediaFiles.map((m, i) => ({
+        id: `new-${i}`,
+        fileIndex: i,
+        type: m.type,
+        preview: m.preview,
+        isNew: true,
+      }));
+
+      setOrderedMediaItems([...existing, ...newItems]);
+    }
+  }, [open, existingMedia, mediaFiles.length, deletedMediaIds]);
+
+  // Set up sensors for drag and drop with long press activation
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        delay: 250, // 250ms long press
+        tolerance: 5,
+      },
+    })
+  );
+
+  const handleMediaDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setOrderedMediaItems((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -223,6 +367,7 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   const utils = trpc.useUtils();
   const addMedia = trpc.media.add.useMutation();
   const deleteMedia = trpc.media.delete.useMutation();
+  const reorderMedia = trpc.media.reorder.useMutation();
 
   const updateContent = trpc.content.update.useMutation({
     onSuccess: () => {
@@ -321,17 +466,39 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
         await deleteMedia.mutateAsync({ mediaId: id });
       }
 
-      // Save uploaded media records
+      // Reorder existing media based on orderedMediaItems
+      const orderedIds: number[] = [];
+      
+      for (const orderedItem of orderedMediaItems) {
+        if (orderedItem.mediaId && !deletedMediaIds.includes(orderedItem.mediaId)) {
+          orderedIds.push(orderedItem.mediaId);
+        }
+      }
+      
+      if (orderedIds.length > 0) {
+        await reorderMedia.mutateAsync({
+          contentItemId: item.id,
+          mediaItemIds: orderedIds,
+        });
+      }
+
+      // Save uploaded media records with proper order
       if (mediaUploadResults.length > 0) {
-        const maxOrder = existingMedia?.length ? Math.max(...existingMedia.map(m => m.order)) : 0;
         setUploadStage('processing');
+        let orderValue = orderedIds.length; // Start after existing media
+        
         for (let i = 0; i < mediaUploadResults.length; i++) {
+          // Find the position in orderedMediaItems for this new file
+          const orderedIndex = orderedMediaItems.findIndex(
+            item => item.isNew && item.fileIndex === i
+          );
+          
           const saved = await addMedia.mutateAsync({
             contentItemId: item.id,
             url: mediaUploadResults[i].url,
             key: mediaUploadResults[i].key,
             type: mediaFiles[i].type,
-            order: maxOrder + 1 + i,
+            order: orderValue++,
           });
           // track the saved media item IDs for potential rollback
           if (Array.isArray(saved)) {
@@ -508,54 +675,36 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
           <div className="space-y-2">
             <Label className="text-[var(--glass-muted)] block">Photos &amp; Videos</Label>
-            <div className="grid grid-cols-3 gap-2">
-              {existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).map((m) => (
-                <div key={m.id} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10">
-                  {m.type === "video" ? (
-                    <div className="relative w-full h-full">
-                      <video 
-                        src={m.url}
-                        preload="metadata"
-                        className="w-full h-full object-cover" 
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleMediaDragEnd}
+            >
+              <SortableContext items={orderedMediaItems.map(item => item.id)} strategy={rectSortingStrategy}>
+                <div className="grid grid-cols-3 gap-2">
+                  {orderedMediaItems.map((item) => {
+                    const media = item.isNew
+                      ? { type: item.type, preview: item.preview, isNew: true }
+                      : { type: item.type, url: item.url, isNew: false };
+
+                    return (
+                      <SortableMediaItem
+                        key={item.id}
+                        id={item.id}
+                        media={media}
+                        onDelete={() => {
+                          if (item.mediaId) {
+                            setDeletedMediaIds(prev => [...prev, item.mediaId!]);
+                          } else if (item.fileIndex !== undefined) {
+                            setMediaFiles(prev => prev.filter((_, idx) => idx !== item.fileIndex));
+                          }
+                        }}
                       />
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <Play className="w-6 h-6 text-white/80" fill="white" />
-                      </div>
-                    </div>
-                  ) : (
-                    <img src={m.url} className="w-full h-full object-cover" alt="" />
-                  )}
-                  <button type="button" onClick={() => setDeletedMediaIds(prev => [...prev, m.id])}
-                    className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              {mediaFiles.map((m, i) => (
-                <div key={`new-${i}`} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10 border border-blue-500/30">
-                  {m.type === "video" ? (
-                    <div className="relative w-full h-full">
-                      <img 
-                        src={m.preview} 
-                        className="w-full h-full object-cover" 
-                        alt=""
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <Play className="w-6 h-6 text-white/80" fill="white" />
-                      </div>
-                    </div>
-                  ) : (
-                    <img src={m.preview} className="w-full h-full object-cover" alt="" />
-                  )}
-                  <button type="button" onClick={() => setMediaFiles(prev => prev.filter((_, idx) => idx !== i))}
-                    className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              <label className="flex flex-col items-center justify-center aspect-square rounded-lg border-2 border-dashed border-[var(--glass-border)] cursor-pointer hover:border-[var(--glass-muted)] transition-colors">
-                <ImagePlus className="w-5 h-5 text-[var(--glass-muted)]" />
-                <input type="file" accept="image/*,video/*" multiple onChange={async (e) => {
+                    );
+                  })}
+                  <label className="flex flex-col items-center justify-center aspect-square rounded-lg border-2 border-dashed border-[var(--glass-border)] cursor-pointer hover:border-[var(--glass-muted)] transition-colors">
+                    <ImagePlus className="w-5 h-5 text-[var(--glass-muted)]" />
+                    <input type="file" accept="image/*,video/*" multiple onChange={async (e) => {
                   const files = Array.from(e.target.files ?? []);
                   
                   // Generate thumbnails for videos, use blob URL for images
@@ -620,7 +769,9 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
                   e.target.value = "";
                 }} className="hidden" />
               </label>
-            </div>
+                </div>
+              </SortableContext>
+            </DndContext>
           </div>
           {isSaving && uploadTotalBytes > 0 && (
             <UploadProgress
