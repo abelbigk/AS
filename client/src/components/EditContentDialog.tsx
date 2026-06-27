@@ -156,6 +156,7 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
   const [mediaFiles, setMediaFiles] = useState<{ file: File; preview: string; type: "image" | "video" }[]>([]);
   const [deletedMediaIds, setDeletedMediaIds] = useState<number[]>([]);
+  const [reorderedMediaIds, setReorderedMediaIds] = useState<number[]>([]);
 
   // Drag sensors
   const sensors = useSensors(
@@ -178,20 +179,15 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
     const newOrder = arrayMove(filtered, oldIndex, newIndex);
     
-    // Optimistically update the UI
-    utils.media.listByContent.setData({ contentItemId: item.id }, [...existingMedia.filter(m => deletedMediaIds.includes(m.id)), ...newOrder]);
-    
-    // Send to server
-    reorderMediaMutation.mutate({
-      contentItemId: item.id,
-      mediaItemIds: newOrder.map(m => m.id),
-    });
+    // Store the new order locally - will be saved when user clicks Save
+    setReorderedMediaIds(newOrder.map(m => m.id));
   };
 
   useEffect(() => {
     if (open) {
       setMediaFiles([]);
       setDeletedMediaIds([]);
+      setReorderedMediaIds([]);
     }
   }, [open]);
 
@@ -387,6 +383,14 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
         }
       } else {
         setUploadStage('processing');
+      }
+
+      // Save media reorder if it was changed
+      if (reorderedMediaIds.length > 0) {
+        await reorderMediaMutation.mutateAsync({
+          contentItemId: item.id,
+          mediaItemIds: reorderedMediaIds,
+        });
       }
 
       utils.media.listByContent.invalidate({ contentItemId: item.id });
