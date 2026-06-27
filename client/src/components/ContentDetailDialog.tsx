@@ -329,6 +329,7 @@ export default function ContentDetailDialog({
                 media={media}
                 sound={activeSound !== undefined ? activeSound : displayItem?.sound}
                 onSoundChangeRequest={() => setSoundPickerOpen(true)}
+                posterImageUrl={displayItem.posterImageUrl || undefined}
               />
             ) : (
               <div
@@ -426,7 +427,7 @@ export default function ContentDetailDialog({
 
 interface MediaItem { id: number; url: string; type: "image" | "video"; }
 
-function MediaSlider({ media, sound, onSoundChangeRequest }: { media: MediaItem[]; sound: Sound | null | undefined; onSoundChangeRequest?: () => void }) {
+function MediaSlider({ media, sound, onSoundChangeRequest, posterImageUrl }: { media: MediaItem[]; sound: Sound | null | undefined; onSoundChangeRequest?: () => void; posterImageUrl?: string }) {
   const [index, setIndex] = useState(0);
   const [dragX, setDragX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -641,7 +642,7 @@ function MediaSlider({ media, sound, onSoundChangeRequest }: { media: MediaItem[
                 {m.type === "video" ? (
                   <TikTokVideoPlayer 
                     src={m.url}
-                    poster={displayItem.posterImageUrl || undefined}
+                    poster={posterImageUrl}
                     onLoadedData={() => markLoaded(m.id)}
                     className="absolute inset-0"
                     isActive={isCurrentSlide}
