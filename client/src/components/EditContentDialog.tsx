@@ -165,7 +165,7 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   );
 
   // Track media order locally
-  const [orderedExistingMedia, setOrderedExistingMedia] = useState<typeof existingMedia>([]);
+  const [orderedExistingMedia, setOrderedExistingMedia] = useState<Array<{ id: number; url: string; key: string; type: "image" | "video"; order: number }>>([]);
 
   useEffect(() => {
     if (existingMedia) {
@@ -252,19 +252,16 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
       const oldIndex = items.findIndex(item => `media-${item.id}` === active.id);
       const newIndex = items.findIndex(item => `media-${item.id}` === over.id);
       if (oldIndex === -1 || newIndex === -1) return items;
-      return arrayMove(items, oldIndex, newIndex);
-    });
-
-    // Debounce the API call
-    const reorderedIds = arrayMove(
-      orderedExistingMedia,
-      orderedExistingMedia.findIndex(item => `media-${item.id}` === active.id),
-      orderedExistingMedia.findIndex(item => `media-${item.id}` === over.id)
-    ).map(m => m.id);
-
-    reorderMedia.mutate({
-      contentItemId: item.id,
-      mediaItemIds: reorderedIds,
+      
+      const reordered = arrayMove(items, oldIndex, newIndex);
+      
+      // Trigger API call with reordered IDs
+      reorderMedia.mutate({
+        contentItemId: item.id,
+        mediaItemIds: reordered.map(m => m.id),
+      });
+      
+      return reordered;
     });
   };
 
