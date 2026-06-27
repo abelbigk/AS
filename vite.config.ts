@@ -167,7 +167,15 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    // Force fresh build with timestamp to bust all caches
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
+      output: {
+        // Add timestamp to force new chunk names
+        entryFileNames: `assets/[name]-[hash]-${Date.now()}.js`,
+        chunkFileNames: `assets/[name]-[hash]-${Date.now()}.js`,
+        assetFileNames: `assets/[name]-[hash].[ext]`,
+      },
       external: (id) => {
         // Only externalize @capacitor/app for dynamic imports
         // @capacitor/core needs to be bundled as it's used directly

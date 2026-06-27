@@ -267,3 +267,8 @@ The existing tests are light smoke tests around router procedure availability an
 - Add stronger validation around duplicate category/subcategory links
 - Keep docs and UI copy aligned around storage terminology: the current implementation uses Cloudflare R2 through S3-compatible APIs
 - Review text encoding artifacts in a few copied strings before release
+
+
+
+
+$env:NODE_ENV="development"; npx tsx watch server/_core/index.ts
