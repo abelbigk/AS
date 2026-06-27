@@ -466,39 +466,17 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
         await deleteMedia.mutateAsync({ mediaId: id });
       }
 
-      // Reorder existing media based on orderedMediaItems
-      const orderedIds: number[] = [];
-      
-      for (const orderedItem of orderedMediaItems) {
-        if (orderedItem.mediaId && !deletedMediaIds.includes(orderedItem.mediaId)) {
-          orderedIds.push(orderedItem.mediaId);
-        }
-      }
-      
-      if (orderedIds.length > 0) {
-        await reorderMedia.mutateAsync({
-          contentItemId: item.id,
-          mediaItemIds: orderedIds,
-        });
-      }
-
       // Save uploaded media records with proper order
       if (mediaUploadResults.length > 0) {
         setUploadStage('processing');
-        let orderValue = orderedIds.length; // Start after existing media
         
         for (let i = 0; i < mediaUploadResults.length; i++) {
-          // Find the position in orderedMediaItems for this new file
-          const orderedIndex = orderedMediaItems.findIndex(
-            item => item.isNew && item.fileIndex === i
-          );
-          
           const saved = await addMedia.mutateAsync({
             contentItemId: item.id,
             url: mediaUploadResults[i].url,
             key: mediaUploadResults[i].key,
             type: mediaFiles[i].type,
-            order: orderValue++,
+            order: i, // Temporary order, will be updated below
           });
           // track the saved media item IDs for potential rollback
           if (Array.isArray(saved)) {
@@ -510,8 +488,30 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
             }
           }
         }
-      } else {
-        setUploadStage('processing');
+      }
+      
+      setUploadStage('processing');
+
+      // Reorder ALL media (existing + new) based on orderedMediaItems
+      const allOrderedIds: number[] = [];
+      
+      for (const orderedItem of orderedMediaItems) {
+        if (orderedItem.mediaId && !deletedMediaIds.includes(orderedItem.mediaId)) {
+          allOrderedIds.push(orderedItem.mediaId);
+        } else if (orderedItem.isNew && uploadedMediaIds.length > 0) {
+          // Map new items to their uploaded IDs
+          const uploadIndex = orderedItem.fileIndex ?? 0;
+          if (uploadedMediaIds[uploadIndex]) {
+            allOrderedIds.push(uploadedMediaIds[uploadIndex]);
+          }
+        }
+      }
+      
+      if (allOrderedIds.length > 0) {
+        await reorderMedia.mutateAsync({
+          contentItemId: item.id,
+          mediaItemIds: allOrderedIds,
+        });
       }
 
       utils.media.listByContent.invalidate({ contentItemId: item.id });
