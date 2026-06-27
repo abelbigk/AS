@@ -24,9 +24,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { DndContext, closestCenter, KeyboardSensor, MouseSensor, TouchSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
-import { SortableItem } from '@/components/SortableItem';
 
 interface EditContentDialogProps {
   item: {
@@ -157,22 +154,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   const [mediaFiles, setMediaFiles] = useState<{ file: File; preview: string; type: "image" | "video" }[]>([]);
   const [deletedMediaIds, setDeletedMediaIds] = useState<number[]>([]);
 
-  // Drag-and-drop sensors
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-
-  // Track media order locally
-  const [orderedExistingMedia, setOrderedExistingMedia] = useState<Array<{ id: number; url: string; key: string; type: "image" | "video"; order: number }>>([]);
-
-  useEffect(() => {
-    if (existingMedia) {
-      setOrderedExistingMedia([...existingMedia].sort((a, b) => a.order - b.order));
-    }
-  }, [existingMedia]);
-
   useEffect(() => {
     if (open) {
       setMediaFiles([]);
@@ -242,28 +223,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   const utils = trpc.useUtils();
   const addMedia = trpc.media.add.useMutation();
   const deleteMedia = trpc.media.delete.useMutation();
-  const reorderMedia = trpc.media.reorder.useMutation();
-
-  const handleMediaDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    setOrderedExistingMedia((items) => {
-      const oldIndex = items.findIndex(item => `media-${item.id}` === active.id);
-      const newIndex = items.findIndex(item => `media-${item.id}` === over.id);
-      if (oldIndex === -1 || newIndex === -1) return items;
-      
-      const reordered = arrayMove(items, oldIndex, newIndex);
-      
-      // Trigger API call with reordered IDs
-      reorderMedia.mutate({
-        contentItemId: item.id,
-        mediaItemIds: reordered.map(m => m.id),
-      });
-      
-      return reordered;
-    });
-  };
 
   const updateContent = trpc.content.update.useMutation({
     onSuccess: () => {
@@ -549,12 +508,9 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
           <div className="space-y-2">
             <Label className="text-[var(--glass-muted)] block">Photos &amp; Videos</Label>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMediaDragEnd}>
-              <SortableContext items={orderedExistingMedia.filter(m => !deletedMediaIds.includes(m.id)).map(m => `media-${m.id}`)} strategy={rectSortingStrategy}>
-                <div className="grid grid-cols-3 gap-2">
-                  {orderedExistingMedia.filter(m => !deletedMediaIds.includes(m.id)).map((m) => (
-                    <SortableItem key={m.id} id={`media-${m.id}`}>
-                      <div className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10">
+            <div className="grid grid-cols-3 gap-2">
+              {existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).map((m) => (
+                <div key={m.id} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10">
                         {m.type === "video" ? (
                           <div className="relative w-full h-full">
                             <video 
@@ -574,7 +530,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
                           <X className="w-3 h-3" />
                         </button>
                       </div>
-                    </SortableItem>
                   ))}
               {mediaFiles.map((m, i) => (
                 <div key={`new-${i}`} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10 border border-blue-500/30">
@@ -666,8 +621,6 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
                 }} className="hidden" />
               </label>
             </div>
-              </SortableContext>
-            </DndContext>
           </div>
           {isSaving && uploadTotalBytes > 0 && (
             <UploadProgress
