@@ -24,20 +24,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  useSortable,
-  rectSortingStrategy,
-} from "@dnd-kit/sortable";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { arrayMove, SortableContext, useSortable, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 interface EditContentDialogProps {
