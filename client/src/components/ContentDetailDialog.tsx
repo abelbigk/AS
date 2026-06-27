@@ -1,3 +1,5 @@
+// ContentDetailDialog - Media viewer with video poster support
+// Last updated: 2026-06-27
 import { trpc } from "@/lib/trpc";
 import {
   Loader2, Calendar, Clock, CheckCircle2,
