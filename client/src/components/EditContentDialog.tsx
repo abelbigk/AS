@@ -631,10 +631,10 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
                 <div key={`new-${i}`} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10 border border-blue-500/30">
                   {m.type === "video" ? (
                     <div className="relative w-full h-full">
-                      <video 
+                      <img 
                         src={m.preview} 
-                        className="w-full h-full object-cover"
-                        preload="metadata"
+                        className="w-full h-full object-cover" 
+                        alt=""
                       />
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <Play className="w-6 h-6 text-white/80" fill="white" />
@@ -651,13 +651,67 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
               ))}
               <label className="flex flex-col items-center justify-center aspect-square rounded-lg border-2 border-dashed border-[var(--glass-border)] cursor-pointer hover:border-[var(--glass-muted)] transition-colors">
                 <ImagePlus className="w-5 h-5 text-[var(--glass-muted)]" />
-                <input type="file" accept="image/*,video/*" multiple onChange={(e) => {
+                <input type="file" accept="image/*,video/*" multiple onChange={async (e) => {
                   const files = Array.from(e.target.files ?? []);
-                  const newMedia = files.map((file) => ({
-                    file,
-                    preview: URL.createObjectURL(file),
-                    type: file.type.startsWith("video/") ? "video" as const : "image" as const,
-                  }));
+                  
+                  // Generate thumbnails for videos, use blob URL for images
+                  const newMediaPromises = files.map(async (file) => {
+                    const isVideo = file.type.startsWith("video/");
+                    let preview: string;
+                    
+                    if (isVideo) {
+                      // Generate thumbnail from video
+                      preview = await new Promise<string>((resolve) => {
+                        const video = document.createElement('video');
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        video.preload = 'metadata';
+                        video.muted = true;
+                        video.playsInline = true;
+                        
+                        video.onloadeddata = () => {
+                          // Seek to 1 second or 10% of video duration, whichever is less
+                          const seekTime = Math.min(1, video.duration * 0.1);
+                          video.currentTime = seekTime;
+                        };
+                        
+                        video.onseeked = () => {
+                          canvas.width = video.videoWidth;
+                          canvas.height = video.videoHeight;
+                          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                          
+                          canvas.toBlob((blob) => {
+                            if (blob) {
+                              resolve(URL.createObjectURL(blob));
+                            } else {
+                              // Fallback to video blob URL if thumbnail generation fails
+                              resolve(URL.createObjectURL(file));
+                            }
+                            // Clean up
+                            URL.revokeObjectURL(video.src);
+                          }, 'image/jpeg', 0.8);
+                        };
+                        
+                        video.onerror = () => {
+                          // Fallback to video blob URL
+                          resolve(URL.createObjectURL(file));
+                        };
+                        
+                        video.src = URL.createObjectURL(file);
+                      });
+                    } else {
+                      preview = URL.createObjectURL(file);
+                    }
+                    
+                    return {
+                      file,
+                      preview,
+                      type: isVideo ? "video" as const : "image" as const,
+                    };
+                  });
+                  
+                  const newMedia = await Promise.all(newMediaPromises);
                   setMediaFiles((prev) => [...prev, ...newMedia]);
                   e.target.value = "";
                 }} className="hidden" />
