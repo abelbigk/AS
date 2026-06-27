@@ -454,7 +454,8 @@ export async function upsertUserPreferences(userId: number, theme: "dark" | "lig
 export async function getMediaByContentItem(contentItemId: number) {
   const db = getDb();
   return await db.select().from(mediaItems)
-    .where(eq(mediaItems.contentItemId, contentItemId));
+    .where(eq(mediaItems.contentItemId, contentItemId))
+    .orderBy(mediaItems.order);
 }
 
 export async function addMediaItem(
