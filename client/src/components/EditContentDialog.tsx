@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, X, Film, ImagePlus, AlertTriangle, Music, Volume2, VolumeX, Play, Pause } from "lucide-react";
+import { Loader2, X, Film, ImagePlus, AlertTriangle, Music, Volume2, VolumeX, Play, Pause, ChevronUp, ChevronDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { uploadFile, uploadMultipleFiles, deleteUploadedKey } from "@/lib/upload";
@@ -16,7 +16,7 @@ import UploadProgress from "./UploadProgress";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown as ChevronDownIcon } from "lucide-react";
 import { useDialogBackButton } from "@/hooks/useDialogBackButton";
 import {
   Popover,
@@ -24,6 +24,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { DndContext, closestCenter, KeyboardSensor, MouseSensor, TouchSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
+import { SortableItem } from '@/components/SortableItem';
 
 interface EditContentDialogProps {
   item: {
@@ -154,6 +157,37 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   const [mediaFiles, setMediaFiles] = useState<{ file: File; preview: string; type: "image" | "video" }[]>([]);
   const [deletedMediaIds, setDeletedMediaIds] = useState<number[]>([]);
 
+  // Drag sensors
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleMediaDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !existingMedia) return;
+
+    const filtered = existingMedia.filter(m => !deletedMediaIds.includes(m.id));
+    const activeId = typeof active.id === 'string' ? parseInt(active.id.replace('media-', '')) : active.id;
+    const overId = typeof over.id === 'string' ? parseInt(over.id.replace('media-', '')) : over.id;
+
+    const oldIndex = filtered.findIndex(m => m.id === activeId);
+    const newIndex = filtered.findIndex(m => m.id === overId);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const newOrder = arrayMove(filtered, oldIndex, newIndex);
+    
+    // Optimistically update the UI
+    utils.media.listByContent.setData({ contentItemId: item.id }, [...existingMedia.filter(m => deletedMediaIds.includes(m.id)), ...newOrder]);
+    
+    // Send to server
+    reorderMediaMutation.mutate({
+      contentItemId: item.id,
+      mediaItemIds: newOrder.map(m => m.id),
+    });
+  };
+
   useEffect(() => {
     if (open) {
       setMediaFiles([]);
@@ -223,6 +257,14 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
   const utils = trpc.useUtils();
   const addMedia = trpc.media.add.useMutation();
   const deleteMedia = trpc.media.delete.useMutation();
+  const reorderMediaMutation = trpc.media.reorder.useMutation({
+    onSuccess: () => {
+      utils.media.listByContent.invalidate({ contentItemId: item.id });
+    },
+    onError: () => {
+      toast.error("Failed to save media order");
+    }
+  });
 
   const updateContent = trpc.content.update.useMutation({
     onSuccess: () => {
@@ -508,119 +550,132 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
 
           <div className="space-y-2">
             <Label className="text-[var(--glass-muted)] block">Photos &amp; Videos</Label>
-            <div className="grid grid-cols-3 gap-2">
-              {existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).map((m) => (
-                <div key={m.id} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10">
-                        {m.type === "video" ? (
-                          <div className="relative w-full h-full">
-                            <video 
-                              src={m.url}
-                              preload="metadata"
-                              className="w-full h-full object-cover" 
-                            />
-                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                              <Play className="w-6 h-6 text-white/80" fill="white" />
-                            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleMediaDragEnd}
+            >
+              <SortableContext
+                items={existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).map(m => `media-${m.id}`) || []}
+                strategy={rectSortingStrategy}
+              >
+                <div className="grid grid-cols-3 gap-2">
+                {existingMedia?.filter(m => !deletedMediaIds.includes(m.id)).map((m) => (
+                  <SortableItem key={`media-${m.id}`} id={`media-${m.id}`}>
+                    <div className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10">
+                      {m.type === "video" ? (
+                        <div className="relative w-full h-full">
+                          <video 
+                            src={m.url}
+                            preload="metadata"
+                            className="w-full h-full object-cover" 
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <Play className="w-6 h-6 text-white/80" fill="white" />
                           </div>
-                        ) : (
-                          <img src={m.url} className="w-full h-full object-cover" alt="" />
-                        )}
-                        <button type="button" onClick={() => setDeletedMediaIds(prev => [...prev, m.id])}
-                          className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors z-10">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                  ))}
-              {mediaFiles.map((m, i) => (
-                <div key={`new-${i}`} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10 border border-blue-500/30">
-                  {m.type === "video" ? (
-                    <div className="relative w-full h-full">
-                      <img 
-                        src={m.preview} 
-                        className="w-full h-full object-cover" 
-                        alt=""
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <Play className="w-6 h-6 text-white/80" fill="white" />
-                      </div>
+                        </div>
+                      ) : (
+                        <img src={m.url} className="w-full h-full object-cover" alt="" />
+                      )}
+                      <button type="button" onClick={() => setDeletedMediaIds(prev => [...prev, m.id])}
+                        className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors z-10">
+                        <X className="w-3 h-3" />
+                      </button>
                     </div>
-                  ) : (
-                    <img src={m.preview} className="w-full h-full object-cover" alt="" />
-                  )}
-                  <button type="button" onClick={() => setMediaFiles(prev => prev.filter((_, idx) => idx !== i))}
-                    className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              <label className="flex flex-col items-center justify-center aspect-square rounded-lg border-2 border-dashed border-[var(--glass-border)] cursor-pointer hover:border-[var(--glass-muted)] transition-colors">
-                <ImagePlus className="w-5 h-5 text-[var(--glass-muted)]" />
-                <input type="file" accept="image/*,video/*" multiple onChange={async (e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  
-                  // Generate thumbnails for videos, use blob URL for images
-                  const newMediaPromises = files.map(async (file) => {
-                    const isVideo = file.type.startsWith("video/");
-                    let preview: string;
+                  </SortableItem>
+                ))}
+                {mediaFiles.map((m, i) => (
+                  <div key={`new-${i}`} className="relative rounded-lg overflow-hidden aspect-square bg-[var(--foreground)]/10 border border-blue-500/30">
+                    {m.type === "video" ? (
+                      <div className="relative w-full h-full">
+                        <img 
+                          src={m.preview} 
+                          className="w-full h-full object-cover" 
+                          alt=""
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <Play className="w-6 h-6 text-white/80" fill="white" />
+                        </div>
+                      </div>
+                    ) : (
+                      <img src={m.preview} className="w-full h-full object-cover" alt="" />
+                    )}
+                    <button type="button" onClick={() => setMediaFiles(prev => prev.filter((_, idx) => idx !== i))}
+                      className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black/80 transition-colors">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+                <label className="flex flex-col items-center justify-center aspect-square rounded-lg border-2 border-dashed border-[var(--glass-border)] cursor-pointer hover:border-[var(--glass-muted)] transition-colors">
+                  <ImagePlus className="w-5 h-5 text-[var(--glass-muted)]" />
+                  <input type="file" accept="image/*,video/*" multiple onChange={async (e) => {
+                    const files = Array.from(e.target.files ?? []);
                     
-                    if (isVideo) {
-                      // Generate thumbnail from video
-                      preview = await new Promise<string>((resolve) => {
-                        const video = document.createElement('video');
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        
-                        video.preload = 'metadata';
-                        video.muted = true;
-                        video.playsInline = true;
-                        
-                        video.onloadeddata = () => {
-                          // Seek to 1 second or 10% of video duration, whichever is less
-                          const seekTime = Math.min(1, video.duration * 0.1);
-                          video.currentTime = seekTime;
-                        };
-                        
-                        video.onseeked = () => {
-                          canvas.width = video.videoWidth;
-                          canvas.height = video.videoHeight;
-                          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    // Generate thumbnails for videos, use blob URL for images
+                    const newMediaPromises = files.map(async (file) => {
+                      const isVideo = file.type.startsWith("video/");
+                      let preview: string;
+                      
+                      if (isVideo) {
+                        // Generate thumbnail from video
+                        preview = await new Promise<string>((resolve) => {
+                          const video = document.createElement('video');
+                          const canvas = document.createElement('canvas');
+                          const ctx = canvas.getContext('2d');
                           
-                          canvas.toBlob((blob) => {
-                            if (blob) {
-                              resolve(URL.createObjectURL(blob));
-                            } else {
-                              // Fallback to video blob URL if thumbnail generation fails
-                              resolve(URL.createObjectURL(file));
-                            }
-                            // Clean up
-                            URL.revokeObjectURL(video.src);
-                          }, 'image/jpeg', 0.8);
-                        };
-                        
-                        video.onerror = () => {
-                          // Fallback to video blob URL
-                          resolve(URL.createObjectURL(file));
-                        };
-                        
-                        video.src = URL.createObjectURL(file);
-                      });
-                    } else {
-                      preview = URL.createObjectURL(file);
-                    }
+                          video.preload = 'metadata';
+                          video.muted = true;
+                          video.playsInline = true;
+                          
+                          video.onloadeddata = () => {
+                            // Seek to 1 second or 10% of video duration, whichever is less
+                            const seekTime = Math.min(1, video.duration * 0.1);
+                            video.currentTime = seekTime;
+                          };
+                          
+                          video.onseeked = () => {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            
+                            canvas.toBlob((blob) => {
+                              if (blob) {
+                                resolve(URL.createObjectURL(blob));
+                              } else {
+                                // Fallback to video blob URL if thumbnail generation fails
+                                resolve(URL.createObjectURL(file));
+                              }
+                              // Clean up
+                              URL.revokeObjectURL(video.src);
+                            }, 'image/jpeg', 0.8);
+                          };
+                          
+                          video.onerror = () => {
+                            // Fallback to video blob URL
+                            resolve(URL.createObjectURL(file));
+                          };
+                          
+                          video.src = URL.createObjectURL(file);
+                        });
+                      } else {
+                        preview = URL.createObjectURL(file);
+                      }
+                      
+                      return {
+                        file,
+                        preview,
+                        type: isVideo ? "video" as const : "image" as const,
+                      };
+                    });
                     
-                    return {
-                      file,
-                      preview,
-                      type: isVideo ? "video" as const : "image" as const,
-                    };
-                  });
-                  
-                  const newMedia = await Promise.all(newMediaPromises);
-                  setMediaFiles((prev) => [...prev, ...newMedia]);
-                  e.target.value = "";
-                }} className="hidden" />
-              </label>
-            </div>
+                    const newMedia = await Promise.all(newMediaPromises);
+                    setMediaFiles((prev) => [...prev, ...newMedia]);
+                    e.target.value = "";
+                  }} className="hidden" />
+                </label>
+              </div>
+              </SortableContext>
+            </DndContext>
           </div>
           {isSaving && uploadTotalBytes > 0 && (
             <UploadProgress
