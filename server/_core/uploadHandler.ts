@@ -3,11 +3,19 @@ import express, { Request } from "express";
 import multer from "multer";
 import { storagePut, storageDelete, storagePresign } from "../storage";
 import { sdk } from "./sdk";
+import { jwtVerify } from "jose";
+import { getDb } from "../../server/db";
+import { users } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: Infinity },
 });
+
+const JWT_SECRET = new TextEncoder().encode(
+  process.env.JWT_SECRET || "your-secret-key-change-this-in-production"
+);
 
 declare global {
   namespace Express {
@@ -21,6 +29,31 @@ declare global {
 const sseClients = new Map<string, express.Response>();
 
 async function resolveUserId(req: Request): Promise<number | null> {
+  // Try JWT authentication first
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    try {
+      const { payload } = await jwtVerify(token, JWT_SECRET);
+      const userId = payload.userId as number;
+      
+      // Verify user exists in database
+      const db = getDb();
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      
+      if (user) {
+        return user.id;
+      }
+    } catch (error) {
+      console.log("[Upload] JWT verification failed:", error);
+    }
+  }
+  
+  // Fall back to OAuth if configured
   const isDevMode = !process.env.OAUTH_SERVER_URL && process.env.NODE_ENV !== "production";
   if (isDevMode) return 1;
   try {
