@@ -610,8 +610,8 @@ export default function EditContentDialog({ item, open, onOpenChange, zIndex }: 
                   {m.type === "video" ? (
                     <div className="relative w-full h-full">
                       <video 
-                        src={m.url} 
-                        poster={item.posterImageUrl || undefined}
+                        src={m.url}
+                        preload="metadata"
                         className="w-full h-full object-cover" 
                       />
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
