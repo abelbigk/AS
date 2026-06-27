@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 interface TikTokVideoPlayerProps {
   src: string;
+  poster?: string; // Video thumbnail/cover image
   onLoadedData?: () => void;
   className?: string;
   isActive?: boolean;
@@ -22,6 +23,7 @@ interface TikTokVideoPlayerProps {
 
 export default function TikTokVideoPlayer({
   src,
+  poster,
   onLoadedData,
   className,
   isActive = true,
@@ -366,6 +368,7 @@ export default function TikTokVideoPlayer({
       <video
         ref={videoRef}
         src={src}
+        poster={poster}
         className="absolute inset-0 w-full h-full object-contain"
         playsInline
         preload="metadata"

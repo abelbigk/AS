@@ -638,7 +638,8 @@ function MediaSlider({ media, sound, onSoundChangeRequest }: { media: MediaItem[
                 )}
                 {m.type === "video" ? (
                   <TikTokVideoPlayer 
-                    src={m.url} 
+                    src={m.url}
+                    poster={item.posterImageUrl || undefined}
                     onLoadedData={() => markLoaded(m.id)}
                     className="absolute inset-0"
                     isActive={isCurrentSlide}
