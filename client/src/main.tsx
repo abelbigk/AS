@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
+import { Capacitor } from "@capacitor/core";
 import App from "./App";
 import { getLoginUrl } from "./const";
 import "./index.css";
@@ -37,10 +38,20 @@ queryClient.getMutationCache().subscribe(event => {
   }
 });
 
+// Determine API URL based on platform
+const getApiUrl = () => {
+  if (Capacitor.isNativePlatform()) {
+    // On native platform, use the full Render URL
+    return "https://content-organizer.onrender.com/api/trpc";
+  }
+  // On web, use relative URL
+  return "/api/trpc";
+};
+
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
-      url: "/api/trpc",
+      url: getApiUrl(),
       transformer: superjson,
       fetch(input, init) {
         // Get JWT token from localStorage

@@ -1,9 +1,18 @@
 import { toast } from "sonner";
 import axios from "axios";
+import { Capacitor } from "@capacitor/core";
+
+// Get the base URL for API calls
+const getApiBaseUrl = () => {
+  if (Capacitor.isNativePlatform()) {
+    return "https://content-organizer.onrender.com";
+  }
+  return ""; // relative URL on web
+};
 
 export async function deleteUploadedKey(key: string): Promise<void> {
   try {
-    await fetch(`/api/upload/${encodeURIComponent(key)}`, { method: "DELETE" });
+    await fetch(`${getApiBaseUrl()}/api/upload/${encodeURIComponent(key)}`, { method: "DELETE" });
   } catch (err) {
     // Silent cleanup failure
   }
@@ -15,7 +24,7 @@ function openProgressStream(
   onProgress: (pct: number) => void,
   abortSignal: AbortSignal
 ): void {
-  const es = new EventSource(`/api/upload/progress/${encodeURIComponent(key)}`);
+  const es = new EventSource(`${getApiBaseUrl()}/api/upload/progress/${encodeURIComponent(key)}`);
   es.onmessage = (e) => {
     const pct = parseInt(e.data, 10);
     if (!isNaN(pct)) onProgress(pct);
@@ -37,9 +46,15 @@ export function uploadFile(
     // 1. Get presigned URL from server
     let presignedData: { key: string; uploadUrl: string; publicUrl: string };
     try {
-      const r = await fetch("/api/upload/prepare", {
+      // Get JWT token for authentication
+      const token = localStorage.getItem("auth_token");
+      
+      const r = await fetch(`${getApiBaseUrl()}/api/upload/prepare`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ 
           filename: file.name,
           contentType: file.type || "application/octet-stream",
@@ -98,13 +113,19 @@ export async function uploadMultipleFiles(
 ): Promise<{ url: string; key: string }[]> {
   if (files.length === 0) return [];
 
+  // Get JWT token for authentication
+  const token = localStorage.getItem("auth_token");
+
   // Get presigned URLs for all files
   const presignedDataList: { key: string; uploadUrl: string; publicUrl: string }[] = [];
   for (const file of files) {
     try {
-      const r = await fetch("/api/upload/prepare", {
+      const r = await fetch(`${getApiBaseUrl()}/api/upload/prepare`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           filename: file.name,
           contentType: file.type || "application/octet-stream"
