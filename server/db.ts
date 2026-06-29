@@ -17,11 +17,34 @@ import {
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
+function isPlaceholder(value: string | undefined): boolean {
+  if (!value) return false;
+  return /^(your-|replace-with-)/i.test(value);
+}
+
+function validateProductionDatabaseEnv(url: string | undefined, authToken: string | undefined) {
+  if (process.env.NODE_ENV !== "production") return;
+
+  if (!url || isPlaceholder(url)) {
+    throw new Error(
+      "Invalid TURSO_DATABASE_URL. Set the real libsql://... Turso URL in Render environment variables."
+    );
+  }
+
+  if (!authToken || isPlaceholder(authToken)) {
+    throw new Error(
+      "Invalid TURSO_AUTH_TOKEN. Set the real Turso auth token in Render environment variables."
+    );
+  }
+}
+
 export function getDb() {
   if (_db) return _db;
 
   const url = process.env.TURSO_DATABASE_URL;
   const authToken = process.env.TURSO_AUTH_TOKEN;
+
+  validateProductionDatabaseEnv(url, authToken);
 
   if (!url) {
     console.warn("[Database] TURSO_DATABASE_URL not set, using local SQLite file");
@@ -634,5 +657,4 @@ export async function getSoundUsageCount(soundId: number, excludeContentId?: num
     .where(and(...conditions));
   return rows.length;
 }
-
 
