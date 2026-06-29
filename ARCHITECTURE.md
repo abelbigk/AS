@@ -2,7 +2,9 @@
 
 ## Overview
 
-**AS** is a content organization app (name: "AS") for mobile and web. It allows users to organize saved content (links, ideas, photos, references) into a hierarchical structure: Categories → Subcategories → Content Items.
+**AS** is a content organization app (name: "AS") for **React Native (iOS/Android)** and optional legacy web. It allows users to organize saved content (links, ideas, photos, references) into a hierarchical structure: Categories → Subcategories → Content Items.
+
+**Primary client:** `mobile/` (Expo + React Navigation). **Backend:** unchanged Express + tRPC API.
 
 ## Core Data Structure & Visibility Rules
 

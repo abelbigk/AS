@@ -1,4 +1,4 @@
-package com.contentorganizer.app;
+package com.as.app;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.contentorganizer.app',
+  appId: 'com.as.app',
   appName: 'AS',
   webDir: 'dist/public',
   // server: {

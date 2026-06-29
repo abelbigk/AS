@@ -1,6 +1,21 @@
-# Content Organizer
+# Content Organizer (AS)
 
-A mobile-first content organization app for collecting saved links, ideas, photos, and references into categories and subcategories. It is built with React, tRPC, Drizzle, and Tailwind CSS, with a local SQLite database fallback for development.
+Mobile-first content organization app. **Primary client: React Native** (`mobile/`). Backend: Express + tRPC + Drizzle + Turso/libSQL + Cloudflare R2.
+
+## Quick start — React Native app
+
+```bash
+# Terminal 1: API server
+pnpm install
+pnpm dev
+
+# Terminal 2: mobile app
+cd mobile && npm install && npm start
+```
+
+Set `EXPO_PUBLIC_API_URL` in `mobile/.env` to your machine IP when testing on a physical device.
+
+See [mobile/README.md](mobile/README.md) for full setup and APK build instructions.
 
 ## What The App Does
 
@@ -70,17 +85,17 @@ Items can be queued for later, marked done, edited, searched, moved between cate
 
 ## Technical Architecture
 
-### Frontend
+### Frontend (React Native — `mobile/`)
 
-- React 19
-- Vite 7
-- Tailwind CSS 4
-- shadcn/Radix UI components
+- Expo SDK 56 + React Native
+- React Navigation (tabs + stack)
 - tRPC React Query client
-- Wouter routing
-- Framer Motion
-- dnd-kit for drag-and-drop reordering
-- Sonner toasts
+- expo-image, expo-image-picker, expo-secure-store
+- react-native-draggable-flatlist
+
+### Frontend (legacy web — `client/`)
+
+- React 19 + Vite (deprecated; use `mobile/` instead)
 
 ### Backend
 
