@@ -22,13 +22,13 @@ On Render's free tier, your service automatically spins down after **15 minutes 
 ### Option 2: Keep Service Warm (Free Tier Workaround)
 Use a service like **UptimeRobot** or **Cron-Job.org** to ping your backend every 10-14 minutes:
 
-**Ping URL**: `https://content-organizer.onrender.com/health`
+**Ping URL**: `https://as-wryo.onrender.com/health`
 
 **UptimeRobot Setup** (Free):
 1. Go to https://uptimerobot.com
 2. Add New Monitor
 3. Monitor Type: HTTP(S)
-4. URL: `https://content-organizer.onrender.com/health`
+4. URL: `https://as-wryo.onrender.com/health`
 5. Monitoring Interval: 10 minutes
 
 This keeps your service alive but uses your monthly free tier hours (750 hours/month = ~31 days if always on).

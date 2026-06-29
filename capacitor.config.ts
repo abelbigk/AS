@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist/public',
   // server: {
   //   // Production: Point to your Render backend
-  //   url: 'https://content-organizer.onrender.com',
+  //   url: 'https://as-wryo.onrender.com',
   //   cleartext: false
   //   
   //   // For local development, uncomment this instead:

@@ -12,7 +12,7 @@ Before building, make sure you have:
 
 Your `capacitor.config.ts` is now pointing to:
 ```
-https://content-organizer.onrender.com
+https://as-wryo.onrender.com
 ```
 
 ## Step 2: Build the Web App
@@ -118,7 +118,7 @@ npx cap open android
 
 ### App doesn't connect to backend
 - Check Render URL is correct and accessible
-- Test URL in phone browser first: https://content-organizer.onrender.com
+- Test URL in phone browser first: https://as-wryo.onrender.com
 - Check if you need to create admin user on production
 
 ## Expected APK Size:

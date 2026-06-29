@@ -49,7 +49,7 @@ npm install
 EXPO_PUBLIC_API_URL=http://192.168.1.100:3000
 ```
 
-Default production URL: `https://content-organizer.onrender.com`
+Default production URL: `https://as-wryo.onrender.com`
 
 4. **Run the app**:
 

@@ -2,7 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 const config: ExpoConfig = {
   name: "AS",
-  slug: "as-content-organizer",
+  slug: "as",
   version: "1.0.0",
   orientation: "portrait",
   icon: "./assets/icon.png",
@@ -22,7 +22,7 @@ const config: ExpoConfig = {
     package: "com.as.app",
   },
   extra: {
-    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://content-organizer.onrender.com",
+    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://as-wryo.onrender.com",
   },
 };
 
