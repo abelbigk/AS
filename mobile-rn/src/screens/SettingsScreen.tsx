@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -12,12 +12,17 @@ import {
   Button,
   Divider,
   Text,
+  Switch,
 } from 'react-native-paper';
 import { authStore } from '../store/auth';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export function SettingsScreen() {
-  const { user, logout } = authStore();
+  const { user, logout, theme, toggleTheme, loadTheme } = authStore();
+
+  useEffect(() => {
+    loadTheme();
+  }, []);
 
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
@@ -38,7 +43,7 @@ export function SettingsScreen() {
         <Appbar.Content title="Settings" />
       </Appbar.Header>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Account Section */}
         <Text variant="titleMedium" style={styles.sectionTitle}>
           Account
@@ -77,6 +82,17 @@ export function SettingsScreen() {
           App
         </Text>
         <List.Section style={styles.section}>
+          <List.Item
+            title="Dark Mode"
+            description={theme === 'dark' ? 'Enabled' : 'Disabled'}
+            left={(props) => <List.Icon {...props} icon={theme === 'dark' ? 'moon-waning-crescent' : 'white-balance-sunny'} />}
+            right={() => (
+              <Switch
+                value={theme === 'dark'}
+                onValueChange={toggleTheme}
+              />
+            )}
+          />
           <List.Item
             title="Version"
             description="1.0.0"

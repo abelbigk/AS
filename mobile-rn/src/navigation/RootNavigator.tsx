@@ -8,6 +8,7 @@ import { authStore } from '../store/auth';
 import { LoginScreen } from '../screens/LoginScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { CategoryDetailScreen } from '../screens/CategoryDetailScreen';
+import { SubcategoryListScreen } from '../screens/SubcategoryListScreen';
 import { QueuedScreen } from '../screens/QueuedScreen';
 import { DoneScreen } from '../screens/DoneScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -17,7 +18,16 @@ const Tab = createBottomTabNavigator();
 
 function HomeStack() {
   return (
-    <Stack.Navigator>
+    <Stack.Navigator
+      screenOptions={{
+        animationEnabled: true,
+        cardStyleInterpolator: ({ current, layouts }) => ({
+          cardStyle: {
+            opacity: current.progress,
+          },
+        }),
+      }}
+    >
       <Stack.Screen
         name="HomeList"
         component={HomeScreen}
@@ -26,6 +36,11 @@ function HomeStack() {
       <Stack.Screen
         name="CategoryDetail"
         component={CategoryDetailScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SubcategoryList"
+        component={SubcategoryListScreen}
         options={{ headerShown: false }}
       />
     </Stack.Navigator>
@@ -138,10 +153,11 @@ function AppNavigator() {
 }
 
 export function RootNavigator() {
-  const { isAuthenticated, isLoading, checkAuth } = authStore();
+  const { isAuthenticated, isLoading, checkAuth, loadTheme } = authStore();
 
   useEffect(() => {
     checkAuth();
+    loadTheme();
   }, []);
 
   if (isLoading) {
