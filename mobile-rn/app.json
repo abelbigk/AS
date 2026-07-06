@@ -1,20 +1,20 @@
 {
   "expo": {
-    "name": "Content Organizer",
+    "name": "AS",
     "slug": "content-organizer-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "contentorganizer",
+    "scheme": "as",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "package": "com.contentorganizer.mobile",
+      "package": "com.as.mobile",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
+        "backgroundColor": "#6200ee",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
