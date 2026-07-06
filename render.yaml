@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: content-organizer
+    env: node
+    buildCommand: npx pnpm install --frozen-lockfile && npx pnpm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # Add your environment variables from .env here:
+      # - key: R2_ACCOUNT_ID
+      #   sync: false
+      # - key: R2_ACCESS_KEY_ID
+      #   sync: false
+      # - key: R2_SECRET_ACCESS_KEY
+      #   sync: false
+      # - key: R2_BUCKET
+      #   sync: false
+      # - key: R2_PUBLIC_URL
+      #   sync: false

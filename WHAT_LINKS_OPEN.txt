@@ -1,0 +1,299 @@
+================================================================================
+                    WHAT LINKS OPEN WHEN APP STARTS
+================================================================================
+
+SHORT ANSWER:
+When app opens, it makes ONE API call to: http://localhost:3000/auth/me
+
+NOTHING opens in web browser
+NOTHING external happens
+Only communication: App ↔ Backend
+
+================================================================================
+                         COMPLETE FLOW
+================================================================================
+
+APP STARTUP:
+  ↓
+1. Load UI components (App.tsx)
+  ↓
+2. Show loading spinner (ActivityIndicator)
+  ↓
+3. Call checkAuth() function
+  ↓
+4. [FIRST API CALL] GET http://localhost:3000/auth/me
+     Headers: Authorization: Bearer [token if exists]
+  ↓
+5. Backend responds
+     Success (200): User data returned → Show Home screen
+     Failure (401): No token or expired → Show Login screen
+  ↓
+6. User sees screen and can interact
+
+================================================================================
+                         ALL POSSIBLE API CALLS
+================================================================================
+
+STARTUP (Automatic):
+  GET http://localhost:3000/auth/me
+  Purpose: Check if user already logged in
+  When: Every time app opens
+  
+LOGIN (User Action):
+  POST http://localhost:3000/auth/login
+  Purpose: Authenticate with username/password
+  When: User taps Login button
+  
+HOME TAB (User Action):
+  GET http://localhost:3000/api/content
+  Purpose: Get all content/categories
+  When: User opens Home tab
+  
+QUEUED TAB (User Action):
+  GET http://localhost:3000/api/queued
+  Purpose: Get queued items
+  When: User opens Queued tab
+  
+DONE TAB (User Action):
+  GET http://localhost:3000/api/done
+  Purpose: Get completed items
+  When: User opens Done tab
+  
+CATEGORY DETAIL (User Action):
+  GET http://localhost:3000/api/content/:id
+  Purpose: Get items in category
+  When: User taps a category
+
+================================================================================
+                      NETWORK DIAGRAM
+================================================================================
+
+Your PC:
+  ├─ Backend Server
+  │   └─ npm run dev
+  │   └─ Port: 3000
+  │   └─ URL: http://localhost:3000
+  │
+  ├─ Metro Bundler
+  │   └─ npm start
+  │   └─ Port: 8081
+  │   └─ URL: http://localhost:8081
+  │
+  └─ Android Emulator
+      └─ App (connected to Metro + Backend)
+
+        API Calls:
+        └─ GET http://localhost:3000/auth/me
+        └─ POST http://localhost:3000/auth/login
+        └─ GET http://localhost:3000/api/content
+        └─ GET http://localhost:3000/api/queued
+        └─ GET http://localhost:3000/api/done
+
+================================================================================
+                    WHAT YOU SEE ON STARTUP
+================================================================================
+
+Screen 1 (0-1 seconds): Loading spinner
+  └─ App is initializing
+  └─ Checking if user is logged in
+  
+Screen 2 (1-2 seconds):
+  Option A: Login Screen (if not logged in)
+    └─ Shows: Email/password input
+    └─ Reason: No valid token found
+    └─ Next: User enters credentials
+    
+  Option B: Home Screen (if already logged in)
+    └─ Shows: 4 tabs (Home, Queued, Done, Settings)
+    └─ Reason: Valid token found
+    └─ Next: Shows categories/content
+
+================================================================================
+                    IMPORTANT: NO EXTERNAL LINKS
+================================================================================
+
+NOT OPENED:
+  ❌ No web browser
+  ❌ No external URLs
+  ❌ No internet calls
+  ❌ No Google/Facebook APIs
+  ❌ No analytics services
+  ❌ No crash reporting
+  ❌ No ads
+  ❌ No tracking
+
+ONLY:
+  ✅ Backend API on localhost:3000
+  ✅ Metro bundler on localhost:8081
+  ✅ Local AsyncStorage (device storage)
+  ✅ React Native components
+  ✅ Material Design UI
+
+ALL PRIVATE/LOCAL
+
+================================================================================
+                      AUTHENTICATION FLOW
+================================================================================
+
+FIRST TIME OPENING APP:
+  1. No token in device storage
+  2. App shows Loading spinner
+  3. GET /auth/me returns 401 (no token)
+  4. App shows Login screen
+  5. User enters: email/password
+  6. POST /auth/login
+  7. Backend returns: { token, user }
+  8. App saves token to storage
+  9. App shows Home screen
+  10. Next time: Token is remembered!
+
+SUBSEQUENT OPENINGS:
+  1. Token exists in device storage
+  2. App shows Loading spinner
+  3. GET /auth/me (sends token in header)
+  4. Backend validates token
+  5. Backend returns: user data
+  6. App shows Home screen directly
+  7. No login needed!
+
+================================================================================
+                         TOKEN MANAGEMENT
+================================================================================
+
+WHERE TOKEN IS STORED:
+  Device storage (AsyncStorage)
+  Persists across app restarts
+  
+WHAT TOKEN IS:
+  JWT (JSON Web Token)
+  Long string of encoded data
+  Example: eyJhbGc...IjoxLjA...
+  
+WHEN SENT:
+  With every API request
+  In Authorization header
+  Format: Authorization: Bearer [token]
+  
+WHEN CLEARED:
+  User logs out
+  Token expires (set by backend)
+  Manual clear
+
+================================================================================
+                      BEHIND THE SCENES
+================================================================================
+
+FILE: src/api/client.ts
+  └─ Creates HTTP client
+  └─ Base URL: http://localhost:3000
+  └─ Timeout: 30 seconds
+  └─ Adds Authorization header automatically
+
+FILE: src/store/auth.ts
+  └─ Stores auth state
+  └─ Handles login/logout
+  └─ Manages token
+  └─ checkAuth() runs on startup
+
+FILE: src/navigation/RootNavigator.tsx
+  └─ Calls checkAuth() in useEffect
+  └─ Shows loading spinner
+  └─ Shows Login or Home based on auth state
+
+================================================================================
+                        TROUBLESHOOTING
+================================================================================
+
+PROBLEM: "Unable to load script"
+  → Metro not running
+  → Fix: npm start
+
+PROBLEM: "Connection refused to localhost:3000"
+  → Backend not running
+  → Fix: npm run dev
+
+PROBLEM: Shows Login instead of Home (but I was logged in)
+  → Token expired or deleted
+  → Fix: Login again
+
+PROBLEM: Login button does nothing
+  → Check backend logs
+  → Check network tab
+  → Wrong credentials?
+
+PROBLEM: Slow loading
+  → Network latency
+  → Backend slow
+  → Too many API calls
+
+================================================================================
+                      SETTING UP FULL STACK
+================================================================================
+
+TERMINAL 1: Backend Server
+  $ cd c:\mycode3
+  $ npm run dev
+  ✅ Should show: Server running on http://localhost:3000
+
+TERMINAL 2: Metro Bundler
+  $ cd c:\mycode3\mobile-rn
+  $ npm start
+  ✅ Should show: Metro: exp://192.168.x.x:8081
+
+TERMINAL 3: Run App
+  $ cd c:\mycode3\mobile-rn
+  $ npx expo run:android
+  ✅ App opens in emulator, shows Loading → Login/Home
+
+ALL 3 MUST BE RUNNING!
+
+================================================================================
+                           SUMMARY
+================================================================================
+
+ON STARTUP:
+  App makes: GET http://localhost:3000/auth/me
+  Purpose: Check login status
+  Result: Shows Home (logged in) or Login (not logged in)
+
+NO EXTERNAL LINKS:
+  Everything is local
+  No internet calls
+  No browser opens
+  Only localhost
+
+REQUIRED TO WORK:
+  ✅ Backend running (port 3000)
+  ✅ Metro running (port 8081)
+  ✅ Emulator running
+  ✅ All 3 connected
+
+THEN:
+  App works perfectly!
+  All API calls succeed
+  UI responds smoothly
+
+================================================================================
+                       MORE INFORMATION
+================================================================================
+
+For complete details, see:
+  → APP_API_FLOW.md (complete API trace)
+  → DEBUG_VS_RELEASE_BUILD.md (build types)
+  → QUICK_FIX_METRO.md (if Metro not running)
+  → METRO_CONNECTION_GUIDE.md (Metro setup)
+
+For code references, see:
+  → c:\mycode3\mobile-rn\src\api\client.ts
+  → c:\mycode3\mobile-rn\src\store\auth.ts
+  → c:\mycode3\mobile-rn\src\navigation\RootNavigator.tsx
+
+================================================================================
+
+ANSWER: Only localhost:3000/auth/me opens on startup
+NO external links
+NO browser opens
+EVERYTHING LOCAL
+
+Ready to test? 🚀
+================================================================================
