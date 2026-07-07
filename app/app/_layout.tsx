@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { useAuthStore } from '../src/store/auth';
 
@@ -12,9 +12,9 @@ export default function RootLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       {!isLoggedIn ? (
-        <Stack.Screen name="(auth)" options={{ animationEnabled: false }} />
+        <Stack.Screen name="(auth)" />
       ) : (
-        <Stack.Screen name="(app)" options={{ animationEnabled: false }} />
+        <Stack.Screen name="(app)" />
       )}
     </Stack>
   );

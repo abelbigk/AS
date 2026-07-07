@@ -27,7 +27,7 @@ export default function LoginScreen() {
 
     try {
       await login(username, password);
-      router.replace('/(app)');
+      router.replace('/(app)' as any);
     } catch (error: any) {
       Alert.alert('Login Failed', error.response?.data?.message || 'Invalid credentials');
     }
@@ -76,7 +76,7 @@ export default function LoginScreen() {
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Don't have an account? </Text>
-            <Link href="/(auth)/register" asChild>
+            <Link href={"/register" as any} asChild>
               <TouchableOpacity>
                 <Text style={styles.link}>Sign up</Text>
               </TouchableOpacity>

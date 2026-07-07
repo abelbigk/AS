@@ -34,7 +34,7 @@ export default function RegisterScreen() {
 
     try {
       await register(username, password, name || undefined, email || undefined);
-      router.replace('/(app)');
+      router.replace('/(app)' as any);
     } catch (error: any) {
       Alert.alert('Registration Failed', error.response?.data?.message || 'Could not create account');
     }
@@ -103,7 +103,7 @@ export default function RegisterScreen() {
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Already have an account? </Text>
-            <Link href="/(auth)/login" asChild>
+            <Link href={"/login" as any} asChild>
               <TouchableOpacity>
                 <Text style={styles.link}>Login</Text>
               </TouchableOpacity>

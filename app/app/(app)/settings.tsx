@@ -24,7 +24,7 @@ export default function SettingsScreen() {
         onPress: async () => {
           try {
             await logout();
-            router.replace('/(auth)/login');
+            router.replace('/(auth)/login' as any);
           } catch (error) {
             Alert.alert('Error', 'Failed to logout');
           }
