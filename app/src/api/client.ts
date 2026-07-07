@@ -1,7 +1,25 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://as-wryo.onrender.com';
+// Get API URL from app config or fallback to hardcoded
+const getApiUrl = () => {
+  // Try to get from app.json extra
+  if (Constants.expoConfig?.extra?.apiUrl) {
+    return Constants.expoConfig.extra.apiUrl;
+  }
+  // Fallback to env variable (for web/dev)
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  // Final fallback
+  return 'https://as-wryo.onrender.com';
+};
+
+const API_URL = getApiUrl();
+
+console.log('API Client initialized with URL:', API_URL);
 
 const client = axios.create({
   baseURL: API_URL,

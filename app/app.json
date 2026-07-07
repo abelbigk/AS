@@ -25,6 +25,9 @@
     "experiments": {
       "typedRoutes": true
     },
+    "extra": {
+      "apiUrl": "https://as-wryo.onrender.com"
+    },
     "android": {
       "package": "com.abelbigk.asapp"
     }
