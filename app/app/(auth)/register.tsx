@@ -1,125 +1,184 @@
-import { useState } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, TextInput, Button } from 'react-native-paper';
-import { useRouter } from 'expo-router';
-import { authStore } from '../../src/store/auth';
+import React, { useState } from 'react';
+import {
+  View,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  Text,
+  ActivityIndicator,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, Link } from 'expo-router';
+import { useAuthStore } from '../../src/store/auth';
 
 export default function RegisterScreen() {
-  const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState('');
+  const router = useRouter();
+  const { register, loading } = useAuthStore();
 
   const handleRegister = async () => {
-    if (!username || !password) {
-      setError('Please enter username and password');
+    if (!username.trim() || !password.trim()) {
+      Alert.alert('Error', 'Username and password are required');
       return;
     }
 
-    setLoading(true);
-    setError('');
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
 
     try {
-      await authStore.getState().register(username, password, name);
-      router.replace('/(app)/(tabs)');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Registration failed');
-    } finally {
-      setLoading(false);
+      await register(username, password, name || undefined, email || undefined);
+      router.replace('/(app)');
+    } catch (error: any) {
+      Alert.alert('Registration Failed', error.response?.data?.message || 'Could not create account');
     }
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text variant="headlineMedium" style={styles.title}>
-          Create Account
-        </Text>
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <Text style={styles.title}>AS</Text>
+          <Text style={styles.subtitle}>Create Account</Text>
+        </View>
 
-        {error ? (
-          <Text style={styles.error}>{error}</Text>
-        ) : null}
+        <View style={styles.form}>
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            value={username}
+            onChangeText={setUsername}
+            editable={!loading}
+            placeholderTextColor="#999"
+            autoCapitalize="none"
+          />
 
-        <TextInput
-          label="Name"
-          value={name}
-          onChangeText={setName}
-          style={styles.input}
-          editable={!loading}
-          placeholder="Enter your name (optional)"
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            editable={!loading}
+            placeholderTextColor="#999"
+          />
 
-        <TextInput
-          label="Username"
-          value={username}
-          onChangeText={setUsername}
-          style={styles.input}
-          editable={!loading}
-          placeholder="Choose a username"
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Name (optional)"
+            value={name}
+            onChangeText={setName}
+            editable={!loading}
+            placeholderTextColor="#999"
+          />
 
-        <TextInput
-          label="Password"
-          value={password}
-          onChangeText={setPassword}
-          style={styles.input}
-          secureTextEntry
-          editable={!loading}
-          placeholder="Choose a password"
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Email (optional)"
+            value={email}
+            onChangeText={setEmail}
+            editable={!loading}
+            placeholderTextColor="#999"
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
 
-        <Button
-          mode="contained"
-          onPress={handleRegister}
-          loading={loading}
-          disabled={loading}
-          style={styles.button}
-        >
-          Create Account
-        </Button>
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleRegister}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Sign Up</Text>
+            )}
+          </TouchableOpacity>
 
-        <Button
-          mode="text"
-          onPress={() => router.back()}
-          disabled={loading}
-          style={styles.backButton}
-        >
-          Back to Login
-        </Button>
-      </View>
-    </ScrollView>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Already have an account? </Text>
+            <Link href="/(auth)/login" asChild>
+              <TouchableOpacity>
+                <Text style={styles.link}>Login</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f5f5f5',
   },
   content: {
-    padding: 20,
+    flexGrow: 1,
     justifyContent: 'center',
-    minHeight: '100%',
+    padding: 20,
+  },
+  header: {
+    marginBottom: 40,
+    alignItems: 'center',
   },
   title: {
-    marginBottom: 24,
+    fontSize: 40,
     fontWeight: 'bold',
+    color: '#2196F3',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  form: {
+    width: '100%',
   },
   input: {
-    marginBottom: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 12,
+    fontSize: 16,
+    color: '#000',
   },
   button: {
-    marginTop: 16,
-    padding: 8,
-  },
-  backButton: {
+    backgroundColor: '#2196F3',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
     marginTop: 8,
   },
-  error: {
-    color: '#d32f2f',
-    marginBottom: 16,
-    textAlign: 'center',
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  footerText: {
+    color: '#666',
+    fontSize: 14,
+  },
+  link: {
+    color: '#2196F3',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });

@@ -1,109 +1,85 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient } from '../api/client';
+import client from '../api/client';
 
-export interface User {
-  id: number;
+interface User {
+  id: string;
   username: string;
   name?: string;
   email?: string;
-  role: 'user' | 'admin';
-  createdAt: string;
-  updatedAt: string;
+  role: string;
 }
 
 interface AuthStore {
   user: User | null;
   token: string | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
-
+  loading: boolean;
+  isLoggedIn: boolean;
+  
   // Actions
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, name?: string) => Promise<void>;
+  register: (username: string, password: string, name?: string, email?: string) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
-  setUser: (user: User) => void;
+  setUser: (user: User | null) => void;
 }
 
-export const authStore = create<AuthStore>((set, get) => ({
+export const useAuthStore = create<AuthStore>((set) => ({
   user: null,
   token: null,
-  isLoading: true,
-  isAuthenticated: false,
+  loading: false,
+  isLoggedIn: false,
 
   login: async (username: string, password: string) => {
+    set({ loading: true });
     try {
-      const response = await apiClient.post('/auth/login', {
-        username,
-        password,
-      });
-
+      const response = await client.post('/auth/login', { username, password });
       const { token, user } = response.data;
-      await AsyncStorage.setItem('auth_token', token);
       
-      set({
-        token,
-        user,
-        isAuthenticated: true,
-      });
+      await AsyncStorage.setItem('auth_token', token);
+      set({ user, token, isLoggedIn: true, loading: false });
     } catch (error) {
-      console.error('Login failed:', error);
+      set({ loading: false });
       throw error;
     }
   },
 
-  register: async (username: string, password: string, name?: string) => {
+  register: async (username: string, password: string, name?: string, email?: string) => {
+    set({ loading: true });
     try {
-      const response = await apiClient.post('/auth/register', {
-        username,
-        password,
-        name,
-      });
-
+      const response = await client.post('/auth/register', { username, password, name, email });
       const { token, user } = response.data;
+      
       await AsyncStorage.setItem('auth_token', token);
-
-      set({
-        token,
-        user,
-        isAuthenticated: true,
-      });
+      set({ user, token, isLoggedIn: true, loading: false });
     } catch (error) {
-      console.error('Registration failed:', error);
+      set({ loading: false });
       throw error;
     }
   },
 
   logout: async () => {
     await AsyncStorage.removeItem('auth_token');
-    set({
-      user: null,
-      token: null,
-      isAuthenticated: false,
-    });
+    set({ user: null, token: null, isLoggedIn: false });
   },
 
   checkAuth: async () => {
     try {
       const token = await AsyncStorage.getItem('auth_token');
-      if (token) {
-        const response = await apiClient.get('/auth/me');
-        set({
-          token,
-          user: response.data,
-          isAuthenticated: true,
-        });
+      if (!token) {
+        set({ isLoggedIn: false });
+        return;
       }
+
+      const response = await client.get('/auth/me');
+      set({ user: response.data, token, isLoggedIn: true });
     } catch (error) {
-      console.error('Auth check failed:', error);
       await AsyncStorage.removeItem('auth_token');
-    } finally {
-      set({ isLoading: false });
+      set({ user: null, token: null, isLoggedIn: false });
     }
   },
 
-  setUser: (user: User) => {
-    set({ user });
+  setUser: (user: User | null) => {
+    set({ user, isLoggedIn: !!user });
   },
 }));

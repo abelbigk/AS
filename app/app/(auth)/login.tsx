@@ -1,125 +1,157 @@
-import { useState } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, TextInput, Button } from 'react-native-paper';
-import { Link, useRouter } from 'expo-router';
-import { authStore } from '../../src/store/auth';
+import React, { useState } from 'react';
+import {
+  View,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  Text,
+  ActivityIndicator,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, Link } from 'expo-router';
+import { useAuthStore } from '../../src/store/auth';
 
 export default function LoginScreen() {
-  const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const router = useRouter();
+  const { login, loading } = useAuthStore();
 
   const handleLogin = async () => {
-    if (!username || !password) {
-      setError('Please enter username and password');
+    if (!username.trim() || !password.trim()) {
+      Alert.alert('Error', 'Please enter username and password');
       return;
     }
 
-    setLoading(true);
-    setError('');
-
     try {
-      await authStore.getState().login(username, password);
-      router.replace('/(app)/(tabs)');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Login failed');
-    } finally {
-      setLoading(false);
+      await login(username, password);
+      router.replace('/(app)');
+    } catch (error: any) {
+      Alert.alert('Login Failed', error.response?.data?.message || 'Invalid credentials');
     }
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text variant="headlineLarge" style={styles.title}>
-          AS
-        </Text>
-        <Text variant="bodyMedium" style={styles.subtitle}>
-          Content Organizer
-        </Text>
-
-        {error ? (
-          <Text style={styles.error}>{error}</Text>
-        ) : null}
-
-        <TextInput
-          label="Username"
-          value={username}
-          onChangeText={setUsername}
-          style={styles.input}
-          editable={!loading}
-          placeholder="Enter your username"
-        />
-
-        <TextInput
-          label="Password"
-          value={password}
-          onChangeText={setPassword}
-          style={styles.input}
-          secureTextEntry
-          editable={!loading}
-          placeholder="Enter your password"
-        />
-
-        <Button
-          mode="contained"
-          onPress={handleLogin}
-          loading={loading}
-          disabled={loading}
-          style={styles.button}
-        >
-          Login
-        </Button>
-
-        <View style={styles.register}>
-          <Text variant="bodySmall">Don't have an account? </Text>
-          <Link href="/(auth)/register" asChild>
-            <Button mode="text">Register</Button>
-          </Link>
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <Text style={styles.title}>AS</Text>
+          <Text style={styles.subtitle}>Content Organizer</Text>
         </View>
-      </View>
-    </ScrollView>
+
+        <View style={styles.form}>
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            value={username}
+            onChangeText={setUsername}
+            editable={!loading}
+            placeholderTextColor="#999"
+            autoCapitalize="none"
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            editable={!loading}
+            placeholderTextColor="#999"
+          />
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Login</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Link href="/(auth)/register" asChild>
+              <TouchableOpacity>
+                <Text style={styles.link}>Sign up</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f5f5f5',
   },
   content: {
+    flexGrow: 1,
+    justifyContent: 'center',
     padding: 20,
-    justifyContent: 'center',
-    minHeight: '100%',
   },
-  title: {
-    textAlign: 'center',
-    marginBottom: 8,
-    fontWeight: 'bold',
-  },
-  subtitle: {
-    textAlign: 'center',
+  header: {
     marginBottom: 40,
-    color: '#666',
-  },
-  input: {
-    marginBottom: 16,
-  },
-  button: {
-    marginTop: 16,
-    padding: 8,
-  },
-  register: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 24,
     alignItems: 'center',
   },
-  error: {
-    color: '#d32f2f',
-    marginBottom: 16,
-    textAlign: 'center',
+  title: {
+    fontSize: 40,
+    fontWeight: 'bold',
+    color: '#2196F3',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  form: {
+    width: '100%',
+  },
+  input: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 12,
+    fontSize: 16,
+    color: '#000',
+  },
+  button: {
+    backgroundColor: '#2196F3',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  footerText: {
+    color: '#666',
+    fontSize: 14,
+  },
+  link: {
+    color: '#2196F3',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });

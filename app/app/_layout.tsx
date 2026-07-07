@@ -1,29 +1,21 @@
 import { useEffect } from 'react';
-import { Redirect, Stack } from 'expo-router';
-import { authStore } from '../src/store/auth';
-import { PaperProvider } from 'react-native-paper';
+import { Stack } from 'expo-router';
+import { useAuthStore } from '../src/store/auth';
 
 export default function RootLayout() {
-  const isAuthenticated = authStore((state) => state.isAuthenticated);
-  const isLoading = authStore((state) => state.isLoading);
+  const { checkAuth, isLoggedIn } = useAuthStore();
 
   useEffect(() => {
-    authStore.getState().checkAuth();
+    checkAuth();
   }, []);
 
-  if (isLoading) {
-    return <Stack />;
-  }
-
-  if (!isAuthenticated) {
-    return <Redirect href="/(auth)/login" />;
-  }
-
   return (
-    <PaperProvider>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      </Stack>
-    </PaperProvider>
+    <Stack screenOptions={{ headerShown: false }}>
+      {!isLoggedIn ? (
+        <Stack.Screen name="(auth)" options={{ animationEnabled: false }} />
+      ) : (
+        <Stack.Screen name="(app)" options={{ animationEnabled: false }} />
+      )}
+    </Stack>
   );
 }
