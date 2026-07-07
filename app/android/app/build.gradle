@@ -2,6 +2,9 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+// Apply bundle creation task
+apply from: 'build-bundle.gradle'
+
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
 /**
@@ -19,9 +22,6 @@ react {
     // works correctly with Expo projects.
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
-    
-    // Only debug variant should skip bundling - release must have bundle
-    debuggableVariants = ["debug"]
 
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'
