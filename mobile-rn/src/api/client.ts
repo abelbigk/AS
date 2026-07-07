@@ -1,7 +1,10 @@
 import axios from 'axios';
 import { authStore } from '../store/auth';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+// Hardcoded production URL for testing
+// TODO: Remove this once environment variables are properly loaded in native build
+const API_BASE_URL = 'https://as-wryo.onrender.com';
+// Original: const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
