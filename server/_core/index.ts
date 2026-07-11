@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
+import cors from "cors";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
@@ -33,6 +34,23 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  // Enable CORS for local development and the deployed site
+  const whitelist = [
+    'http://localhost:8082', // Metro / Expo web
+    'http://localhost:19006', // Expo dev tools
+    'http://localhost:3000',
+    'https://as-wryo.onrender.com'
+  ];
+  app.use(cors({
+    origin: function (origin, callback) {
+      // allow requests with no origin (e.g. mobile apps, curl)
+      if (!origin) return callback(null, true);
+      if (whitelist.indexOf(origin) !== -1) return callback(null, true);
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  }));
+
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "500mb" }));
   app.use(express.urlencoded({ limit: "500mb", extended: true }));
