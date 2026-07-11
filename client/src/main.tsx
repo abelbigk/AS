@@ -42,7 +42,7 @@ queryClient.getMutationCache().subscribe(event => {
 const getApiUrl = () => {
   if (Capacitor.isNativePlatform()) {
     // On native platform, use the full Render URL
-    return "https://content-organizer.onrender.com/api/trpc";
+    return "https://as-wryo.onrender.com/api/trpc";
   }
   // On web, use relative URL
   return "/api/trpc";

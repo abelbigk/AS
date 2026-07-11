@@ -8,3 +8,35 @@ dist/
 .idea/
 coverage/
 build/
+
+# Expo
+.expo/
+.expo-shared/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Android
+android/app/build/
+android/.gradle/
+android/local.properties
+android/*.jks
+android/*.keystore
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.swp
+*.swo
+*~
+.DS_Store

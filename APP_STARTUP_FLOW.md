@@ -33,15 +33,15 @@ Your app startup is highly optimized. Here's the exact sequence:
 └─────────────────────────────────────────────────────────────┘
          ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ TIME 500-2000ms: Auth Check                                │
-│ • checkAuth() async call:                                  │
-│   1. Get token from AsyncStorage                          │
-│   2. Verify token with backend (if exists)               │
-│   3. Update auth state                                    │
-│                                                            │
-│ Two Paths:                                                │
-│   ✅ Token valid → Go to HomePage                         │
-│   ❌ No token/invalid → Go to LoginScreen                 │
+│ TIME 500-2000ms: Auth Check                                 │
+│ • checkAuth() async call:                                   │
+│   1. Get token from AsyncStorage                            │
+│   2. Verify token with backend (if exists)                  │
+│   3. Update auth state                                      │
+│                                                             │
+│ Two Paths:                                                  │
+│   ✅ Token valid → Go to HomePage                          │
+│   ❌ No token/invalid → Go to LoginScreen                   │
 └─────────────────────────────────────────────────────────────┘
          ↓
 ┌─────────────────────────────────────────────────────────────┐

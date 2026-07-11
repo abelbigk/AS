@@ -5,7 +5,7 @@ import { Capacitor } from "@capacitor/core";
 // Get the base URL for API calls
 const getApiBaseUrl = () => {
   if (Capacitor.isNativePlatform()) {
-    return "https://content-organizer.onrender.com";
+    return "https://as-wryo.onrender.com";
   }
   return ""; // relative URL on web
 };
