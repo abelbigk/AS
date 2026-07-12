@@ -10,7 +10,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { registerUploadRoutes } from "./uploadHandler";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
+import { serveStatic } from "./vite";
 import { isCorsOriginAllowed } from "./corsConfig";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -62,6 +62,8 @@ async function startServer() {
   );
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
+    // Dynamically import Vite only in development to avoid bundling it
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     serveStatic(app);
