@@ -11,7 +11,7 @@ import { registerUploadRoutes } from "./uploadHandler";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { isCorsOriginAllowed } from "./cors";
+import { isCorsOriginAllowed } from "./corsConfig";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
