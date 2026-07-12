@@ -133,6 +133,8 @@ function MainTabs() {
             iconName = focused ? 'time' : 'time-outline';
           } else if (route.name === 'done-tab') {
             iconName = focused ? 'checkmark-circle' : 'checkmark-circle-outline';
+          } else if (route.name === 'add-tab') {
+            iconName = focused ? 'add-circle' : 'add-circle-outline';
           } else if (route.name === 'settings-tab') {
             iconName = focused ? 'settings' : 'settings-outline';
           }
@@ -141,12 +143,17 @@ function MainTabs() {
         },
         tabBarActiveTintColor: '#007AFF',
         tabBarInactiveTintColor: '#999',
+        tabBarStyle: {
+          borderTopWidth: 1,
+          borderTopColor: '#e0e0e0',
+          paddingBottom: 4,
+        },
       })}
     >
       <Tab.Screen
         name="home-tab"
         component={HomeStack}
-        options={{ title: 'Collections' }}
+        options={{ title: 'Home' }}
       />
       <Tab.Screen
         name="queued-tab"
@@ -157,6 +164,13 @@ function MainTabs() {
         name="done-tab"
         component={DoneStack}
         options={{ title: 'Done' }}
+      />
+      <Tab.Screen
+        name="add-tab"
+        component={AddCategoryScreen}
+        options={{
+          title: 'Add',
+        }}
       />
       <Tab.Screen
         name="settings-tab"

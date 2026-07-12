@@ -1,7 +1,24 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://as-wryo.onrender.com';
+const getApiBaseUrl = () => {
+  const expoApiUrl = process.env.EXPO_PUBLIC_API_URL;
+  
+  // Use the .env variable if explicitly set
+  if (expoApiUrl && expoApiUrl.startsWith('https://')) {
+    return expoApiUrl;
+  }
+  
+  // For local development with explicit localhost URL
+  if (expoApiUrl && (expoApiUrl.startsWith('http://localhost') || expoApiUrl.startsWith('http://127.0.0.1'))) {
+    return expoApiUrl;
+  }
+  
+  // Default to production
+  return 'https://as-wryo.onrender.com';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

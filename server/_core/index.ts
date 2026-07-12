@@ -11,6 +11,7 @@ import { registerUploadRoutes } from "./uploadHandler";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { isCorsOriginAllowed } from "./cors";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,19 +35,12 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Enable CORS for local development and the deployed site
-  const whitelist = [
-    'http://localhost:8082', // Metro / Expo web
-    'http://localhost:19006', // Expo dev tools
-    'http://localhost:3000',
-    'https://as-wryo.onrender.com'
-  ];
   app.use(cors({
-    origin: function (origin, callback) {
-      // allow requests with no origin (e.g. mobile apps, curl)
-      if (!origin) return callback(null, true);
-      if (whitelist.indexOf(origin) !== -1) return callback(null, true);
-      return callback(new Error('Not allowed by CORS'));
+    origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+      if (isCorsOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
   }));
@@ -80,8 +74,8 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://127.0.0.1:${port}/`);
   });
 }
 

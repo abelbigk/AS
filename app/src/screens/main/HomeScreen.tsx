@@ -7,41 +7,31 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  useWindowDimensions,
   TextInput,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { trpc } from '@/lib/trpc';
+import { useTheme } from '@/contexts/ThemeContext';
+import { CategoryCard } from '@/components/CategoryCard';
 
 export default function HomeScreen({ navigation }: any) {
   const [searchActive, setSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const { width } = useWindowDimensions();
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
 
   const { data: categories = [], isLoading, refetch } = trpc.categories.list.useQuery();
-  const { data: allSubcategories = [], isLoading: subsLoading } = trpc.subcategories.list.useQuery(
-    { categoryId: 0 },
-    { enabled: searchActive && searchQuery.length > 0 }
-  );
-  const { data: searchContents = [], isLoading: contentsLoading } = trpc.content.search.useQuery(
+  const { data: searchResults = [], isLoading: searchLoading } = trpc.content.search.useQuery(
     { query: searchQuery },
     { enabled: searchActive && searchQuery.length > 0 }
   );
 
   const filteredCategories = searchActive
     ? categories.filter((cat) =>
-        cat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (cat.description && cat.description.toLowerCase().includes(searchQuery.toLowerCase()))
+        cat.name.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : categories;
-
-  const filteredSubcategories = searchActive
-    ? allSubcategories.filter((sub) =>
-        sub.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (sub.description && sub.description.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
-    : [];
 
   useFocusEffect(
     useCallback(() => {
@@ -49,174 +39,99 @@ export default function HomeScreen({ navigation }: any) {
     }, [refetch])
   );
 
-  const renderCategoryCard = ({ item: category }: any) => (
-    <TouchableOpacity
-      style={[styles.categoryCard, { width: width / 2 - 12 }]}
-      onPress={() =>
-        navigation.navigate('category-detail', { categoryId: category.id })
-      }
-    >
-      <View style={styles.cardContent}>
-        <Ionicons name="folder" size={32} color="#007AFF" />
-        <Text style={styles.categoryName}>{category.name}</Text>
-        {category.description && (
-          <Text style={styles.categoryDesc} numberOfLines={2}>
-            {category.description}
-          </Text>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderSubcategoryItem = ({ item: sub }: any) => (
-    <TouchableOpacity
-      style={styles.listItem}
-      onPress={() =>
-        navigation.navigate('subcategory-detail', { subcategoryId: sub.id })
-      }
-    >
-      <View style={styles.itemIcon}>
-        <Ionicons name="layers" size={20} color="#007AFF" />
-      </View>
-      <View style={styles.itemContent}>
-        <Text style={styles.itemTitle}>{sub.name}</Text>
-        {sub.description && (
-          <Text style={styles.itemSubtitle} numberOfLines={1}>
-            {sub.description}
-          </Text>
-        )}
-      </View>
-      <Ionicons name="chevron-forward" size={20} color="#ccc" />
-    </TouchableOpacity>
-  );
-
-  const renderContentItem = ({ item: content }: any) => (
-    <TouchableOpacity style={styles.listItem}>
-      <View style={styles.itemIcon}>
-        <Ionicons name="document" size={20} color="#4caf50" />
-      </View>
-      <View style={styles.itemContent}>
-        <Text style={styles.itemTitle}>{content.heading}</Text>
-        {content.link && (
-          <Text style={styles.itemLink} numberOfLines={1}>
-            {content.link}
-          </Text>
-        )}
-      </View>
-      <Ionicons name="chevron-forward" size={20} color="#ccc" />
-    </TouchableOpacity>
-  );
-
-  if (isLoading) {
+  if (isLoading && !searchActive) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, { backgroundColor: isDark ? '#1a1a1a' : '#f5f5f5' }]}>
         <ActivityIndicator size="large" color="#007AFF" />
       </View>
     );
   }
 
-  const sections = [];
-
-  if (searchActive) {
-    if (filteredCategories.length > 0) {
-      sections.push({
-        title: `Categories (${filteredCategories.length})`,
-        data: filteredCategories.map((c) => ({ ...c, type: 'category' })),
-      });
-    }
-    if (filteredSubcategories.length > 0) {
-      sections.push({
-        title: `Subcategories (${filteredSubcategories.length})`,
-        data: filteredSubcategories.map((s) => ({ ...s, type: 'subcategory' })),
-      });
-    }
-    if (searchContents.length > 0) {
-      sections.push({
-        title: `Content (${searchContents.length})`,
-        data: searchContents.map((c) => ({ ...c, type: 'content' })),
-      });
-    }
-  }
-
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: isDark ? '#1a1a1a' : '#f5f5f5' }]}>
       {/* Search Bar */}
-      <View style={styles.searchContainer}>
+      <View style={[styles.searchBar, { backgroundColor: isDark ? '#2a2a2a' : '#fff', borderBottomColor: isDark ? '#333' : '#e0e0e0' }]}>
         {searchActive && (
           <TouchableOpacity
             onPress={() => {
               setSearchActive(false);
               setSearchQuery('');
             }}
+            style={styles.backButton}
           >
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+            <Ionicons name="chevron-back" size={24} color="#007AFF" />
           </TouchableOpacity>
         )}
-        <TextInput
-          style={[styles.searchInput, searchActive && { flex: 1, marginHorizontal: 8 }]}
-          placeholder={searchActive ? 'Search categories, items...' : 'Search'}
-          placeholderTextColor="#999"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onFocus={() => setSearchActive(true)}
-        />
+        
+        <View style={[
+          styles.searchInputWrapper,
+          { backgroundColor: isDark ? '#1a1a1a' : '#f0f0f0', borderColor: isDark ? '#333' : '#e0e0e0' }
+        ]}>
+          <Ionicons name="search" size={18} color={isDark ? '#888' : '#999'} />
+          <TextInput
+            style={[styles.searchInput, { color: isDark ? '#fff' : '#000' }]}
+            placeholder="Search..."
+            placeholderTextColor={isDark ? '#666' : '#999'}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onFocus={() => setSearchActive(true)}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close" size={18} color={isDark ? '#888' : '#999'} />
+            </TouchableOpacity>
+          )}
+        </View>
+
         {!searchActive && (
-          <TouchableOpacity onPress={() => setSearchActive(true)}>
-            <Ionicons name="search" size={24} color="#007AFF" />
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('add-category')}
+            style={styles.addButton}
+          >
+            <Ionicons name="add" size={28} color="#007AFF" />
           </TouchableOpacity>
         )}
-        <TouchableOpacity onPress={() => navigation.navigate('add-category')}>
-          <Ionicons name="add-circle" size={28} color="#007AFF" style={{ marginLeft: 12 }} />
-        </TouchableOpacity>
       </View>
 
-      {/* Search Results */}
-      {searchActive && searchQuery ? (
+      {/* Content */}
+      {searchActive && searchQuery.trim().length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="search" size={48} color={isDark ? '#444' : '#ccc'} />
+          <Text style={[styles.emptyText, { color: isDark ? '#888' : '#999' }]}>
+            Search for everything
+          </Text>
+        </View>
+      ) : (
         <FlatList
-          data={sections}
-          keyExtractor={(_, idx) => idx.toString()}
-          renderItem={({ item: section }: any) => (
-            <View>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>{section.title}</Text>
-              </View>
-              {section.data.map((item: any) => (
-                <View key={item.id || item.heading}>
-                  {item.type === 'category' && renderCategoryCard({ item })}
-                  {item.type === 'subcategory' && renderSubcategoryItem({ item })}
-                  {item.type === 'content' && renderContentItem({ item })}
-                </View>
-              ))}
+          data={searchActive ? filteredCategories : categories}
+          keyExtractor={(item) => item.id.toString()}
+          renderItem={({ item }) => (
+            <View style={styles.cardWrapper}>
+              <CategoryCard
+                category={item}
+                contentCount={0}
+                onPress={() =>
+                  navigation.navigate('category-detail', { categoryId: item.id })
+                }
+              />
             </View>
           )}
-          ListEmptyComponent={
-            !subsLoading && !contentsLoading ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="search" size={48} color="#ccc" />
-                <Text style={styles.emptyText}>No results found</Text>
-              </View>
-            ) : null
-          }
-        />
-      ) : (
-        /* Categories Grid */
-        <FlatList
-          data={filteredCategories}
-          keyExtractor={(item) => item.id.toString()}
-          renderItem={renderCategoryCard}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
           refreshControl={
-            <RefreshControl refreshing={isLoading} onRefresh={refetch} />
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={refetch}
+              tintColor="#007AFF"
+            />
           }
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            !isLoading ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="folder-outline" size={48} color="#ccc" />
-                <Text style={styles.emptyText}>No categories yet</Text>
-              </View>
-            ) : null
+            <View style={styles.emptyState}>
+              <Ionicons name="folder-open" size={48} color={isDark ? '#444' : '#ccc'} />
+              <Text style={[styles.emptyText, { color: isDark ? '#888' : '#999' }]}>
+                {searchActive ? 'No categories match' : 'No categories yet'}
+              </Text>
+            </View>
           }
         />
       )}
@@ -227,110 +142,58 @@ export default function HomeScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  searchContainer: {
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+  searchInputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 24,
+    borderWidth: 1,
+    height: 40,
   },
   searchInput: {
-    flex: 0.7,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#f5f5f5',
-    fontSize: 14,
-    color: '#000',
-  },
-  sectionHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#f5f5f5',
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  listItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  itemIcon: {
-    marginRight: 12,
-  },
-  itemContent: {
     flex: 1,
-  },
-  itemTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#000',
-  },
-  itemSubtitle: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
-  },
-  itemLink: {
-    fontSize: 12,
-    color: '#007AFF',
-    marginTop: 4,
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-    paddingHorizontal: 6,
-  },
-  categoryCard: {
-    margin: 6,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardContent: {
-    alignItems: 'center',
-  },
-  categoryName: {
+    marginLeft: 8,
+    marginRight: 8,
     fontSize: 14,
-    fontWeight: '600',
-    color: '#000',
-    marginTop: 8,
-    textAlign: 'center',
   },
-  categoryDesc: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 4,
-    textAlign: 'center',
+  addButton: {
+    marginLeft: 12,
+    padding: 4,
   },
   listContent: {
-    paddingBottom: 16,
+    padding: 12,
+    paddingBottom: 24,
+  },
+  cardWrapper: {
+    marginBottom: 12,
   },
   emptyState: {
-    alignItems: 'center',
+    flex: 1,
     justifyContent: 'center',
-    paddingVertical: 48,
+    alignItems: 'center',
+    paddingVertical: 60,
   },
   emptyText: {
-    fontSize: 16,
-    color: '#999',
     marginTop: 12,
+    fontSize: 16,
+    fontWeight: '500',
   },
 });

@@ -11,8 +11,11 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { trpc } from '@/lib/trpc';
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function QueuedScreen({ navigation }: any) {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const { data: items = [], isLoading, refetch } = trpc.content.listByStatus.useQuery('queued');
   const { data: categories = [], isLoading: catsLoading } = trpc.categories.list.useQuery();
   const { data: allSubcategories = [], isLoading: subsLoading } = trpc.subcategories.list.useQuery({ categoryId: 0 });

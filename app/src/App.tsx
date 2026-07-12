@@ -19,11 +19,25 @@ const queryClient = new QueryClient({
   },
 });
 
-// Use local backend during development to avoid CORS issues when running the web dev server
 const defaultProdApi = 'https://as-wryo.onrender.com';
-const apiUrl = (process.env.NODE_ENV === 'development')
-  ? (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000')
-  : (Constants.expoConfig?.extra?.apiUrl || defaultProdApi);
+const getApiBaseUrl = () => {
+  const expoApiUrl = process.env.EXPO_PUBLIC_API_URL;
+  
+  // Use the .env variable if explicitly set
+  if (expoApiUrl && expoApiUrl.startsWith('https://')) {
+    return expoApiUrl;
+  }
+  
+  // For local development with explicit localhost URL
+  if (expoApiUrl && (expoApiUrl.startsWith('http://localhost') || expoApiUrl.startsWith('http://127.0.0.1'))) {
+    return expoApiUrl;
+  }
+  
+  // Default to production
+  return Constants.expoConfig?.extra?.apiUrl || defaultProdApi;
+};
+
+const apiUrl = getApiBaseUrl();
 
 const trpcClient = trpc.createClient({
   links: [

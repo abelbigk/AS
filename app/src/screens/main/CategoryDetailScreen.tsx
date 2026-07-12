@@ -16,9 +16,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function CategoryDetailScreen({ route, navigation }: any) {
   const { categoryId } = route.params;
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const { data: category, isLoading, refetch } = trpc.categories.getById.useQuery({ categoryId });
   const { data: subcategories = [], refetch: refetchSubs } = trpc.subcategories.list.useQuery(
     { categoryId },

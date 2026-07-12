@@ -1,7 +1,24 @@
 import { create } from 'zustand';
 import axios from 'axios';
 
-const API_URL = 'https://as-wryo.onrender.com';
+const getApiUrl = () => {
+  const expoApiUrl = process.env.EXPO_PUBLIC_API_URL;
+  
+  // Use the .env variable if explicitly set
+  if (expoApiUrl && expoApiUrl.startsWith('https://')) {
+    return expoApiUrl;
+  }
+  
+  // For local development with explicit localhost URL
+  if (expoApiUrl && (expoApiUrl.startsWith('http://localhost') || expoApiUrl.startsWith('http://127.0.0.1'))) {
+    return expoApiUrl;
+  }
+  
+  // Default to production
+  return 'https://as-wryo.onrender.com';
+};
+
+const API_URL = getApiUrl();
 
 const useAuthStore = create((set) => ({
   user: null,
