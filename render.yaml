@@ -2,7 +2,7 @@ services:
   - type: web
     name: content-organizer
     env: node
-    buildCommand: npx pnpm install --frozen-lockfile && npx pnpm run build
+    buildCommand: npm install --legacy-peer-deps && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
