@@ -1,4 +1,5 @@
-const allowedOrigins = [
+// Default allowed origins for development
+const devOrigins = [
   "http://localhost:8081",
   "http://localhost:8082",
   "http://localhost:8083",
@@ -8,11 +9,29 @@ const allowedOrigins = [
   "http://127.0.0.1:8082",
   "http://127.0.0.1:8083",
   "http://127.0.0.1:3000",
-  "https://as-wryo.onrender.com",
   "exp://127.0.0.1:8081",
   "exp://localhost:8081",
 ];
 
+// Production origins
+const prodOrigins = [
+  "https://as-wryo.onrender.com",
+];
+
+// Get allowed origins based on environment
+function getAllowedOrigins(): string[] {
+  const envOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(",").map(o => o.trim()) || [];
+  
+  if (process.env.NODE_ENV === "production") {
+    // In production, include explicitly configured origins + production hardcoded origins
+    return [...prodOrigins, ...envOrigins];
+  }
+  
+  // In development, include all dev origins + any explicitly configured ones
+  return [...devOrigins, ...envOrigins];
+}
+
+const allowedOrigins = getAllowedOrigins();
 const localhostPattern = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 export function isCorsOriginAllowed(origin: string | undefined): boolean {
@@ -23,8 +42,8 @@ export function isCorsOriginAllowed(origin: string | undefined): boolean {
     return true;
   }
   
-  // Check regex pattern for localhost variants
-  if (localhostPattern.test(origin)) {
+  // In development, allow any localhost variant
+  if (process.env.NODE_ENV !== "production" && localhostPattern.test(origin)) {
     return true;
   }
   
