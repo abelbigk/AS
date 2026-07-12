@@ -1,8 +1,9 @@
 services:
   - type: web
     name: content-organizer
-    env: node
-    buildCommand: npm install --legacy-peer-deps && npm run build
+    runtime: node
+    plan: free
+    buildCommand: npm ci --legacy-peer-deps && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
