@@ -7,6 +7,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   TouchableOpacity,
+  Platform,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,8 +17,10 @@ import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import { CategoryCard } from "../../src/components/CategoryCard";
 
-const DARK_BG = "https://images.unsplash.com/photo-1470770903676-69b98201ea1c?w=1600&q=80";
-const LIGHT_BG = "https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1600&q=80";
+const DARK_BG =
+  "https://images.unsplash.com/photo-1470770903676-69b98201ea1c?w=1600&q=80";
+const LIGHT_BG =
+  "https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1600&q=80";
 
 function SubcategoryPill({
   subId,
@@ -28,10 +31,16 @@ function SubcategoryPill({
   count: number;
   onPress: () => void;
 }) {
-  const { data: sub } = trpc.subcategories.getById.useQuery({ subcategoryId: subId });
+  const { data: sub } = trpc.subcategories.getById.useQuery({
+    subcategoryId: subId,
+  });
 
   return (
-    <TouchableOpacity style={styles.pill} onPress={onPress} activeOpacity={0.75}>
+    <TouchableOpacity
+      style={styles.pill}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
       <Text style={styles.pillText} numberOfLines={1}>
         {sub?.name ?? "…"}
       </Text>
@@ -64,7 +73,6 @@ export default function DoneScreen() {
 
   // Build category groups
   const groups = useMemo(() => {
-    // map subcategoryId -> categoryId
     const subToCat = new Map<number, number>();
     for (const sub of allSubcategories) {
       if (sub.categoryId != null) {
@@ -72,7 +80,6 @@ export default function DoneScreen() {
       }
     }
 
-    // categoryId -> { category, subIds: Set<number>, directCount: number, subCounts: Map<number, number> }
     const map = new Map<
       number,
       {
@@ -100,13 +107,13 @@ export default function DoneScreen() {
 
     for (const item of items) {
       const anyItem = item as any;
+      const catIds: number[] =
+        anyItem.categoryIds ??
+        (anyItem.categoryId != null ? [anyItem.categoryId] : []);
+      const subIds: number[] =
+        anyItem.subcategoryIds ??
+        (anyItem.subcategoryId != null ? [anyItem.subcategoryId] : []);
 
-      // Direct category IDs on the item
-      const catIds: number[] = anyItem.categoryIds ?? (anyItem.categoryId != null ? [anyItem.categoryId] : []);
-      // Subcategory IDs on the item
-      const subIds: number[] = anyItem.subcategoryIds ?? (anyItem.subcategoryId != null ? [anyItem.subcategoryId] : []);
-
-      // For each subcategory, find parent category
       const parentCatIdsFromSubs = new Set<number>();
       for (const subId of subIds) {
         const parentCatId = subToCat.get(subId);
@@ -120,7 +127,6 @@ export default function DoneScreen() {
         }
       }
 
-      // For each direct category (that isn't already counted via subcategory)
       for (const catId of catIds) {
         if (!parentCatIdsFromSubs.has(catId)) {
           const group = ensureGroup(catId);
@@ -140,18 +146,28 @@ export default function DoneScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Blurred background matching app style */}
       <Image
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
-        transition={300}
+        blurRadius={Platform.OS !== "web" ? 25 : undefined}
       />
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor }]} />
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          styles.backdropOverlay,
+          { backgroundColor: overlayColor },
+        ]}
+      />
 
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: insets.top + 24, paddingBottom: 110 },
+          {
+            paddingTop: insets.top + (Platform.OS === "web" ? 24 : 12),
+            paddingBottom: insets.bottom + 110,
+          },
         ]}
         refreshControl={
           <RefreshControl
@@ -164,7 +180,9 @@ export default function DoneScreen() {
       >
         <View style={styles.maxWidthWrapper}>
           {/* Centered title */}
-          <Text style={styles.pageTitle}>Completed</Text>
+          <Text style={[styles.pageTitle, { color: colors.text }]}>
+            Completed
+          </Text>
 
           {isLoading && (
             <View style={styles.loadingContainer}>
@@ -174,10 +192,15 @@ export default function DoneScreen() {
 
           {!isLoading && items.length === 0 && (
             <View style={styles.emptyContainer}>
-              <Text style={[styles.emptyText, { color: "#fff" }]}>
+              <Text style={[styles.emptyText, { color: colors.text }]}>
                 Nothing completed yet
               </Text>
-              <Text style={[styles.emptySubtext, { color: "rgba(255,255,255,0.6)" }]}>
+              <Text
+                style={[
+                  styles.emptySubtext,
+                  { color: colors.textMuted },
+                ]}
+              >
                 Mark items as finished to see them grouped here.
               </Text>
             </View>
@@ -190,13 +213,15 @@ export default function DoneScreen() {
                   category={category}
                   count={directCount > 0 ? directCount : undefined}
                   onPress={() =>
-                    router.push(`/category/${category.id}?status=done` as any)
+                    router.push(`/category/${category.id}?status=done`)
                   }
                 />
 
                 {subIds.size > 0 && (
-                  <View style={styles.subcategorySection}>
-                    <Text style={styles.subcategoryLabel}>SUBCATEGORIES</Text>
+                  <View style={styles.subcategoriesBlock}>
+                    <Text style={styles.subcategoriesHeading}>
+                      SUBCATEGORIES
+                    </Text>
                     <View style={styles.pillsRow}>
                       {Array.from(subIds).map((subId) => (
                         <SubcategoryPill
@@ -204,7 +229,9 @@ export default function DoneScreen() {
                           subId={subId}
                           count={subCounts.get(subId) ?? 0}
                           onPress={() =>
-                            router.push(`/subcategory/${subId}?status=done` as any)
+                            router.push(
+                              `/subcategory/${subId}?status=done`
+                            )
                           }
                         />
                       ))}
@@ -222,6 +249,15 @@ export default function DoneScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#0A0A0A",
+  },
+  backdropOverlay: {
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+      } as any,
+    }),
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -232,46 +268,45 @@ const styles = StyleSheet.create({
     maxWidth: 672,
   },
   pageTitle: {
-    fontSize: 30,
-    fontWeight: "800",
-    color: "#fff",
+    fontSize: 34,
+    fontWeight: "700",
     textAlign: "center",
-    marginBottom: 24,
+    letterSpacing: -0.5,
+    marginBottom: 28,
   },
   loadingContainer: {
     paddingVertical: 60,
     alignItems: "center",
   },
   emptyContainer: {
-    paddingVertical: 80,
     alignItems: "center",
-    justifyContent: "center",
+    paddingVertical: 80,
+    gap: 8,
   },
   emptyText: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 8,
+    fontSize: 18,
+    fontWeight: "600",
   },
   emptySubtext: {
     fontSize: 14,
     textAlign: "center",
-    maxWidth: 280,
   },
   groupWrapper: {
-    marginBottom: 20,
+    marginBottom: 24,
+    width: "100%",
   },
-  subcategorySection: {
-    marginTop: 8,
-    paddingLeft: 12,
+  subcategoriesBlock: {
     borderLeftWidth: 2,
-    borderLeftColor: "rgba(255,255,255,0.1)",
+    borderLeftColor: "rgba(255,255,255,0.15)",
+    paddingLeft: 12,
+    marginTop: 8,
+    gap: 8,
   },
-  subcategoryLabel: {
+  subcategoriesHeading: {
     fontSize: 10,
     fontWeight: "700",
-    color: "rgba(255,255,255,0.45)",
-    letterSpacing: 1.2,
-    marginBottom: 8,
+    letterSpacing: 1,
+    color: "rgba(255,255,255,0.4)",
     textTransform: "uppercase",
   },
   pillsRow: {
@@ -282,28 +317,31 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
     backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,255,255,0.15)",
+    borderWidth: 1,
     borderRadius: 20,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    paddingVertical: 5,
   },
   pillText: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.85)",
+    fontSize: 12,
+    color: "#fff",
+    fontWeight: "500",
     maxWidth: 140,
   },
   pillBadge: {
     backgroundColor: "rgba(255,255,255,0.15)",
     borderRadius: 10,
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     paddingVertical: 1,
+    minWidth: 18,
+    alignItems: "center",
   },
   pillBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
+    fontSize: 10,
     color: "#fff",
+    fontWeight: "700",
   },
 });
