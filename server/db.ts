@@ -72,17 +72,16 @@ export async function getUserByOpenId(openId: string) {
 }
 
 // Category queries
-export async function getCategoriesByUser(userId: number) {
+export async function getCategoriesByUser(_userId?: number) {
   const db = getDb();
   return await db.select().from(categories)
-    .where(eq(categories.userId, userId))
     .orderBy(asc(categories.order), desc(categories.createdAt));
 }
 
-export async function getCategoryById(categoryId: number, userId: number) {
+export async function getCategoryById(categoryId: number, _userId?: number) {
   const db = getDb();
   const result = await db.select().from(categories).where(
-    and(eq(categories.id, categoryId), eq(categories.userId, userId))
+    eq(categories.id, categoryId)
   ).limit(1);
   return result.length > 0 ? result[0] : null;
 }
@@ -99,8 +98,8 @@ export async function createCategory(
 }
 
 export async function updateCategory(
-  categoryId: number, userId: number,
-  data: { name?: string; description?: string | null; coverImageUrl?: string | null; coverImageKey?: string | null; coverCropData?: string | null }
+  categoryId: number, _userId?: number,
+  data: { name?: string; description?: string | null; coverImageUrl?: string | null; coverImageKey?: string | null; coverCropData?: string | null } = {}
 ) {
   const db = getDb();
   const updateSet: Record<string, unknown> = {};
@@ -111,7 +110,7 @@ export async function updateCategory(
   if ("coverCropData" in data) updateSet.coverCropData = data.coverCropData ?? null;
   if (Object.keys(updateSet).length === 0) return;
   return await db.update(categories).set(updateSet).where(
-    and(eq(categories.id, categoryId), eq(categories.userId, userId))
+    eq(categories.id, categoryId)
   );
 }
 
@@ -164,38 +163,38 @@ export async function getContentLinksCount(contentId: number) {
   return categoryIds.length + subcategoryIds.length;
 }
 
-export async function deleteCategory(categoryId: number, userId: number) {
+export async function deleteCategory(categoryId: number, _userId?: number) {
   const db = getDb();
   return await db.delete(categories).where(
-    and(eq(categories.id, categoryId), eq(categories.userId, userId))
+    eq(categories.id, categoryId)
   );
 }
 
 // Subcategory queries
-export async function getSubcategoriesByCategory(categoryId: number, userId: number) {
+export async function getSubcategoriesByCategory(categoryId: number, _userId?: number) {
   const db = getDb();
   return await db.select().from(subcategories).where(
-    and(eq(subcategories.categoryId, categoryId), eq(subcategories.userId, userId))
+    eq(subcategories.categoryId, categoryId)
   ).orderBy(asc(subcategories.order), desc(subcategories.createdAt));
 }
 
-export async function getSubcategoryById(subcategoryId: number, userId: number) {
+export async function getSubcategoryById(subcategoryId: number, _userId?: number) {
   const db = getDb();
   const result = await db.select().from(subcategories).where(
-    and(eq(subcategories.id, subcategoryId), eq(subcategories.userId, userId))
+    eq(subcategories.id, subcategoryId)
   ).limit(1);
   return result.length > 0 ? result[0] : null;
 }
 
-export async function getAllSubcategoriesByUser(userId: number) {
+export async function getAllSubcategoriesByUser(_userId?: number) {
   const db = getDb();
-  return await db.select().from(subcategories).where(eq(subcategories.userId, userId)).orderBy(desc(subcategories.createdAt));
+  return await db.select().from(subcategories).orderBy(desc(subcategories.createdAt));
 }
 
-export async function deleteSubcategory(subcategoryId: number, userId: number) {
+export async function deleteSubcategory(subcategoryId: number, _userId?: number) {
   const db = getDb();
   return await db.delete(subcategories).where(
-    and(eq(subcategories.id, subcategoryId), eq(subcategories.userId, userId))
+    eq(subcategories.id, subcategoryId)
   );
 }
 
@@ -210,8 +209,8 @@ export async function createSubcategory(
 }
 
 export async function updateSubcategory(
-  subcategoryId: number, userId: number,
-  data: { categoryId?: number; name?: string; description?: string; coverImageUrl?: string | null; coverImageKey?: string | null; coverCropData?: string | null }
+  subcategoryId: number, _userId?: number,
+  data: { categoryId?: number; name?: string; description?: string; coverImageUrl?: string | null; coverImageKey?: string | null; coverCropData?: string | null } = {}
 ) {
   const db = getDb();
   const updateSet: Record<string, unknown> = {};
@@ -223,13 +222,13 @@ export async function updateSubcategory(
   if ("coverCropData" in data) updateSet.coverCropData = data.coverCropData ?? null;
   if (Object.keys(updateSet).length === 0) return;
   return await db.update(subcategories).set(updateSet).where(
-    and(eq(subcategories.id, subcategoryId), eq(subcategories.userId, userId))
+    eq(subcategories.id, subcategoryId)
   );
 }
 
 // Content queries
 export async function getContentByCategory(
-  categoryId: number, userId: number, subcategoryId?: number
+  categoryId: number, _userId?: number, subcategoryId?: number
 ) {
   const db = getDb();
   let items;
@@ -237,7 +236,7 @@ export async function getContentByCategory(
     items = await db.select({ content: contentItems, subOrder: contentSubcategoryLinks.order })
       .from(contentItems)
       .innerJoin(contentSubcategoryLinks, eq(contentItems.id, contentSubcategoryLinks.contentId))
-      .where(and(eq(contentSubcategoryLinks.subcategoryId, subcategoryId), eq(contentItems.userId, userId)))
+      .where(eq(contentSubcategoryLinks.subcategoryId, subcategoryId))
       .orderBy(asc(contentSubcategoryLinks.order), desc(contentItems.createdAt))
       .then(rows => rows.map(r => r.content));
   } else {
@@ -249,7 +248,6 @@ export async function getContentByCategory(
         eq(contentItems.id, contentCategoryLinks.contentId),
         eq(contentCategoryLinks.categoryId, categoryId)
       ))
-      .where(eq(contentItems.userId, userId))
       .orderBy(asc(contentCategoryLinks.order), desc(contentItems.createdAt))
       .then(rows => rows.map(r => r.content));
   }
@@ -260,12 +258,12 @@ export async function getContentByCategory(
   }));
 }
 
-export async function getContentBySubcategory(subcategoryId: number, userId: number) {
+export async function getContentBySubcategory(subcategoryId: number, _userId?: number) {
   const db = getDb();
   const items = await db.select({ content: contentItems })
     .from(contentItems)
     .innerJoin(contentSubcategoryLinks, eq(contentItems.id, contentSubcategoryLinks.contentId))
-    .where(and(eq(contentSubcategoryLinks.subcategoryId, subcategoryId), eq(contentItems.userId, userId)))
+    .where(eq(contentSubcategoryLinks.subcategoryId, subcategoryId))
     .orderBy(asc(contentSubcategoryLinks.order), desc(contentItems.createdAt))
     .then(rows => rows.map(r => r.content));
 
@@ -275,7 +273,7 @@ export async function getContentBySubcategory(subcategoryId: number, userId: num
   }));
 }
 
-export async function getUncategorizedContent(userId: number) {
+export async function getUncategorizedContent(_userId?: number) {
   const db = getDb();
   const items = await db.select({ content: contentItems })
     .from(contentItems)
@@ -283,7 +281,6 @@ export async function getUncategorizedContent(userId: number) {
     .leftJoin(contentSubcategoryLinks, eq(contentItems.id, contentSubcategoryLinks.contentId))
     .where(
       and(
-        eq(contentItems.userId, userId),
         isNull(contentCategoryLinks.categoryId),
         isNull(contentSubcategoryLinks.subcategoryId)
       )
@@ -306,10 +303,10 @@ export async function getUncategorizedContent(userId: number) {
   }));
 }
 
-export async function getContentByStatus(userId: number, status: "default" | "queued" | "done") {
+export async function getContentByStatus(_userId: number, status: "default" | "queued" | "done") {
   const db = getDb();
   const items = await db.select().from(contentItems).where(
-    and(eq(contentItems.userId, userId), eq(contentItems.status, status))
+    eq(contentItems.status, status)
   );
 
   return await Promise.all(items.map(async item => {
@@ -338,26 +335,26 @@ export async function createContentItem(
   return result;
 }
 
-export async function getContentByHeading(userId: number, heading: string) {
+export async function getContentByHeading(_userId: number, heading: string) {
   const db = getDb();
   const result = await db.select().from(contentItems).where(
-    and(eq(contentItems.userId, userId), eq(contentItems.heading, heading))
+    eq(contentItems.heading, heading)
   ).limit(1);
   return result.length > 0 ? result[0] : null;
 }
 
 export async function updateContentStatus(
-  itemId: number, userId: number, status: "default" | "queued" | "done"
+  itemId: number, _userId: number, status: "default" | "queued" | "done"
 ) {
   const db = getDb();
   return await db.update(contentItems).set({ status }).where(
-    and(eq(contentItems.id, itemId), eq(contentItems.userId, userId))
+    eq(contentItems.id, itemId)
   );
 }
 
 export async function updateContentItem(
   itemId: number,
-  userId: number,
+  _userId: number,
   data: {
     heading?: string;
     description?: string;
@@ -380,7 +377,7 @@ export async function updateContentItem(
   
   if (Object.keys(updateSet).length > 0) {
     await db.update(contentItems).set(updateSet).where(
-      and(eq(contentItems.id, itemId), eq(contentItems.userId, userId))
+      eq(contentItems.id, itemId)
     );
   }
 
@@ -394,7 +391,7 @@ export async function updateContentItem(
   }
 }
 
-export async function getContentItemById(itemId: number, userId: number) {
+export async function getContentItemById(itemId: number, _userId?: number) {
   const db = getDb();
   const rows = await db
     .select({
@@ -409,7 +406,7 @@ export async function getContentItemById(itemId: number, userId: number) {
     })
     .from(contentItems)
     .leftJoin(sounds, eq(contentItems.soundId, sounds.id))
-    .where(and(eq(contentItems.id, itemId), eq(contentItems.userId, userId)))
+    .where(eq(contentItems.id, itemId))
     .limit(1);
 
   if (rows.length === 0) return null;
@@ -426,10 +423,10 @@ export async function getContentItemById(itemId: number, userId: number) {
 }
 
 
-export async function deleteContentItem(itemId: number, userId: number) {
+export async function deleteContentItem(itemId: number, _userId?: number) {
   const db = getDb();
   return await db.delete(contentItems).where(
-    and(eq(contentItems.id, itemId), eq(contentItems.userId, userId))
+    eq(contentItems.id, itemId)
   );
 }
 
@@ -466,27 +463,24 @@ export async function addMediaItem(
   return await db.insert(mediaItems).values({ contentItemId, userId, url, key, type, order });
 }
 
-export async function getMediaItemById(mediaId: number, userId: number) {
+export async function getMediaItemById(mediaId: number, _userId?: number) {
   const db = getDb();
   const result = await db.select().from(mediaItems).where(
-    and(eq(mediaItems.id, mediaId), eq(mediaItems.userId, userId))
+    eq(mediaItems.id, mediaId)
   ).limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function deleteMediaItem(mediaId: number, userId: number) {
+export async function deleteMediaItem(mediaId: number, _userId?: number) {
   const db = getDb();
   return await db.delete(mediaItems).where(
-    and(eq(mediaItems.id, mediaId), eq(mediaItems.userId, userId))
+    eq(mediaItems.id, mediaId)
   );
 }
-export async function searchContentItems(userId: number, query: string) {
+export async function searchContentItems(_userId: number, query: string) {
   const db = getDb();
   const items = await db.select().from(contentItems).where(
-    and(
-      eq(contentItems.userId, userId),
-      like(contentItems.heading, `%${query}%`)
-    )
+    like(contentItems.heading, `%${query}%`)
   ).orderBy(desc(contentItems.createdAt)).limit(100);
 
   return await Promise.all(items.map(async item => {
@@ -496,18 +490,18 @@ export async function searchContentItems(userId: number, query: string) {
 }
 
 // Reorder operations
-export async function reorderCategories(userId: number, categoryIds: number[]) {
+export async function reorderCategories(_userId: number, categoryIds: number[]) {
   const db = getDb();
   if (categoryIds.length === 0) return;
   const batchUpdates = categoryIds.map((id, index) =>
     db.update(categories)
       .set({ order: index })
-      .where(and(eq(categories.id, id), eq(categories.userId, userId)))
+      .where(eq(categories.id, id))
   );
   await db.batch(batchUpdates as [any, ...any]);
 }
 
-export async function reorderSubcategories(userId: number, categoryId: number, subcategoryIds: number[]) {
+export async function reorderSubcategories(_userId: number, categoryId: number, subcategoryIds: number[]) {
   const db = getDb();
   if (subcategoryIds.length === 0) return;
   const batchUpdates = subcategoryIds.map((id, index) =>
@@ -515,7 +509,6 @@ export async function reorderSubcategories(userId: number, categoryId: number, s
       .set({ order: index })
       .where(and(
         eq(subcategories.id, id),
-        eq(subcategories.userId, userId),
         eq(subcategories.categoryId, categoryId)
       ))
   );
@@ -550,7 +543,7 @@ export async function reorderContentInSubcategory(userId: number, subcategoryId:
   await db.batch(batchUpdates as [any, ...any]);
 }
 
-export async function reorderMediaItems(userId: number, contentItemId: number, mediaItemIds: number[]) {
+export async function reorderMediaItems(_userId: number, contentItemId: number, mediaItemIds: number[]) {
   const db = getDb();
   if (mediaItemIds.length === 0) return;
   const batchUpdates = mediaItemIds.map((id, index) =>
@@ -558,8 +551,7 @@ export async function reorderMediaItems(userId: number, contentItemId: number, m
       .set({ order: index })
       .where(and(
         eq(mediaItems.contentItemId, contentItemId),
-        eq(mediaItems.id, id),
-        eq(mediaItems.userId, userId)
+        eq(mediaItems.id, id)
       ))
   );
   await db.batch(batchUpdates as [any, ...any]);
@@ -613,12 +605,12 @@ export async function deleteSoundRecord(soundId: number) {
 }
 
 /** Assign or remove a sound from a content item */
-export async function setSoundOnContent(contentId: number, userId: number, soundId: number | null) {
+export async function setSoundOnContent(contentId: number, _userId: number, soundId: number | null) {
   const db = getDb();
   return await db
     .update(contentItems)
     .set({ soundId: soundId })
-    .where(and(eq(contentItems.id, contentId), eq(contentItems.userId, userId)));
+    .where(eq(contentItems.id, contentId));
 }
 
 /** Check how many content items reference this sound, optionally excluding a specific content item */

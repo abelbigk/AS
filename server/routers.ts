@@ -130,21 +130,9 @@ export const appRouter = router({
       return await getCategoriesByUser(ctx.user.id);
     }),
 
-    initializePredefined: protectedProcedure.mutation(async ({ ctx }) => {
-      try {
-        const existing = await getCategoriesByUser(ctx.user.id);
-        const existingNames = new Set(existing.map(c => c.name));
-        
-        for (const cat of PREDEFINED_CATEGORIES) {
-          if (!existingNames.has(cat.name)) {
-            await createCategory(ctx.user.id, cat.name, undefined, undefined, "yes");
-          }
-        }
-        
-        return await getCategoriesByUser(ctx.user.id);
-      } catch {
-        return [];
-      }
+    initializePredefined: protectedProcedure.mutation(async () => {
+      // Shared space: Return all existing categories without re-seeding per user
+      return await getCategoriesByUser();
     }),
 
     create: protectedProcedure
