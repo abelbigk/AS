@@ -26,14 +26,19 @@ export function CustomTabBar({ state, descriptors, navigation }: CustomTabBarPro
         style={[
           styles.pillContainer,
           {
-            backgroundColor: colors.pillBg,
-            borderColor: colors.glassBorder,
+            backgroundColor:
+              theme === "dark"
+                ? "rgba(18, 18, 18, 0.78)"
+                : "rgba(255, 255, 255, 0.82)",
+            borderColor:
+              theme === "dark"
+                ? "rgba(255, 255, 255, 0.12)"
+                : "rgba(0, 0, 0, 0.08)",
           },
-          theme === "light" ? styles.lightShadow : styles.darkShadow,
+          styles.shadow,
         ]}
       >
         {state.routes.map((route: any, index: number) => {
-          const { options } = descriptors[route.key];
           const isFocused = state.index === index;
           const config = TAB_CONFIG[route.name] || { label: route.name, icon: Home };
           const IconComponent = config.icon;
@@ -57,19 +62,29 @@ export function CustomTabBar({ state, descriptors, navigation }: CustomTabBarPro
               style={[
                 styles.tabButton,
                 isFocused && {
-                  backgroundColor: colors.text,
+                  backgroundColor: theme === "dark" ? "#FFFFFF" : "#0F172A",
                 },
               ]}
             >
               <IconComponent
                 size={20}
-                color={isFocused ? colors.bg : colors.textMuted}
+                color={
+                  isFocused
+                    ? theme === "dark"
+                      ? "#000000"
+                      : "#FFFFFF"
+                    : "rgba(255, 255, 255, 0.55)"
+                }
               />
               <Text
                 style={[
                   styles.tabLabel,
                   {
-                    color: isFocused ? colors.bg : colors.textMuted,
+                    color: isFocused
+                      ? theme === "dark"
+                        ? "#000000"
+                        : "#FFFFFF"
+                      : "rgba(255, 255, 255, 0.55)",
                     fontWeight: isFocused ? "700" : "500",
                   },
                 ]}
@@ -96,38 +111,38 @@ const styles = StyleSheet.create({
   pillContainer: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-around",
+    justifyContent: "space-between",
     paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 28,
+    height: 64,
+    borderRadius: 20,
     borderWidth: 1,
     width: "92%",
-    maxWidth: 440,
+    maxWidth: 672, // matching max-w-2xl
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
+      } as any,
+    }),
   },
   tabButton: {
-    flexDirection: "row",
+    flex: 1,
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    gap: 6,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    gap: 3,
   },
   tabLabel: {
-    fontSize: 12,
+    fontSize: 11,
   },
-  darkShadow: {
+  shadow: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
     elevation: 8,
-  },
-  lightShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 5,
   },
 });

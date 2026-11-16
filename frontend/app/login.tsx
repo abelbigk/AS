@@ -12,20 +12,18 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import { Lock, User, LogIn } from "lucide-react-native";
+import { Lock, User } from "lucide-react-native";
 import { trpc } from "../src/lib/trpc";
 import { useAuth } from "../src/contexts/AuthContext";
-import { useTheme } from "../src/contexts/ThemeContext";
 import { DARK_IMAGE } from "../src/lib/constants";
-import { GlassCard } from "../src/components/GlassCard";
 
 export default function LoginScreen() {
   const router = useRouter();
   const { setAuth } = useAuth();
-  const { colors } = useTheme();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: async (data) => {
@@ -37,20 +35,42 @@ export default function LoginScreen() {
     },
   });
 
-  const handleLogin = () => {
+  const registerMutation = trpc.auth.register.useMutation({
+    onSuccess: () => {
+      Alert.alert("Success", "Account created! Please sign in.");
+      setIsRegistering(false);
+      setPassword("");
+    },
+    onError: (err) => {
+      Alert.alert("Registration Failed", err.message || "Could not register");
+    },
+  });
+
+  const isLoading = loginMutation.isPending || registerMutation.isPending;
+
+  const handleSubmit = () => {
     if (!username.trim() || !password.trim()) {
-      Alert.alert("Validation", "Please enter both username and password");
+      Alert.alert("Validation", "Please fill in all fields");
       return;
     }
 
-    loginMutation.mutate({
-      username: username.trim(),
-      password: password.trim(),
-    });
+    if (isRegistering) {
+      registerMutation.mutate({
+        username: username.trim(),
+        password,
+        name: username.trim(),
+      });
+    } else {
+      loginMutation.mutate({
+        username: username.trim(),
+        password,
+      });
+    }
   };
 
   return (
     <View style={styles.container}>
+      {/* Background Image with blur overlay */}
       <Image
         source={{ uri: DARK_IMAGE }}
         style={StyleSheet.absoluteFill}
@@ -59,7 +79,7 @@ export default function LoginScreen() {
       <View
         style={[
           StyleSheet.absoluteFill,
-          { backgroundColor: "rgba(10, 10, 10, 0.85)" },
+          styles.backdropOverlay,
         ]}
       />
 
@@ -68,83 +88,102 @@ export default function LoginScreen() {
         style={styles.keyboardContainer}
       >
         <View style={styles.content}>
-          <View style={styles.logoContainer}>
-            <Text style={styles.appTitle}>AS</Text>
-            <Text style={styles.appSubtitle}>Content Organizer</Text>
+          {/* Header matching original web app */}
+          <View style={styles.header}>
+            <Text style={styles.title}>
+              {isRegistering ? "Create Account" : "Welcome"}
+            </Text>
+            <Text style={styles.subtitle}>
+              {isRegistering ? "Register to get started" : "Sign in to continue"}
+            </Text>
           </View>
 
-          <GlassCard style={styles.card}>
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Sign In</Text>
-
+          {/* Frosted Glass Form Card */}
+          <View style={styles.glassCard}>
+            {/* Username Input */}
             <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>
-                Username
-              </Text>
-              <View
-                style={[
-                  styles.inputRow,
-                  {
-                    backgroundColor: colors.surfaceHover,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <User size={18} color={colors.textSubtle} style={{ marginRight: 8 }} />
+              <Text style={styles.label}>Username</Text>
+              <View style={styles.inputWrapper}>
+                <User size={18} color="rgba(255, 255, 255, 0.4)" style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.input, { color: colors.text }]}
-                  placeholder="Enter your username"
-                  placeholderTextColor={colors.textSubtle}
+                  style={styles.input}
+                  placeholder="Enter username"
+                  placeholderTextColor="rgba(255, 255, 255, 0.4)"
                   value={username}
                   onChangeText={setUsername}
                   autoCapitalize="none"
+                  editable={!isLoading}
                 />
               </View>
             </View>
 
+            {/* Password Input */}
             <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>
-                Password
-              </Text>
-              <View
-                style={[
-                  styles.inputRow,
-                  {
-                    backgroundColor: colors.surfaceHover,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <Lock size={18} color={colors.textSubtle} style={{ marginRight: 8 }} />
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.inputWrapper}>
+                <Lock size={18} color="rgba(255, 255, 255, 0.4)" style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.input, { color: colors.text }]}
-                  placeholder="Enter your password"
-                  placeholderTextColor={colors.textSubtle}
+                  style={styles.input}
+                  placeholder="Enter password"
+                  placeholderTextColor="rgba(255, 255, 255, 0.4)"
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry
+                  editable={!isLoading}
                 />
               </View>
+              {isRegistering && (
+                <Text style={styles.hintText}>Minimum 6 characters</Text>
+              )}
             </View>
 
+            {/* White Action Button */}
             <Pressable
-              onPress={handleLogin}
-              disabled={loginMutation.isPending}
-              style={[
-                styles.loginBtn,
-                { backgroundColor: colors.accent },
-                loginMutation.isPending && { opacity: 0.6 },
+              onPress={handleSubmit}
+              disabled={isLoading}
+              style={({ pressed }) => [
+                styles.submitButton,
+                pressed && { opacity: 0.9 },
+                isLoading && { opacity: 0.6 },
               ]}
             >
-              {loginMutation.isPending ? (
-                <ActivityIndicator color="#FFF" />
+              {isLoading ? (
+                <ActivityIndicator color="#000000" />
               ) : (
-                <View style={styles.btnRow}>
-                  <LogIn size={18} color="#FFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.loginBtnText}>Log In</Text>
-                </View>
+                <Text style={styles.submitButtonText}>
+                  {isRegistering ? "Create Account" : "Sign In"}
+                </Text>
               )}
             </Pressable>
-          </GlassCard>
+
+            {/* Divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* Toggle Register/Login */}
+            <Pressable
+              onPress={() => {
+                setIsRegistering(!isRegistering);
+                setPassword("");
+              }}
+              disabled={isLoading}
+              style={styles.toggleButton}
+            >
+              <Text style={styles.toggleText}>
+                {isRegistering
+                  ? "Already have an account? Sign in"
+                  : "Don't have an account? Register"}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Footer note */}
+          <Text style={styles.footerNote}>
+            Session remains active for 7 days
+          </Text>
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -154,74 +193,143 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#0A0A0A",
+  },
+  backdropOverlay: {
+    backgroundColor: "rgba(10, 10, 10, 0.55)",
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+      } as any,
+    }),
   },
   keyboardContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
   },
   content: {
     width: "100%",
-    maxWidth: 400,
+    maxWidth: 420,
   },
-  logoContainer: {
+  header: {
     alignItems: "center",
     marginBottom: 32,
   },
-  appTitle: {
-    fontSize: 48,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    letterSpacing: -1,
-  },
-  appSubtitle: {
-    fontSize: 16,
-    color: "rgba(255, 255, 255, 0.7)",
-    marginTop: 4,
-  },
-  card: {
-    padding: 24,
-  },
-  cardTitle: {
-    fontSize: 22,
+  title: {
+    fontSize: 42,
     fontWeight: "700",
-    marginBottom: 20,
+    color: "#FFFFFF",
+    marginBottom: 8,
+    textAlign: "center",
+    letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: "rgba(255, 255, 255, 0.6)",
+    textAlign: "center",
+  },
+  glassCard: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.15)",
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 32,
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(16px)",
+        boxShadow: "0 20px 40px rgba(0,0,0,0.4)",
+      } as any,
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.35,
+        shadowRadius: 20,
+        elevation: 8,
+      },
+    }),
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 18,
   },
   label: {
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 6,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "rgba(255, 255, 255, 0.8)",
+    marginBottom: 8,
   },
-  inputRow: {
+  inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
     borderWidth: 1,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingHorizontal: 14,
     height: 48,
+  },
+  inputIcon: {
+    marginRight: 10,
   },
   input: {
     flex: 1,
     fontSize: 15,
+    color: "#FFFFFF",
+    height: "100%",
   },
-  loginBtn: {
+  hintText: {
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.45)",
+    marginTop: 6,
+  },
+  submitButton: {
+    backgroundColor: "#FFFFFF",
     height: 48,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 16,
+    marginTop: 8,
+    ...Platform.select({
+      web: {
+        cursor: "pointer",
+        transition: "all 0.2s ease",
+      } as any,
+    }),
   },
-  btnRow: {
+  submitButtonText: {
+    color: "#000000",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  dividerRow: {
     flexDirection: "row",
     alignItems: "center",
+    marginVertical: 22,
   },
-  loginBtnText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "700",
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
+  },
+  dividerText: {
+    paddingHorizontal: 12,
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.5)",
+  },
+  toggleButton: {
+    alignItems: "center",
+    paddingVertical: 4,
+  },
+  toggleText: {
+    fontSize: 14,
+    color: "rgba(255, 255, 255, 0.7)",
+    fontWeight: "500",
+  },
+  footerNote: {
+    textAlign: "center",
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.4)",
+    marginTop: 24,
   },
 });

@@ -8,16 +8,16 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Plus, ImagePlus, Check } from "lucide-react-native";
+import { ImagePlus, Check, X } from "lucide-react-native";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import { DARK_IMAGE, LIGHT_IMAGE } from "../../src/lib/constants";
-import { GlassCard } from "../../src/components/GlassCard";
 import { uploadFile } from "../../src/lib/upload";
 
 export default function AddScreen() {
@@ -33,7 +33,9 @@ export default function AddScreen() {
   const [description, setDescription] = useState("");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [mediaName, setMediaName] = useState<string>("");
+  const [mediaType, setMediaType] = useState<string>("image/jpeg");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Category form state
   const [categoryName, setCategoryName] = useState("");
@@ -53,7 +55,7 @@ export default function AddScreen() {
       router.push("/");
     },
     onError: (err) => {
-      Alert.alert("Error", err.message);
+      Alert.alert("Error", err.message || "Failed to create content");
     },
   });
 
@@ -66,19 +68,26 @@ export default function AddScreen() {
       router.push("/");
     },
     onError: (err) => {
-      Alert.alert("Error", err.message);
+      Alert.alert("Error", err.message || "Failed to create category");
     },
   });
 
   const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images", "videos"],
-      allowsEditing: true,
-      quality: 0.8,
-    });
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images", "videos"],
+        allowsEditing: true,
+        quality: 0.85,
+      });
 
-    if (!result.canceled && result.assets[0]) {
-      setMediaUri(result.assets[0].uri);
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        setMediaUri(asset.uri);
+        setMediaName(asset.fileName || `upload_${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`);
+        setMediaType(asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"));
+      }
+    } catch (e) {
+      console.error("Error picking media:", e);
     }
   };
 
@@ -92,35 +101,39 @@ export default function AddScreen() {
 
   const handleSubmitContent = async () => {
     if (!heading.trim()) {
-      Alert.alert("Validation", "Please enter a title/heading");
+      Alert.alert("Validation", "Please enter a heading");
       return;
     }
 
-    setIsUploading(true);
+    setIsSubmitting(true);
     let posterUrl: string | undefined = undefined;
     let posterKey: string | undefined = undefined;
 
-    if (mediaUri) {
-      const uploadRes = await uploadFile(
-        mediaUri,
-        `upload_${Date.now()}.jpg`,
-        "image/jpeg"
-      );
-      if (uploadRes) {
-        posterUrl = uploadRes.url;
-        posterKey = uploadRes.key;
+    try {
+      if (mediaUri) {
+        const uploadRes = await uploadFile(
+          mediaUri,
+          mediaName || `upload_${Date.now()}.jpg`,
+          mediaType
+        );
+        if (uploadRes) {
+          posterUrl = uploadRes.url;
+          posterKey = uploadRes.key;
+        }
       }
+
+      await createContent.mutateAsync({
+        heading: heading.trim(),
+        description: description.trim() || undefined,
+        categoryIds: selectedCategoryIds,
+        posterImageUrl: posterUrl,
+        posterImageKey: posterKey,
+      });
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Failed to save content");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    createContent.mutate({
-      heading: heading.trim(),
-      description: description.trim() || undefined,
-      categoryIds: selectedCategoryIds,
-      posterImageUrl: posterUrl,
-      posterImageKey: posterKey,
-    });
-
-    setIsUploading(false);
   };
 
   const handleSubmitCategory = async () => {
@@ -143,46 +156,43 @@ export default function AddScreen() {
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
-        transition={300}
       />
       <View
         style={[
           StyleSheet.absoluteFill,
-          {
-            backgroundColor:
-              theme === "dark"
-                ? "rgba(10, 10, 10, 0.82)"
-                : "rgba(248, 250, 252, 0.82)",
-          },
+          styles.backdropOverlay,
         ]}
       />
 
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: insets.top + 16, paddingBottom: 110 },
+          {
+            paddingTop: insets.top + (Platform.OS === "web" ? 32 : 16),
+            paddingBottom: 110,
+          },
         ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>
-          <Text style={[styles.title, { color: colors.text }]}>Add New</Text>
+          <Text style={styles.pageTitle}>Create</Text>
 
-          {/* Mode Switcher */}
-          <View style={[styles.modeTabs, { backgroundColor: colors.glassBg }]}>
+          {/* Mode Tabs */}
+          <View style={styles.modeTabs}>
             <Pressable
               onPress={() => setMode("content")}
               style={[
                 styles.modeTab,
-                mode === "content" && { backgroundColor: colors.text },
+                mode === "content" && styles.activeModeTab,
               ]}
             >
               <Text
                 style={[
                   styles.modeTabText,
-                  { color: mode === "content" ? colors.bg : colors.textMuted },
+                  mode === "content" && styles.activeModeTabText,
                 ]}
               >
-                Content Item
+                Content
               </Text>
             </Pressable>
 
@@ -190,13 +200,13 @@ export default function AddScreen() {
               onPress={() => setMode("category")}
               style={[
                 styles.modeTab,
-                mode === "category" && { backgroundColor: colors.text },
+                mode === "category" && styles.activeModeTab,
               ]}
             >
               <Text
                 style={[
                   styles.modeTabText,
-                  { color: mode === "category" ? colors.bg : colors.textMuted },
+                  mode === "category" && styles.activeModeTabText,
                 ]}
               >
                 Category
@@ -204,179 +214,152 @@ export default function AddScreen() {
             </Pressable>
           </View>
 
-          {/* Form */}
-          {mode === "content" ? (
-            <GlassCard style={styles.card}>
-              <Text style={[styles.label, { color: colors.text }]}>Title / Heading *</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    color: colors.text,
-                    backgroundColor: colors.surfaceHover,
-                    borderColor: colors.border,
-                  },
-                ]}
-                placeholder="e.g. Inception Movie Notes"
-                placeholderTextColor={colors.textSubtle}
-                value={heading}
-                onChangeText={setHeading}
-              />
+          {/* Form Card */}
+          <View style={styles.formCard}>
+            {mode === "content" ? (
+              <View>
+                <Text style={styles.fieldLabel}>Title / Heading *</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Enter heading..."
+                    placeholderTextColor="rgba(255, 255, 255, 0.4)"
+                    value={heading}
+                    onChangeText={setHeading}
+                  />
+                </View>
 
-              <Text style={[styles.label, { color: colors.text }]}>Description</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.textArea,
-                  {
-                    color: colors.text,
-                    backgroundColor: colors.surfaceHover,
-                    borderColor: colors.border,
-                  },
-                ]}
-                placeholder="Optional notes or details..."
-                placeholderTextColor={colors.textSubtle}
-                value={description}
-                onChangeText={setDescription}
-                multiline
-                numberOfLines={3}
-              />
+                <Text style={styles.fieldLabel}>Description</Text>
+                <View style={[styles.inputWrapper, styles.textAreaWrapper]}>
+                  <TextInput
+                    style={[styles.textInput, styles.textArea]}
+                    placeholder="Optional description or notes..."
+                    placeholderTextColor="rgba(255, 255, 255, 0.4)"
+                    value={description}
+                    onChangeText={setDescription}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </View>
 
-              {/* Category Picker Chips */}
-              <Text style={[styles.label, { color: colors.text }]}>Categories</Text>
-              <View style={styles.chipsContainer}>
-                {categories.map((cat) => {
-                  const isSelected = selectedCategoryIds.includes(cat.id);
-                  return (
-                    <Pressable
-                      key={cat.id}
-                      onPress={() => toggleCategory(cat.id)}
-                      style={[
-                        styles.chip,
-                        {
-                          backgroundColor: isSelected
-                            ? colors.accent
-                            : colors.surfaceHover,
-                          borderColor: isSelected
-                            ? colors.accent
-                            : colors.border,
-                        },
-                      ]}
-                    >
-                      {isSelected && (
-                        <Check size={14} color="#FFF" style={{ marginRight: 4 }} />
-                      )}
-                      <Text
+                {/* Categories selection chips */}
+                <Text style={styles.fieldLabel}>Categories</Text>
+                <View style={styles.chipsContainer}>
+                  {categories.map((cat) => {
+                    const isSelected = selectedCategoryIds.includes(cat.id);
+                    return (
+                      <Pressable
+                        key={cat.id}
+                        onPress={() => toggleCategory(cat.id)}
                         style={[
-                          styles.chipText,
-                          { color: isSelected ? "#FFF" : colors.text },
+                          styles.chip,
+                          isSelected && styles.activeChip,
                         ]}
                       >
-                        {cat.name}
+                        {isSelected && (
+                          <Check size={14} color="#000" style={{ marginRight: 4 }} />
+                        )}
+                        <Text
+                          style={[
+                            styles.chipText,
+                            isSelected && styles.activeChipText,
+                          ]}
+                        >
+                          {cat.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Media Attachment */}
+                <Text style={styles.fieldLabel}>Photo or Video</Text>
+                <Pressable onPress={pickImage} style={styles.mediaDropzone}>
+                  {mediaUri ? (
+                    <View style={styles.mediaPreviewContainer}>
+                      <Image source={{ uri: mediaUri }} style={styles.mediaPreview} contentFit="cover" />
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setMediaUri(null);
+                        }}
+                        style={styles.removeMediaBtn}
+                      >
+                        <X size={16} color="#FFF" />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View style={styles.mediaPrompt}>
+                      <ImagePlus size={26} color="rgba(255, 255, 255, 0.45)" />
+                      <Text style={styles.mediaPromptText}>
+                        Tap to select photo or video
                       </Text>
-                    </Pressable>
-                  );
-                })}
+                    </View>
+                  )}
+                </Pressable>
+
+                {/* Submit button */}
+                <Pressable
+                  onPress={handleSubmitContent}
+                  disabled={isSubmitting || createContent.isPending}
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    pressed && { opacity: 0.9 },
+                    (isSubmitting || createContent.isPending) && { opacity: 0.6 },
+                  ]}
+                >
+                  {isSubmitting || createContent.isPending ? (
+                    <ActivityIndicator color="#000000" />
+                  ) : (
+                    <Text style={styles.submitButtonText}>Save Content</Text>
+                  )}
+                </Pressable>
               </View>
-
-              {/* Media Picker */}
-              <Text style={[styles.label, { color: colors.text }]}>Attachment / Poster</Text>
-              <Pressable
-                onPress={pickImage}
-                style={[
-                  styles.mediaPicker,
-                  {
-                    borderColor: colors.borderHighlight,
-                    backgroundColor: colors.surfaceHover,
-                  },
-                ]}
-              >
-                {mediaUri ? (
-                  <Image
-                    source={{ uri: mediaUri }}
-                    style={styles.pickedImage}
-                    contentFit="cover"
+            ) : (
+              <View>
+                <Text style={styles.fieldLabel}>Category Name *</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Enter category name..."
+                    placeholderTextColor="rgba(255, 255, 255, 0.4)"
+                    value={categoryName}
+                    onChangeText={setCategoryName}
                   />
-                ) : (
-                  <View style={styles.mediaPickerInner}>
-                    <ImagePlus size={28} color={colors.textMuted} />
-                    <Text style={[styles.mediaPickerText, { color: colors.textMuted }]}>
-                      Tap to select image or video
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
+                </View>
 
-              <Pressable
-                onPress={handleSubmitContent}
-                disabled={isUploading || createContent.isPending}
-                style={[
-                  styles.submitBtn,
-                  { backgroundColor: colors.accent },
-                  (isUploading || createContent.isPending) && { opacity: 0.6 },
-                ]}
-              >
-                {isUploading || createContent.isPending ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <Text style={styles.submitBtnText}>Save Content</Text>
-                )}
-              </Pressable>
-            </GlassCard>
-          ) : (
-            <GlassCard style={styles.card}>
-              <Text style={[styles.label, { color: colors.text }]}>Category Name *</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    color: colors.text,
-                    backgroundColor: colors.surfaceHover,
-                    borderColor: colors.border,
-                  },
-                ]}
-                placeholder="e.g. Travel Destinations"
-                placeholderTextColor={colors.textSubtle}
-                value={categoryName}
-                onChangeText={setCategoryName}
-              />
+                <Text style={styles.fieldLabel}>Description</Text>
+                <View style={[styles.inputWrapper, styles.textAreaWrapper]}>
+                  <TextInput
+                    style={[styles.textInput, styles.textArea]}
+                    placeholder="Optional description..."
+                    placeholderTextColor="rgba(255, 255, 255, 0.4)"
+                    value={categoryDesc}
+                    onChangeText={setCategoryDesc}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </View>
 
-              <Text style={[styles.label, { color: colors.text }]}>Description</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.textArea,
-                  {
-                    color: colors.text,
-                    backgroundColor: colors.surfaceHover,
-                    borderColor: colors.border,
-                  },
-                ]}
-                placeholder="Short description of this category..."
-                placeholderTextColor={colors.textSubtle}
-                value={categoryDesc}
-                onChangeText={setCategoryDesc}
-                multiline
-                numberOfLines={3}
-              />
-
-              <Pressable
-                onPress={handleSubmitCategory}
-                disabled={createCategory.isPending}
-                style={[
-                  styles.submitBtn,
-                  { backgroundColor: colors.accent },
-                  createCategory.isPending && { opacity: 0.6 },
-                ]}
-              >
-                {createCategory.isPending ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <Text style={styles.submitBtnText}>Create Category</Text>
-                )}
-              </Pressable>
-            </GlassCard>
-          )}
+                {/* Submit Category */}
+                <Pressable
+                  onPress={handleSubmitCategory}
+                  disabled={createCategory.isPending}
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    pressed && { opacity: 0.9 },
+                    createCategory.isPending && { opacity: 0.6 },
+                  ]}
+                >
+                  {createCategory.isPending ? (
+                    <ActivityIndicator color="#000000" />
+                  ) : (
+                    <Text style={styles.submitButtonText}>Create Category</Text>
+                  )}
+                </Pressable>
+              </View>
+            )}
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -386,6 +369,15 @@ export default function AddScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#0A0A0A",
+  },
+  backdropOverlay: {
+    backgroundColor: "rgba(10, 10, 10, 0.6)",
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+      } as any,
+    }),
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -393,20 +385,23 @@ const styles = StyleSheet.create({
   },
   maxWidthWrapper: {
     width: "100%",
-    maxWidth: 640,
+    maxWidth: 672,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "800",
-    marginBottom: 20,
+  pageTitle: {
+    fontSize: 40,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    marginBottom: 24,
+    letterSpacing: -0.5,
   },
   modeTabs: {
     flexDirection: "row",
-    padding: 4,
-    borderRadius: 14,
-    marginBottom: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 20,
   },
   modeTab: {
     flex: 1,
@@ -415,78 +410,143 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
   },
+  activeModeTab: {
+    backgroundColor: "#FFFFFF",
+  },
   modeTabText: {
     fontSize: 14,
     fontWeight: "600",
+    color: "rgba(255, 255, 255, 0.6)",
   },
-  card: {
-    padding: 18,
+  activeModeTabText: {
+    color: "#000000",
   },
-  label: {
+  formCard: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.14)",
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 24,
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(16px)",
+      } as any,
+    }),
+  },
+  fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
+    color: "rgba(255, 255, 255, 0.8)",
     marginBottom: 8,
-    marginTop: 12,
+    marginTop: 14,
   },
-  input: {
-    borderRadius: 12,
+  inputWrapper: {
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
     borderWidth: 1,
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    height: 48,
+    justifyContent: "center",
+  },
+  textAreaWrapper: {
+    height: 88,
+    paddingVertical: 10,
+    justifyContent: "flex-start",
+  },
+  textInput: {
     fontSize: 15,
+    color: "#FFFFFF",
+    width: "100%",
   },
   textArea: {
-    height: 80,
+    height: "100%",
     textAlignVertical: "top",
   },
   chipsContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+    marginTop: 4,
   },
   chip: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
     borderWidth: 1,
+  },
+  activeChip: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#FFFFFF",
   },
   chipText: {
     fontSize: 13,
+    color: "rgba(255, 255, 255, 0.8)",
     fontWeight: "500",
   },
-  mediaPicker: {
+  activeChipText: {
+    color: "#000000",
+    fontWeight: "700",
+  },
+  mediaDropzone: {
     height: 140,
     borderRadius: 14,
+    borderColor: "rgba(255, 255, 255, 0.2)",
     borderWidth: 1.5,
     borderStyle: "dashed",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    alignItems: "center",
+    justifyContent: "center",
     overflow: "hidden",
+  },
+  mediaPrompt: {
     alignItems: "center",
     justifyContent: "center",
-    marginVertical: 4,
+    gap: 8,
   },
-  mediaPickerInner: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mediaPickerText: {
+  mediaPromptText: {
     fontSize: 13,
-    marginTop: 8,
+    color: "rgba(255, 255, 255, 0.5)",
   },
-  pickedImage: {
+  mediaPreviewContainer: {
+    width: "100%",
+    height: "100%",
+    position: "relative",
+  },
+  mediaPreview: {
     width: "100%",
     height: "100%",
   },
-  submitBtn: {
-    height: 48,
+  removeMediaBtn: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
     borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  submitButton: {
+    backgroundColor: "#FFFFFF",
+    height: 48,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 24,
+    ...Platform.select({
+      web: {
+        cursor: "pointer",
+      } as any,
+    }),
   },
-  submitBtnText: {
-    color: "#FFFFFF",
+  submitButtonText: {
+    color: "#000000",
     fontSize: 16,
     fontWeight: "700",
   },

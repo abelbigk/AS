@@ -127,3 +127,5 @@ android/gradle/
 # Keep android folder structure but ignore builds
 !android/
 !android/app/
+
+.expo/
