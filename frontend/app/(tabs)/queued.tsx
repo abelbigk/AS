@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   View,
   Text,
@@ -6,19 +6,47 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
+  TouchableOpacity,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Clock } from "lucide-react-native";
+import { ArrowRight } from "lucide-react-native";
+import { useRouter } from "expo-router";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
-import { DARK_IMAGE, LIGHT_IMAGE } from "../../src/lib/constants";
-import { ContentCard } from "../../src/components/ContentCard";
+import { CategoryCard } from "../../src/components/CategoryCard";
+
+const DARK_BG = "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1600&q=80";
+const LIGHT_BG = "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=1600&q=80";
+
+function SubcategoryPill({
+  subId,
+  count,
+  onPress,
+}: {
+  subId: number;
+  count: number;
+  onPress: () => void;
+}) {
+  const { data: sub } = trpc.subcategories.getById.useQuery({ subcategoryId: subId });
+
+  return (
+    <TouchableOpacity style={styles.pill} onPress={onPress} activeOpacity={0.75}>
+      <Text style={styles.pillText} numberOfLines={1}>
+        {sub?.name ?? "…"}
+      </Text>
+      <View style={styles.pillBadge}>
+        <Text style={styles.pillBadgeText}>{count}</Text>
+      </View>
+      <ArrowRight size={12} color="rgba(255,255,255,0.6)" />
+    </TouchableOpacity>
+  );
+}
 
 export default function QueuedScreen() {
   const insets = useSafeAreaInsets();
   const { theme, colors } = useTheme();
-  const utils = trpc.useUtils();
+  const router = useRouter();
 
   const {
     data: items = [],
@@ -27,19 +55,88 @@ export default function QueuedScreen() {
     isRefetching,
   } = trpc.content.listByStatus.useQuery("queued");
 
-  const updateStatus = trpc.content.updateStatus.useMutation({
-    onSuccess: () => {
-      utils.content.listByStatus.invalidate();
-    },
-  });
+  const { data: categories = [] } = trpc.categories.list.useQuery();
+  const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery();
 
-  const deleteItem = trpc.content.delete.useMutation({
-    onSuccess: () => {
-      utils.content.listByStatus.invalidate();
-    },
-  });
+  const bgImage = theme === "dark" ? DARK_BG : LIGHT_BG;
+  const overlayColor =
+    theme === "dark" ? "rgba(10,10,10,0.55)" : "rgba(255,255,255,0.65)";
 
-  const bgImage = theme === "dark" ? DARK_IMAGE : LIGHT_IMAGE;
+  // Build category groups
+  const groups = useMemo(() => {
+    // map subcategoryId -> categoryId
+    const subToCat = new Map<number, number>();
+    for (const sub of allSubcategories) {
+      if (sub.categoryId != null) {
+        subToCat.set(sub.id, sub.categoryId);
+      }
+    }
+
+    // categoryId -> { category, subIds: Set<number>, directCount: number, subCounts: Map<number, number> }
+    const map = new Map<
+      number,
+      {
+        category: (typeof categories)[0];
+        subIds: Set<number>;
+        directCount: number;
+        subCounts: Map<number, number>;
+      }
+    >();
+
+    const ensureGroup = (catId: number) => {
+      if (!map.has(catId)) {
+        const cat = categories.find((c) => c.id === catId);
+        if (cat) {
+          map.set(catId, {
+            category: cat,
+            subIds: new Set(),
+            directCount: 0,
+            subCounts: new Map(),
+          });
+        }
+      }
+      return map.get(catId);
+    };
+
+    for (const item of items) {
+      const anyItem = item as any;
+
+      // Direct category IDs on the item
+      const catIds: number[] = anyItem.categoryIds ?? (anyItem.categoryId != null ? [anyItem.categoryId] : []);
+      // Subcategory IDs on the item
+      const subIds: number[] = anyItem.subcategoryIds ?? (anyItem.subcategoryId != null ? [anyItem.subcategoryId] : []);
+
+      // For each subcategory, find parent category
+      const parentCatIdsFromSubs = new Set<number>();
+      for (const subId of subIds) {
+        const parentCatId = subToCat.get(subId);
+        if (parentCatId != null) {
+          parentCatIdsFromSubs.add(parentCatId);
+          const group = ensureGroup(parentCatId);
+          if (group) {
+            group.subIds.add(subId);
+            group.subCounts.set(subId, (group.subCounts.get(subId) ?? 0) + 1);
+          }
+        }
+      }
+
+      // For each direct category (that isn't already counted via subcategory)
+      for (const catId of catIds) {
+        if (!parentCatIdsFromSubs.has(catId)) {
+          const group = ensureGroup(catId);
+          if (group) {
+            group.directCount += 1;
+          }
+        }
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      const totalA = a.directCount + a.subIds.size;
+      const totalB = b.directCount + b.subIds.size;
+      return totalB - totalA;
+    });
+  }, [items, categories, allSubcategories]);
 
   return (
     <View style={styles.container}>
@@ -49,22 +146,12 @@ export default function QueuedScreen() {
         contentFit="cover"
         transition={300}
       />
-      <View
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            backgroundColor:
-              theme === "dark"
-                ? "rgba(10, 10, 10, 0.78)"
-                : "rgba(248, 250, 252, 0.78)",
-          },
-        ]}
-      />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor }]} />
 
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: insets.top + 16, paddingBottom: 110 },
+          { paddingTop: insets.top + 24, paddingBottom: 110 },
         ]}
         refreshControl={
           <RefreshControl
@@ -76,45 +163,54 @@ export default function QueuedScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>
-          <View style={styles.header}>
-            <View style={styles.titleRow}>
-              <Clock size={24} color={colors.accent} style={{ marginRight: 8 }} />
-              <Text style={[styles.title, { color: colors.text }]}>Queued</Text>
-            </View>
-            <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-              Items saved to watch or review later ({items.length})
-            </Text>
-          </View>
+          {/* Centered title */}
+          <Text style={styles.pageTitle}>Queue Overview</Text>
 
-          {isLoading ? (
+          {isLoading && (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={colors.accent} />
             </View>
-          ) : null}
+          )}
 
           {!isLoading && items.length === 0 && (
             <View style={styles.emptyContainer}>
-              <Clock size={48} color={colors.textSubtle} style={{ marginBottom: 12 }} />
-              <Text style={[styles.emptyText, { color: colors.text }]}>
-                No queued items
+              <Text style={[styles.emptyText, { color: "#fff" }]}>
+                Nothing queued yet
               </Text>
-              <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
-                Mark items as queued from any category to see them here.
+              <Text style={[styles.emptySubtext, { color: "rgba(255,255,255,0.6)" }]}>
+                Save items to your queue to see them grouped here.
               </Text>
             </View>
           )}
 
-          {items.map((item) => (
-            <ContentCard
-              key={item.id}
-              item={item as any}
-              onPress={() => {}}
-              onUpdateStatus={(newStatus) =>
-                updateStatus.mutate({ itemId: item.id, status: newStatus })
-              }
-              onDelete={() => deleteItem.mutate({ itemId: item.id })}
-            />
-          ))}
+          {!isLoading &&
+            groups.map(({ category, subIds, directCount, subCounts }) => (
+              <View key={category.id} style={styles.groupWrapper}>
+                <CategoryCard
+                  category={category}
+                  count={directCount > 0 ? directCount : undefined}
+                  onPress={() => router.push(`/category/${category.id}` as any)}
+                />
+
+                {subIds.size > 0 && (
+                  <View style={styles.subcategorySection}>
+                    <Text style={styles.subcategoryLabel}>SUBCATEGORIES</Text>
+                    <View style={styles.pillsRow}>
+                      {Array.from(subIds).map((subId) => (
+                        <SubcategoryPill
+                          key={subId}
+                          subId={subId}
+                          count={subCounts.get(subId) ?? 0}
+                          onPress={() =>
+                            router.push(`/subcategory/${subId}` as any)
+                          }
+                        />
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
+            ))}
         </View>
       </ScrollView>
     </View>
@@ -131,40 +227,81 @@ const styles = StyleSheet.create({
   },
   maxWidthWrapper: {
     width: "100%",
-    maxWidth: 640,
+    maxWidth: 672,
   },
-  header: {
-    marginBottom: 20,
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 26,
+  pageTitle: {
+    fontSize: 30,
     fontWeight: "800",
-  },
-  subtitle: {
-    fontSize: 14,
-    marginTop: 4,
+    color: "#fff",
+    textAlign: "center",
+    marginBottom: 24,
   },
   loadingContainer: {
-    paddingVertical: 40,
+    paddingVertical: 60,
     alignItems: "center",
   },
   emptyContainer: {
-    paddingVertical: 60,
+    paddingVertical: 80,
     alignItems: "center",
     justifyContent: "center",
   },
   emptyText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "700",
+    marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 14,
-    marginTop: 6,
     textAlign: "center",
     maxWidth: 280,
+  },
+  groupWrapper: {
+    marginBottom: 20,
+  },
+  subcategorySection: {
+    marginTop: 8,
+    paddingLeft: 12,
+    borderLeftWidth: 2,
+    borderLeftColor: "rgba(255,255,255,0.1)",
+  },
+  subcategoryLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.45)",
+    letterSpacing: 1.2,
+    marginBottom: 8,
+    textTransform: "uppercase",
+  },
+  pillsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  pillText: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.85)",
+    maxWidth: 140,
+  },
+  pillBadge: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  pillBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#fff",
   },
 });

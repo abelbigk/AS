@@ -1,28 +1,161 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
+  TextInput,
   ScrollView,
   Pressable,
   Platform,
+  Alert,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Sun, Moon, LogOut, User as UserIcon, Shield } from "lucide-react-native";
+import {
+  User,
+  Shield,
+  Moon,
+  Sun,
+  Lock,
+  ChevronRight,
+  LogOut,
+} from "lucide-react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import { useAuth } from "../../src/contexts/AuthContext";
 import { SETTINGS_DARK_IMAGE, SETTINGS_LIGHT_IMAGE } from "../../src/lib/constants";
 
+// ---------------------------------------------------------------------------
+// JWT decode helper (no external lib needed — just base64)
+// ---------------------------------------------------------------------------
+function decodeJwtExp(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // base64url → base64
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = JSON.parse(atob(b64));
+    return typeof json.exp === "number" ? json.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatTimeRemaining(exp: number): string {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const diff = exp - nowSec;
+  if (diff <= 0) return "Expired";
+  const days = Math.floor(diff / 86400);
+  const hours = Math.floor((diff % 86400) / 3600);
+  const minutes = Math.floor((diff % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h remaining`;
+  if (hours > 0) return `${hours}h ${minutes}m remaining`;
+  return `${minutes}m remaining`;
+}
+
+// ---------------------------------------------------------------------------
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { theme, colors, setTheme } = useTheme();
+  const { theme, setTheme, colors } = useTheme();
   const { user, logout } = useAuth();
 
-  const bgImage = theme === "dark" ? SETTINGS_DARK_IMAGE : SETTINGS_LIGHT_IMAGE;
+  const [sessionLabel, setSessionLabel] = useState<string>("");
+  const [pwExpanded, setPwExpanded] = useState(false);
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+
+  // Load token and compute session time
+  useEffect(() => {
+    AsyncStorage.getItem("auth_token").then((token) => {
+      if (!token) return;
+      const exp = decodeJwtExp(token);
+      if (exp !== null) setSessionLabel(formatTimeRemaining(exp));
+    });
+  }, []);
+
+  const changePassword = trpc.auth.changePassword.useMutation({
+    onSuccess: () => {
+      Alert.alert("Success", "Password changed successfully!");
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+      setPwExpanded(false);
+    },
+    onError: (err) => {
+      Alert.alert("Error", err.message || "Failed to change password.");
+    },
+  });
+
+  const handleChangePassword = () => {
+    if (!currentPw || !newPw || !confirmPw) {
+      Alert.alert("Validation", "Please fill in all password fields.");
+      return;
+    }
+    if (newPw !== confirmPw) {
+      Alert.alert("Validation", "New passwords do not match.");
+      return;
+    }
+    if (newPw.length < 6) {
+      Alert.alert("Validation", "New password must be at least 6 characters.");
+      return;
+    }
+    changePassword.mutate({ currentPassword: currentPw, newPassword: newPw });
+  };
+
+  const handleLogout = async () => {
+    Alert.alert("Log Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Log Out",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+        },
+      },
+    ]);
+  };
+
+  const bgImage =
+    theme === "dark" ? SETTINGS_DARK_IMAGE : SETTINGS_LIGHT_IMAGE;
+  const overlayColor =
+    theme === "dark" ? "rgba(10,10,10,0.55)" : "rgba(255,255,255,0.65)";
+
+  const glassCard = {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+  } as const;
+
+  const inputStyle = {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderRadius: 12,
+    color: colors.text,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    marginBottom: 10,
+  } as const;
+
+  const sectionHeader = {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    letterSpacing: 1.2,
+    color: colors.textSubtle,
+    textTransform: "uppercase" as const,
+    marginBottom: 10,
+    marginTop: 8,
+  };
 
   return (
     <View style={styles.container}>
+      {/* Background */}
       <Image
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
@@ -31,83 +164,94 @@ export default function SettingsScreen() {
       <View
         style={[
           StyleSheet.absoluteFill,
-          styles.backdropOverlay,
+          {
+            backgroundColor: overlayColor,
+            ...(Platform.OS === "web"
+              ? ({ backdropFilter: "blur(20px)" } as object)
+              : {}),
+          },
         ]}
       />
 
       <ScrollView
         contentContainerStyle={[
-          styles.scrollContent,
-          {
-            paddingTop: insets.top + (Platform.OS === "web" ? 32 : 16),
-            paddingBottom: 110,
-          },
+          styles.scroll,
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 },
         ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.maxWidthWrapper}>
-          <Text style={styles.pageTitle}>Settings</Text>
+        <View style={styles.wrapper}>
+          {/* Page title */}
+          <Text style={[styles.pageTitle, { color: colors.text }]}>
+            Settings
+          </Text>
 
-          {/* User Profile Card */}
-          <View style={styles.glassCard}>
+          {/* ---- User Card ---- */}
+          <View style={glassCard}>
             <View style={styles.userRow}>
+              {/* Avatar */}
               <View style={styles.avatar}>
-                <UserIcon size={24} color="#FFFFFF" />
+                <User size={24} color="#FFFFFF" />
               </View>
-              <View style={styles.userInfo}>
-                <Text style={styles.username}>
-                  {user?.username || "Guest User"}
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.username, { color: colors.text }]}>
+                  {user?.username ?? "User"}
                 </Text>
-                <View style={styles.roleRow}>
-                  <Shield size={12} color="rgba(255, 255, 255, 0.7)" />
-                  <Text style={styles.roleText}>
-                    {user?.role || "Member"}
-                  </Text>
-                </View>
+                {user?.role && (
+                  <View style={styles.roleBadge}>
+                    <Shield size={12} color="#93C5FD" />
+                    <Text style={styles.roleText}>{user.role}</Text>
+                  </View>
+                )}
               </View>
             </View>
+            {sessionLabel ? (
+              <Text style={[styles.sessionText, { color: colors.textMuted }]}>
+                Session: {sessionLabel}
+              </Text>
+            ) : null}
           </View>
 
-          {/* Theme Preference */}
-          <Text style={styles.sectionHeading}>APPEARANCE</Text>
-          <View style={styles.glassCard}>
-            <View style={styles.themeOptions}>
+          {/* ---- APPEARANCE ---- */}
+          <Text style={sectionHeader}>Appearance</Text>
+          <View style={glassCard}>
+            <View style={styles.themeRow}>
               <Pressable
-                onPress={() => setTheme("dark")}
                 style={[
-                  styles.themeOptionBtn,
-                  theme === "dark" && styles.activeThemeBtn,
+                  styles.themeBtn,
+                  theme === "dark" && styles.themeBtnActive,
                 ]}
+                onPress={() => setTheme("dark")}
               >
                 <Moon
-                  size={18}
-                  color={theme === "dark" ? "#000000" : "rgba(255, 255, 255, 0.6)"}
+                  size={16}
+                  color={theme === "dark" ? "#000000" : colors.textMuted}
                 />
                 <Text
                   style={[
-                    styles.themeOptionText,
-                    theme === "dark" && styles.activeThemeText,
+                    styles.themeBtnText,
+                    { color: theme === "dark" ? "#000000" : colors.textMuted },
                   ]}
                 >
                   Dark Mode
                 </Text>
               </Pressable>
-
               <Pressable
-                onPress={() => setTheme("light")}
                 style={[
-                  styles.themeOptionBtn,
-                  theme === "light" && styles.activeThemeBtn,
+                  styles.themeBtn,
+                  theme === "light" && styles.themeBtnActive,
                 ]}
+                onPress={() => setTheme("light")}
               >
                 <Sun
-                  size={18}
-                  color={theme === "light" ? "#000000" : "rgba(255, 255, 255, 0.6)"}
+                  size={16}
+                  color={theme === "light" ? "#000000" : colors.textMuted}
                 />
                 <Text
                   style={[
-                    styles.themeOptionText,
-                    theme === "light" && styles.activeThemeText,
+                    styles.themeBtnText,
+                    { color: theme === "light" ? "#000000" : colors.textMuted },
                   ]}
                 >
                   Light Mode
@@ -116,18 +260,90 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {/* Logout Action */}
-          <Text style={styles.sectionHeading}>ACCOUNT</Text>
-          <View style={styles.glassCard}>
+          {/* ---- ACCOUNT ---- */}
+          <Text style={sectionHeader}>Account</Text>
+          <View style={glassCard}>
+            {/* Change Password row */}
             <Pressable
-              onPress={logout}
-              style={({ pressed }) => [
-                styles.logoutBtn,
-                pressed && { opacity: 0.7 },
-              ]}
+              style={styles.settingsRow}
+              onPress={() => setPwExpanded((v) => !v)}
             >
-              <LogOut size={18} color="#EF4444" style={{ marginRight: 10 }} />
-              <Text style={styles.logoutText}>Log Out</Text>
+              <Lock size={18} color={colors.text} />
+              <Text style={[styles.rowLabel, { color: colors.text }]}>
+                Change Password
+              </Text>
+              <ChevronRight
+                size={18}
+                color={colors.textMuted}
+                style={{
+                  transform: [{ rotate: pwExpanded ? "90deg" : "0deg" }],
+                }}
+              />
+            </Pressable>
+
+            {/* Inline change-password form */}
+            {pwExpanded && (
+              <View style={{ marginTop: 16 }}>
+                <TextInput
+                  style={inputStyle}
+                  value={currentPw}
+                  onChangeText={setCurrentPw}
+                  placeholder="Current password"
+                  placeholderTextColor={colors.textSubtle}
+                  secureTextEntry
+                />
+                <TextInput
+                  style={inputStyle}
+                  value={newPw}
+                  onChangeText={setNewPw}
+                  placeholder="New password"
+                  placeholderTextColor={colors.textSubtle}
+                  secureTextEntry
+                />
+                <TextInput
+                  style={inputStyle}
+                  value={confirmPw}
+                  onChangeText={setConfirmPw}
+                  placeholder="Confirm new password"
+                  placeholderTextColor={colors.textSubtle}
+                  secureTextEntry
+                />
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    { opacity: pressed || changePassword.isPending ? 0.75 : 1 },
+                  ]}
+                  onPress={handleChangePassword}
+                  disabled={changePassword.isPending}
+                >
+                  <Text style={styles.submitButtonText}>
+                    {changePassword.isPending
+                      ? "Changing..."
+                      : "Change Password"}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+
+            {/* Divider */}
+            <View
+              style={[
+                styles.divider,
+                { backgroundColor: colors.border, marginVertical: 16 },
+              ]}
+            />
+
+            {/* Logout row */}
+            <Pressable style={styles.settingsRow} onPress={handleLogout}>
+              <LogOut size={18} color="#EF4444" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.rowLabel, { color: "#EF4444" }]}>
+                  Log Out
+                </Text>
+                <Text style={[styles.rowSubtitle, { color: colors.textMuted }]}>
+                  Sign out of your account
+                </Text>
+              </View>
             </Pressable>
           </View>
         </View>
@@ -139,90 +355,61 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0A0A0A",
   },
-  backdropOverlay: {
-    backgroundColor: "rgba(10, 10, 10, 0.65)",
-    ...Platform.select({
-      web: {
-        backdropFilter: "blur(20px)",
-      } as any,
-    }),
-  },
-  scrollContent: {
+  scroll: {
+    flexGrow: 1,
     paddingHorizontal: 16,
-    alignItems: "center",
   },
-  maxWidthWrapper: {
-    width: "100%",
+  wrapper: {
     maxWidth: 672,
+    width: "100%",
+    alignSelf: "center",
   },
   pageTitle: {
     fontSize: 40,
     fontWeight: "700",
-    color: "#FFFFFF",
     marginBottom: 24,
     letterSpacing: -0.5,
-  },
-  sectionHeading: {
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginTop: 20,
-    marginBottom: 8,
-    marginLeft: 4,
-    color: "rgba(255, 255, 255, 0.45)",
-  },
-  glassCard: {
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderColor: "rgba(255, 255, 255, 0.14)",
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 20,
-    ...Platform.select({
-      web: {
-        backdropFilter: "blur(16px)",
-      } as any,
-    }),
   },
   userRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 14,
+    marginBottom: 10,
   },
   avatar: {
     width: 48,
     height: 48,
     borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.15)",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    marginRight: 14,
-  },
-  userInfo: {
-    flex: 1,
   },
   username: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "600",
   },
-  roleRow: {
+  roleBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: 2,
+    marginTop: 4,
   },
   roleText: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "rgba(255, 255, 255, 0.65)",
+    color: "#93C5FD",
+    fontWeight: "500",
     textTransform: "capitalize",
   },
-  themeOptions: {
-    flexDirection: "row",
-    gap: 12,
+  sessionText: {
+    fontSize: 13,
+    marginTop: 2,
   },
-  themeOptionBtn: {
+  themeRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  themeBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
@@ -230,28 +417,46 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "transparent",
   },
-  activeThemeBtn: {
+  themeBtnActive: {
     backgroundColor: "#FFFFFF",
+    borderColor: "#FFFFFF",
   },
-  themeOptionText: {
+  themeBtnText: {
     fontSize: 14,
-    fontWeight: "500",
-    color: "rgba(255, 255, 255, 0.6)",
+    fontWeight: "600",
   },
-  activeThemeText: {
-    color: "#000000",
-    fontWeight: "700",
-  },
-  logoutBtn: {
+  settingsRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 4,
+    gap: 12,
   },
-  logoutText: {
+  rowLabel: {
+    flex: 1,
     fontSize: 15,
-    fontWeight: "600",
-    color: "#EF4444",
+    fontWeight: "500",
+  },
+  rowSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  divider: {
+    height: 1,
+    width: "100%",
+  },
+  submitButton: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  submitButtonText: {
+    color: "#000000",
+    fontWeight: "700",
+    fontSize: 15,
   },
 });
