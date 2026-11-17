@@ -57,15 +57,6 @@ export default function Settings() {
     (theme as "light" | "dark") || "dark"
   );
   const [contentToCategorize, setContentToCategorize] = useState<ContentItem | null>(null);
-  const [sessionTimeRemaining, setSessionTimeRemaining] = useState<string | null>(null);
-  
-  // Update session time every minute
-  useEffect(() => {
-    const updateTime = () => setSessionTimeRemaining(getTokenTimeRemaining());
-    updateTime();
-    const interval = setInterval(updateTime, 60000); // Update every minute
-    return () => clearInterval(interval);
-  }, []);
   
   // Change password state
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -387,14 +378,6 @@ export default function Settings() {
                   </div>
                 </div>
               </button>
-
-              {/* Session Time Remaining */}
-              {sessionTimeRemaining && (
-                <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-500 dark:text-white/40">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Session expires in {sessionTimeRemaining}</span>
-                </div>
-              )}
             </div>
           </div>
 

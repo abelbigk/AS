@@ -12,6 +12,7 @@ import { getTrpcUrl } from "../src/lib/config";
 import { ThemeProvider, useTheme } from "../src/contexts/ThemeContext";
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { WebContainer } from "../src/components/WebContainer";
+import { LocationTracker } from "../src/services/LocationTracker";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -60,6 +61,7 @@ function RootNavigation() {
           <Stack.Screen name="category/[id]" options={{ headerShown: false }} />
           <Stack.Screen name="subcategory/[id]" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen name="loc" options={{ headerShown: false }} />
         </Stack>
       </AuthGate>
     </WebContainer>
@@ -67,7 +69,19 @@ function RootNavigation() {
 }
 
 export default function RootLayout() {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 1000 * 60 * 3, // 3 minutes cache: instant tab switching
+            gcTime: 1000 * 60 * 15, // 15 minutes cache retention
+            refetchOnWindowFocus: false,
+            retry: 1,
+          },
+        },
+      })
+  );
   const [trpcClient] = useState(() =>
     trpc.createClient({
       links: [
@@ -96,6 +110,7 @@ export default function RootLayout() {
           <QueryClientProvider client={queryClient}>
             <ThemeProvider>
               <AuthProvider>
+                <LocationTracker />
                 <RootNavigation />
               </AuthProvider>
             </ThemeProvider>

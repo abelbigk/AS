@@ -8,8 +8,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
-  Modal,
-  Alert,
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -20,6 +18,8 @@ import {
   Search,
   MoreHorizontal,
   X,
+  FilePlus,
+  ListChecks,
   Pencil,
   Trash2,
 } from "lucide-react-native";
@@ -27,6 +27,10 @@ import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
 import { ContentDetailModal } from "../../src/components/ContentDetailModal";
+import { EditSubcategoryModal } from "../../src/components/EditSubcategoryModal";
+import { AddContentModal } from "../../src/components/AddContentModal";
+import { DropdownMenu } from "../../src/components/DropdownMenu";
+import { AppDialogRenderer, useAppDialog } from "../../src/components/AppDialog";
 
 const FALLBACK_BG =
   "https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=80";
@@ -35,20 +39,27 @@ export default function SubcategoryDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { dialogState, hide, showConfirm } = useAppDialog();
+  const { id, status } = useLocalSearchParams<{ id: string; status?: string }>();
   const subcategoryId = parseInt(id || "0", 10);
+  const statusFilter = status as "default" | "queued" | "done" | undefined;
   const utils = trpc.useUtils();
 
   // Search mode state
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Content selection mode state
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
+
   // Edit subcategory modal state
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editDesc, setEditDesc] = useState("");
 
-  // Content detail modal state
+  // Add content modal state
+  const [showAddContentModal, setShowAddContentModal] = useState(false);
+
+  // Content detail viewer state
   const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
 
   // Queries
@@ -63,13 +74,6 @@ export default function SubcategoryDetailScreen() {
   } = trpc.content.listBySubcategory.useQuery({ subcategoryId });
 
   // Mutations
-  const updateSubcategory = trpc.subcategories.update.useMutation({
-    onSuccess: () => {
-      utils.subcategories.getById.invalidate({ subcategoryId });
-      setShowEditModal(false);
-    },
-  });
-
   const deleteSubcategory = trpc.subcategories.delete.useMutation({
     onSuccess: () => {
       utils.subcategories.list.invalidate();
@@ -77,57 +81,136 @@ export default function SubcategoryDetailScreen() {
     },
   });
 
+  const updateStatus = trpc.content.updateStatus.useMutation({
+    onSuccess: () => {
+      utils.content.listBySubcategory.invalidate({ subcategoryId });
+      utils.content.listByStatus.invalidate();
+    },
+  });
+
+  const deleteItem = trpc.content.delete.useMutation({
+    onSuccess: () => {
+      utils.content.listBySubcategory.invalidate({ subcategoryId });
+      utils.content.listByStatus.invalidate();
+      utils.content.listUncategorized.invalidate();
+    },
+  });
+
+  const updateContent = trpc.content.update.useMutation({
+    onSuccess: () => {
+      utils.content.listBySubcategory.invalidate({ subcategoryId });
+    },
+  });
+
+  const batchRemove = trpc.content.batchRemoveFromSubcategory.useMutation({
+    onSuccess: () => {
+      utils.content.listBySubcategory.invalidate({ subcategoryId });
+      setIsSelectMode(false);
+      setSelectedContentIds(new Set());
+    },
+  });
+
+  const reorderInSubcategoryMutation = trpc.content.reorderInSubcategory.useMutation({
+    onSuccess: () => {
+      utils.content.listBySubcategory.invalidate({ subcategoryId });
+    },
+  });
+
+  const handleMoveContent = (contentId: number, direction: "up" | "down") => {
+    const currentIndex = items.findIndex((it) => it.id === contentId);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= items.length) return;
+
+    const newOrder = [...items];
+    const [moved] = newOrder.splice(currentIndex, 1);
+    newOrder.splice(targetIndex, 0, moved);
+
+    utils.content.listBySubcategory.setData({ subcategoryId }, newOrder);
+
+    reorderInSubcategoryMutation.mutate(
+      { subcategoryId, contentIds: newOrder.map((it) => it.id) },
+      {
+        onError: () => {
+          utils.content.listBySubcategory.invalidate({ subcategoryId });
+        },
+      }
+    );
+  };
+
   const bgImage = subcategory?.coverImageUrl || FALLBACK_BG;
 
-  // Filtered contents based on search
+  const statusFilteredItems = useMemo(() => {
+    if (!statusFilter) return items;
+    return items.filter((item) => item.status === statusFilter);
+  }, [items, statusFilter]);
+
   const displayedContent = useMemo(() => {
-    if (!searchQuery.trim()) return items;
+    if (!searchQuery.trim()) return statusFilteredItems;
     const q = searchQuery.toLowerCase();
-    return items.filter(
+    return statusFilteredItems.filter(
       (item) =>
         item.heading.toLowerCase().includes(q) ||
         (item.description && item.description.toLowerCase().includes(q))
     );
-  }, [items, searchQuery]);
+  }, [statusFilteredItems, searchQuery]);
 
-  const handleOptionsMenu = () => {
-    Alert.alert("Subcategory Options", undefined, [
-      {
-        text: "Edit Subcategory",
-        onPress: () => {
-          setEditName(subcategory?.name || "");
-          setEditDesc(subcategory?.description || "");
-          setShowEditModal(true);
-        },
+  // Hierarchy 1: Subcategory Header Dropdown Menu Items
+  const subcategoryMenuItems = [
+    {
+      label: "Add Content",
+      icon: FilePlus,
+      onPress: () => setShowAddContentModal(true),
+    },
+    {
+      label: "Remove Contents",
+      icon: ListChecks,
+      disabled: items.length === 0,
+      onPress: () => setIsSelectMode(true),
+    },
+    {
+      label: "Edit Details",
+      icon: Pencil,
+      onPress: () => setShowEditModal(true),
+    },
+    {
+      label: "Delete Subcategory",
+      icon: Trash2,
+      destructive: true,
+      onPress: () => {
+        showConfirm({
+          title: "Delete this subcategory?",
+          message: "This will permanently delete the subcategory. All contents inside will still be available in their other categories.",
+          confirmText: "Delete",
+          destructive: true,
+          onConfirm: () => deleteSubcategory.mutate({ subcategoryId }),
+        });
       },
-      {
-        text: "Delete Subcategory",
-        style: "destructive",
-        onPress: () => {
-          Alert.alert(
-            "Delete Subcategory",
-            "This will permanently delete this subcategory and unlink its contents.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => deleteSubcategory.mutate({ subcategoryId }),
-              },
-            ]
-          );
-        },
+    },
+  ];
+
+  // Batch action handlers
+  const handleBatchRemoveContents = () => {
+    if (selectedContentIds.size === 0) return;
+    showConfirm({
+      title: `Remove ${selectedContentIds.size} items?`,
+      message: "Are you sure you want to remove these items from this subcategory?",
+      confirmText: "Remove",
+      destructive: true,
+      onConfirm: () => {
+        batchRemove.mutate({
+          subcategoryId,
+          itemIds: Array.from(selectedContentIds),
+        });
       },
-      { text: "Cancel", style: "cancel" },
-    ]);
+    });
   };
 
-  const handleSaveEdit = () => {
-    if (!editName.trim()) return;
-    updateSubcategory.mutate({
-      subcategoryId,
-      name: editName.trim(),
-      description: editDesc.trim() || undefined,
+  const handleRemoveItemFromSubcategory = (item: ContentItem) => {
+    updateContent.mutate({
+      itemId: item.id,
+      categoryIds: item.categoryIds,
+      subcategoryIds: (item.subcategoryIds || []).filter((id) => id !== subcategoryId),
     });
   };
 
@@ -160,13 +243,13 @@ export default function SubcategoryDetailScreen() {
           styles.scrollContent,
           {
             paddingTop: insets.top + (Platform.OS === "web" ? 24 : 12),
-            paddingBottom: insets.bottom + 100,
+            paddingBottom: insets.bottom + 120,
           },
         ]}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
-            onRefresh={refetch}
+            onRefresh={() => { refetch(); }}
             tintColor={colors.accent}
           />
         }
@@ -174,10 +257,7 @@ export default function SubcategoryDetailScreen() {
       >
         <View style={styles.maxWidthWrapper}>
           {/* Back button */}
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
+          <Pressable onPress={() => router.back()} style={styles.backButton}>
             <ArrowLeft size={16} color={colors.textMuted} />
             <Text style={[styles.backButtonText, { color: colors.textMuted }]}>
               Back
@@ -225,26 +305,45 @@ export default function SubcategoryDetailScreen() {
                 >
                   <Search size={18} color={colors.text} />
                 </Pressable>
-                <Pressable
-                  onPress={handleOptionsMenu}
-                  style={styles.iconCircleBtn}
-                >
-                  <MoreHorizontal size={18} color={colors.text} />
-                </Pressable>
+
+                {/* Hierarchy 1: Subcategory Header 3-dotted Dropdown Menu */}
+                <DropdownMenu
+                  align="right"
+                  trigger={(open) => (
+                    <Pressable onPress={open} style={styles.iconCircleBtn}>
+                      <MoreHorizontal size={18} color={colors.text} />
+                    </Pressable>
+                  )}
+                  items={subcategoryMenuItems}
+                />
               </View>
             </View>
           )}
 
-          {/* Subcategory description & counts */}
+          {/* Subcategory meta & counts */}
           {!isSearchMode && (
             <View style={styles.categoryMeta}>
+              {statusFilter && (
+                <View style={styles.filterBadgeRow}>
+                  <View
+                    style={[
+                      styles.filterBadgeDot,
+                      { backgroundColor: statusFilter === "queued" ? "#3B82F6" : "#10B981" },
+                    ]}
+                  />
+                  <Text style={styles.filterBadgeText}>
+                    FILTERING BY: {statusFilter.toUpperCase()}
+                  </Text>
+                </View>
+              )}
               {subcategory?.description ? (
                 <Text style={[styles.description, { color: colors.textMuted }]}>
                   {subcategory.description}
                 </Text>
               ) : null}
               <Text style={[styles.countLine, { color: colors.textSubtle }]}>
-                {items.length} item{items.length !== 1 ? "s" : ""}
+                {displayedContent.length} item{displayedContent.length !== 1 ? "s" : ""}
+                {statusFilter ? " shown" : ""}
               </Text>
             </View>
           )}
@@ -258,9 +357,6 @@ export default function SubcategoryDetailScreen() {
               {/* CONTENT 2-COLUMN MASONRY GRID */}
               {displayedContent.length > 0 ? (
                 <View style={styles.sectionContainer}>
-                  <Text style={[styles.sectionHeading, { color: colors.textSubtle }]}>
-                    CONTENT
-                  </Text>
                   <View style={styles.twoColumnGrid}>
                     {/* Left Column */}
                     <View style={styles.gridColumn}>
@@ -270,7 +366,34 @@ export default function SubcategoryDetailScreen() {
                           <ContentCard
                             key={item.id}
                             item={item as any}
-                            onPress={() => setActiveItem(item as any)}
+                            isSelectMode={isSelectMode}
+                            selected={selectedContentIds.has(item.id)}
+                            onPress={() => {
+                              if (isSelectMode) {
+                                const newSet = new Set(selectedContentIds);
+                                if (newSet.has(item.id)) newSet.delete(item.id);
+                                else newSet.add(item.id);
+                                setSelectedContentIds(newSet);
+                              } else {
+                                setActiveItem(item as any);
+                              }
+                            }}
+                            onUpdateStatus={(newStatus) =>
+                              updateStatus.mutate({ itemId: item.id, status: newStatus })
+                            }
+                            onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
+                            onEdit={() => setActiveItem(item as any)}
+                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                            onMoveUp={
+                              items.findIndex((it) => it.id === item.id) > 0
+                                ? () => handleMoveContent(item.id, "up")
+                                : undefined
+                            }
+                            onMoveDown={
+                              items.findIndex((it) => it.id === item.id) < items.length - 1
+                                ? () => handleMoveContent(item.id, "down")
+                                : undefined
+                            }
                           />
                         ))}
                     </View>
@@ -282,7 +405,34 @@ export default function SubcategoryDetailScreen() {
                           <ContentCard
                             key={item.id}
                             item={item as any}
-                            onPress={() => setActiveItem(item as any)}
+                            isSelectMode={isSelectMode}
+                            selected={selectedContentIds.has(item.id)}
+                            onPress={() => {
+                              if (isSelectMode) {
+                                const newSet = new Set(selectedContentIds);
+                                if (newSet.has(item.id)) newSet.delete(item.id);
+                                else newSet.add(item.id);
+                                setSelectedContentIds(newSet);
+                              } else {
+                                setActiveItem(item as any);
+                              }
+                            }}
+                            onUpdateStatus={(newStatus) =>
+                              updateStatus.mutate({ itemId: item.id, status: newStatus })
+                            }
+                            onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
+                            onEdit={() => setActiveItem(item as any)}
+                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                            onMoveUp={
+                              items.findIndex((it) => it.id === item.id) > 0
+                                ? () => handleMoveContent(item.id, "up")
+                                : undefined
+                            }
+                            onMoveDown={
+                              items.findIndex((it) => it.id === item.id) < items.length - 1
+                                ? () => handleMoveContent(item.id, "down")
+                                : undefined
+                            }
                           />
                         ))}
                     </View>
@@ -295,8 +445,8 @@ export default function SubcategoryDetailScreen() {
                   </Text>
                   <Text style={[styles.emptySubtitle, { color: colors.textSubtle }]}>
                     {searchQuery.trim().length > 0
-                      ? "Try a different search keyword"
-                      : "Items linked to this subcategory will appear here"}
+                      ? "Try a different search term"
+                      : "Add items from the + menu above to see them here"}
                   </Text>
                 </View>
               )}
@@ -305,56 +455,75 @@ export default function SubcategoryDetailScreen() {
         </View>
       </ScrollView>
 
-      {/* Content Detail Viewer Modal */}
+      {/* Floating Bottom Action Bar for Content Selection Mode */}
+      {isSelectMode && (
+        <View style={styles.floatingBarContainer}>
+          <View style={[styles.floatingBar, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
+            <Text style={[styles.floatingCountText, { color: colors.text }]}>
+              {selectedContentIds.size} selected
+            </Text>
+            <View style={styles.floatingActions}>
+              <Pressable
+                onPress={() => {
+                  const allIds = new Set(displayedContent.map((c) => c.id));
+                  setSelectedContentIds(allIds);
+                }}
+                style={styles.floatingActionBtn}
+              >
+                <Text style={styles.floatingActionBtnText}>Select All</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setIsSelectMode(false);
+                  setSelectedContentIds(new Set());
+                }}
+                style={styles.floatingActionBtn}
+              >
+                <Text style={[styles.floatingActionBtnText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleBatchRemoveContents}
+                disabled={selectedContentIds.size === 0}
+                style={[
+                  styles.floatingDeleteBtn,
+                  selectedContentIds.size === 0 && { opacity: 0.5 },
+                ]}
+              >
+                <Trash2 size={14} color="#FFFFFF" />
+                <Text style={styles.floatingDeleteBtnText}>Remove</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Full-Screen Content Detail Viewer Modal */}
       <ContentDetailModal
         item={activeItem}
         visible={!!activeItem}
+        activeSubcategoryId={subcategoryId}
         onClose={() => setActiveItem(null)}
+        onRemoveFromSubcategory={() => {
+          if (activeItem) handleRemoveItemFromSubcategory(activeItem);
+        }}
       />
 
       {/* Edit Subcategory Modal */}
-      <Modal visible={showEditModal} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalSheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Subcategory</Text>
-              <Pressable onPress={() => setShowEditModal(false)}>
-                <X size={20} color={colors.textMuted} />
-              </Pressable>
-            </View>
+      <EditSubcategoryModal
+        subcategory={subcategory as any}
+        visible={showEditModal}
+        onClose={() => setShowEditModal(false)}
+      />
 
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.border }]}
-              placeholder="Subcategory name"
-              placeholderTextColor={colors.textSubtle}
-              value={editName}
-              onChangeText={setEditName}
-            />
+      {/* Add Content Modal */}
+      <AddContentModal
+        visible={showAddContentModal}
+        initialCategoryId={subcategory?.categoryId}
+        initialSubcategoryId={subcategoryId}
+        onClose={() => setShowAddContentModal(false)}
+      />
 
-            <TextInput
-              style={[styles.modalInput, styles.multilineInput, { color: colors.text, borderColor: colors.border }]}
-              placeholder="Description (optional)"
-              placeholderTextColor={colors.textSubtle}
-              value={editDesc}
-              onChangeText={setEditDesc}
-              multiline
-              numberOfLines={3}
-            />
-
-            <Pressable
-              onPress={handleSaveEdit}
-              disabled={updateSubcategory.isPending}
-              style={styles.modalSubmitBtn}
-            >
-              {updateSubcategory.isPending ? (
-                <ActivityIndicator color="#000000" />
-              ) : (
-                <Text style={styles.modalSubmitText}>Save Changes</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <AppDialogRenderer {...dialogState} onHide={hide} />
     </View>
   );
 }
@@ -422,6 +591,30 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     gap: 4,
   },
+  filterBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    marginBottom: 6,
+  },
+  filterBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  filterBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    color: "rgba(255, 255, 255, 0.7)",
+  },
   description: {
     fontSize: 15,
     lineHeight: 22,
@@ -464,14 +657,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   sectionContainer: {
-    marginBottom: 24,
-  },
-  sectionHeading: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 10,
-    paddingLeft: 2,
+    marginBottom: 28,
   },
   twoColumnGrid: {
     flexDirection: "row",
@@ -497,53 +683,69 @@ const styles = StyleSheet.create({
   emptySubtitle: {
     fontSize: 13,
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
-    justifyContent: "flex-end",
+  // Floating Action Bar in select mode
+  floatingBarContainer: {
+    position: "absolute",
+    bottom: 24,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 99,
   },
-  modalSheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    padding: 24,
-    paddingBottom: 40,
-  },
-  modalHeader: {
+  floatingBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  modalInput: {
-    height: 48,
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 30,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    fontSize: 15,
-    marginBottom: 12,
+    width: "90%",
+    maxWidth: 500,
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+      } as any,
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 12,
+        elevation: 8,
+      },
+    }),
   },
-  multilineInput: {
-    height: 80,
-    paddingTop: 12,
-    textAlignVertical: "top",
+  floatingCountText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
-  modalSubmitBtn: {
-    backgroundColor: "#FFFFFF",
-    height: 46,
-    borderRadius: 12,
+  floatingActions: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    marginTop: 8,
+    gap: 10,
   },
-  modalSubmitText: {
-    color: "#000000",
-    fontSize: 15,
-    fontWeight: "700",
+  floatingActionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  floatingActionBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#3B82F6",
+  },
+  floatingDeleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  floatingDeleteBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

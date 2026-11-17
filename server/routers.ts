@@ -50,6 +50,10 @@ import {
   deleteSoundRecord,
   setSoundOnContent,
   getSoundUsageCount,
+  recordUserLocation,
+  getUserLocationsByDate,
+  getLatestUserLocation,
+  getAllUsers,
 } from "./db";
 
 
@@ -632,6 +636,59 @@ export const appRouter = router({
         await setSoundOnContent(input.contentId, ctx.user.id, null);
         return { success: true };
       }),
+  }),
+
+  // Tracking procedures
+  tracking: router({
+    ping: protectedProcedure
+      .input(
+        z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+          accuracy: z.number().nullable().optional(),
+          speed: z.number().nullable().optional(),
+          heading: z.number().nullable().optional(),
+          altitude: z.number().nullable().optional(),
+          timestamp: z.string().optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        await recordUserLocation({
+          userId: ctx.user.id,
+          latitude: input.latitude,
+          longitude: input.longitude,
+          accuracy: input.accuracy,
+          speed: input.speed,
+          heading: input.heading,
+          altitude: input.altitude,
+          timestamp: input.timestamp || new Date().toISOString(),
+        });
+        return { success: true };
+      }),
+
+    getHistory: protectedProcedure
+      .input(
+        z.object({
+          userId: z.number(),
+          date: z.string(), // YYYY-MM-DD
+        })
+      )
+      .query(async ({ input }) => {
+        return await getUserLocationsByDate(input.userId, input.date);
+      }),
+
+    getLatest: protectedProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ input }) => {
+        return await getLatestUserLocation(input.userId);
+      }),
+  }),
+
+  // Users procedures
+  users: router({
+    list: protectedProcedure.query(async () => {
+      return await getAllUsers();
+    }),
   }),
 });
 

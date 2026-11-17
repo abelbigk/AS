@@ -34,7 +34,8 @@ function getAllowedOrigins(): string[] {
 }
 
 const allowedOrigins = getAllowedOrigins();
-const localhostPattern = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const localhostPattern = /^(http|https):\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const mobileSchemePattern = /^(capacitor|ionic|file|exp|asapp):\/\//;
 
 export function isCorsOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
@@ -44,8 +45,13 @@ export function isCorsOriginAllowed(origin: string | undefined): boolean {
     return true;
   }
   
-  // Allow any localhost variant (including for testing local app against production backend)
+  // Allow any localhost variant (including https and custom dev ports)
   if (localhostPattern.test(origin)) {
+    return true;
+  }
+
+  // Allow mobile hybrid app schemes (Capacitor, Ionic, React Native / Expo webviews)
+  if (mobileSchemePattern.test(origin)) {
     return true;
   }
   

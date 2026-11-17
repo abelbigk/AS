@@ -1,4 +1,4 @@
-import { eq, and, like, desc, asc, isNull, or, ne } from "drizzle-orm";
+import { eq, and, like, desc, asc, isNull, or, ne, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import {
@@ -12,6 +12,7 @@ import {
   contentCategoryLinks,
   contentSubcategoryLinks,
   sounds,
+  userLocations,
 } from "../drizzle/schema";
 
 
@@ -163,6 +164,67 @@ export async function getContentLinksCount(contentId: number) {
   return categoryIds.length + subcategoryIds.length;
 }
 
+/**
+ * Batched helper that attaches categoryIds and subcategoryIds to multiple content items
+ * using only 2 batch queries, completely resolving the N+1 query bottleneck.
+ */
+export async function attachCategoryAndSubcategoryIds<T extends { id: number }>(
+  items: T[]
+): Promise<(T & { categoryIds: number[]; subcategoryIds: number[] })[]> {
+  if (items.length === 0) return [];
+  const db = getDb();
+  const contentIds = items.map((item) => item.id);
+
+  const [cats, subs] = await Promise.all([
+    db
+      .select({
+        contentId: contentCategoryLinks.contentId,
+        categoryId: contentCategoryLinks.categoryId,
+      })
+      .from(contentCategoryLinks)
+      .innerJoin(categories, eq(contentCategoryLinks.categoryId, categories.id))
+      .where(inArray(contentCategoryLinks.contentId, contentIds)),
+
+    db
+      .select({
+        contentId: contentSubcategoryLinks.contentId,
+        subcategoryId: contentSubcategoryLinks.subcategoryId,
+      })
+      .from(contentSubcategoryLinks)
+      .innerJoin(
+        subcategories,
+        eq(contentSubcategoryLinks.subcategoryId, subcategories.id)
+      )
+      .where(inArray(contentSubcategoryLinks.contentId, contentIds)),
+  ]);
+
+  const catMap = new Map<number, number[]>();
+  for (const c of cats) {
+    let arr = catMap.get(c.contentId);
+    if (!arr) {
+      arr = [];
+      catMap.set(c.contentId, arr);
+    }
+    arr.push(c.categoryId);
+  }
+
+  const subMap = new Map<number, number[]>();
+  for (const s of subs) {
+    let arr = subMap.get(s.contentId);
+    if (!arr) {
+      arr = [];
+      subMap.set(s.contentId, arr);
+    }
+    arr.push(s.subcategoryId);
+  }
+
+  return items.map((item) => ({
+    ...item,
+    categoryIds: catMap.get(item.id) || [],
+    subcategoryIds: subMap.get(item.id) || [],
+  }));
+}
+
 export async function deleteCategory(categoryId: number, _userId?: number) {
   const db = getDb();
   return await db.delete(categories).where(
@@ -252,10 +314,7 @@ export async function getContentByCategory(
       .then(rows => rows.map(r => r.content));
   }
 
-  return await Promise.all(items.map(async item => {
-    const { categoryIds, subcategoryIds } = await getItemCategoryAndSubcategoryIds(item.id);
-    return { ...item, categoryIds, subcategoryIds };
-  }));
+  return await attachCategoryAndSubcategoryIds(items);
 }
 
 export async function getContentBySubcategory(subcategoryId: number, _userId?: number) {
@@ -267,10 +326,7 @@ export async function getContentBySubcategory(subcategoryId: number, _userId?: n
     .orderBy(asc(contentSubcategoryLinks.order), desc(contentItems.createdAt))
     .then(rows => rows.map(r => r.content));
 
-  return await Promise.all(items.map(async item => {
-    const { categoryIds, subcategoryIds } = await getItemCategoryAndSubcategoryIds(item.id);
-    return { ...item, categoryIds, subcategoryIds };
-  }));
+  return await attachCategoryAndSubcategoryIds(items);
 }
 
 export async function getUncategorizedContent(_userId?: number) {
@@ -297,10 +353,7 @@ export async function getUncategorizedContent(_userId?: number) {
       return unique.map(r => r.content);
     });
   
-  return await Promise.all(items.map(async item => {
-    const { categoryIds, subcategoryIds } = await getItemCategoryAndSubcategoryIds(item.id);
-    return { ...item, categoryIds, subcategoryIds };
-  }));
+  return await attachCategoryAndSubcategoryIds(items);
 }
 
 export async function getContentByStatus(_userId: number, status: "default" | "queued" | "done") {
@@ -309,10 +362,7 @@ export async function getContentByStatus(_userId: number, status: "default" | "q
     eq(contentItems.status, status)
   );
 
-  return await Promise.all(items.map(async item => {
-    const { categoryIds, subcategoryIds } = await getItemCategoryAndSubcategoryIds(item.id);
-    return { ...item, categoryIds, subcategoryIds };
-  }));
+  return await attachCategoryAndSubcategoryIds(items);
 }
 
 export async function createContentItem(
@@ -483,10 +533,7 @@ export async function searchContentItems(_userId: number, query: string) {
     like(contentItems.heading, `%${query}%`)
   ).orderBy(desc(contentItems.createdAt)).limit(100);
 
-  return await Promise.all(items.map(async item => {
-    const { categoryIds, subcategoryIds } = await getItemCategoryAndSubcategoryIds(item.id);
-    return { ...item, categoryIds, subcategoryIds };
-  }));
+  return await attachCategoryAndSubcategoryIds(items);
 }
 
 // Reorder operations
@@ -625,6 +672,71 @@ export async function getSoundUsageCount(soundId: number, excludeContentId?: num
     .from(contentItems)
     .where(and(...conditions));
   return rows.length;
+}
+
+// ─── Location tracking queries ───────────────────────────────────────────────
+
+export async function recordUserLocation(data: {
+  userId: number;
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  speed?: number | null;
+  heading?: number | null;
+  altitude?: number | null;
+  timestamp: string;
+}) {
+  const db = getDb();
+  return await db.insert(userLocations).values({
+    userId: data.userId,
+    latitude: data.latitude,
+    longitude: data.longitude,
+    accuracy: data.accuracy ?? null,
+    speed: data.speed ?? null,
+    heading: data.heading ?? null,
+    altitude: data.altitude ?? null,
+    timestamp: data.timestamp,
+  });
+}
+
+export async function getUserLocationsByDate(userId: number, dateStr: string) {
+  const db = getDb();
+  return await db
+    .select()
+    .from(userLocations)
+    .where(
+      and(
+        eq(userLocations.userId, userId),
+        like(userLocations.timestamp, `${dateStr}%`)
+      )
+    )
+    .orderBy(asc(userLocations.timestamp));
+}
+
+export async function getLatestUserLocation(userId: number) {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(userLocations)
+    .where(eq(userLocations.userId, userId))
+    .orderBy(desc(userLocations.timestamp))
+    .limit(1);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+export async function getAllUsers() {
+  const db = getDb();
+  return await db
+    .select({
+      id: users.id,
+      username: users.username,
+      name: users.name,
+      role: users.role,
+      createdAt: users.createdAt,
+      lastSignedIn: users.lastSignedIn,
+    })
+    .from(users)
+    .orderBy(asc(users.id));
 }
 
 

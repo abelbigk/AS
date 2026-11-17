@@ -23,18 +23,14 @@ const LIGHT_BG =
   "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=1600&q=80";
 
 function SubcategoryPill({
-  subId,
+  name,
   count,
   onPress,
 }: {
-  subId: number;
+  name?: string;
   count: number;
   onPress: () => void;
 }) {
-  const { data: sub } = trpc.subcategories.getById.useQuery({
-    subcategoryId: subId,
-  });
-
   return (
     <TouchableOpacity
       style={styles.pill}
@@ -42,7 +38,7 @@ function SubcategoryPill({
       activeOpacity={0.75}
     >
       <Text style={styles.pillText} numberOfLines={1}>
-        {sub?.name ?? "…"}
+        {name ?? "…"}
       </Text>
       <View style={styles.pillBadge}>
         <Text style={styles.pillBadgeText}>{count}</Text>
@@ -66,6 +62,11 @@ export default function QueuedScreen() {
 
   const { data: categories = [] } = trpc.categories.list.useQuery();
   const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery();
+
+  const subNameMap = useMemo(
+    () => new Map(allSubcategories.map((s) => [s.id, s.name])),
+    [allSubcategories]
+  );
 
   const bgImage = theme === "dark" ? DARK_BG : LIGHT_BG;
   const overlayColor =
@@ -172,7 +173,7 @@ export default function QueuedScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
-            onRefresh={refetch}
+            onRefresh={() => { refetch(); }}
             tintColor={colors.accent}
           />
         }
@@ -226,7 +227,7 @@ export default function QueuedScreen() {
                       {Array.from(subIds).map((subId) => (
                         <SubcategoryPill
                           key={subId}
-                          subId={subId}
+                          name={subNameMap.get(subId)}
                           count={subCounts.get(subId) ?? 0}
                           onPress={() =>
                             router.push(

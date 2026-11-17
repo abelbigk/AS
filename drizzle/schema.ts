@@ -1,4 +1,4 @@
-import { int, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { int, sqliteTable, text, real } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const users = sqliteTable("users", {
@@ -131,3 +131,19 @@ export const userPreferences = sqliteTable("userPreferences", {
 
 export type UserPreference = typeof userPreferences.$inferSelect;
 export type InsertUserPreference = typeof userPreferences.$inferInsert;
+
+export const userLocations = sqliteTable("user_locations", {
+  id: int("id").primaryKey({ autoIncrement: true }),
+  userId: int("userId").notNull(),
+  latitude: real("latitude").notNull(),
+  longitude: real("longitude").notNull(),
+  accuracy: real("accuracy"),
+  speed: real("speed"),
+  heading: real("heading"),
+  altitude: real("altitude"),
+  timestamp: text("timestamp").notNull(),
+  createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
+});
+
+export type UserLocation = typeof userLocations.$inferSelect;
+export type InsertUserLocation = typeof userLocations.$inferInsert;

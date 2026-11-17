@@ -7,14 +7,20 @@ import {
   ScrollView,
   Pressable,
   Platform,
-  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { FolderPlus, Info } from "lucide-react-native";
+import { FolderPlus, Info, ImagePlus, Trash2, Pencil } from "lucide-react-native";
+import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
+import { uploadFile } from "../../src/lib/upload";
+import { EditCategoryModal } from "../../src/components/EditCategoryModal";
+import { CATEGORY_IMAGES } from "../../src/lib/constants";
+import { AppDialogRenderer, useAppDialog } from "../../src/components/AppDialog";
+import { AppToastRenderer, useAppToast } from "../../src/components/AppToast";
 
 const ADD_DARK_IMAGE =
   "https://images.unsplash.com/photo-1499750310107-5fef28a66643?w=1600&q=80";
@@ -25,33 +31,90 @@ export default function AddScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { theme, colors } = useTheme();
+  const { dialogState, hide, showAlert, showConfirm } = useAppDialog();
+  const { toastState, showToast } = useAppToast();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [coverAsset, setCoverAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeCategoryForEdit, setActiveCategoryForEdit] = useState<any | null>(null);
 
   const utils = trpc.useUtils();
 
-  const createCategory = trpc.categories.create.useMutation({
+  const { data: categories = [] } = trpc.categories.list.useQuery();
+
+  const createCategory = trpc.categories.create.useMutation();
+
+  const deleteCategory = trpc.categories.delete.useMutation({
     onSuccess: () => {
       utils.categories.list.invalidate();
-      Alert.alert("Success", "Category created!");
-      setName("");
-      setDescription("");
-      router.push("/");
-    },
-    onError: (err) => {
-      Alert.alert("Error", err.message || "Failed to create category.");
     },
   });
 
+  const similar =
+    name.trim().length > 1
+      ? categories.filter((c) => c.name.toLowerCase() === name.trim().toLowerCase())
+      : [];
+
   const bgImage = theme === "dark" ? ADD_DARK_IMAGE : ADD_LIGHT_IMAGE;
 
-  const handleSubmit = () => {
+  const handlePickCover = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.85,
+      });
+      if (!res.canceled && res.assets[0]) {
+        setCoverAsset(res.assets[0]);
+      }
+    } catch (err) {
+      console.error("Failed to pick cover image:", err);
+    }
+  };
+
+  const handleSubmit = async () => {
     if (!name.trim()) {
-      Alert.alert("Validation", "Please enter a category name.");
+      showAlert("Validation", "Please enter a category name.");
       return;
     }
-    createCategory.mutate({ name: name.trim(), description: description.trim() });
+
+    setIsSubmitting(true);
+    try {
+      let coverUrl: string | undefined = undefined;
+      let coverKey: string | undefined = undefined;
+
+      if (coverAsset) {
+        const uploadRes = await uploadFile(
+          coverAsset.uri,
+          coverAsset.fileName || `category_cover_${Date.now()}.jpg`,
+          coverAsset.mimeType || "image/jpeg"
+        );
+        if (uploadRes) {
+          coverUrl = uploadRes.url;
+          coverKey = uploadRes.key;
+        }
+      }
+
+      await createCategory.mutateAsync({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        coverImageUrl: coverUrl,
+        coverImageKey: coverKey,
+      });
+
+      utils.categories.list.invalidate();
+      showToast("Category created!", "success");
+      setName("");
+      setDescription("");
+      setCoverAsset(null);
+      router.push("/");
+    } catch (err: any) {
+      showToast(err?.message || "Failed to create category.", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const overlayColor =
@@ -83,6 +146,7 @@ export default function AddScreen() {
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
+        blurRadius={Platform.OS !== "web" ? 25 : undefined}
       />
       <View
         style={[
@@ -99,7 +163,7 @@ export default function AddScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
-          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 },
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 60 },
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -134,22 +198,35 @@ export default function AddScreen() {
           {/* Form card */}
           <View style={glassCard}>
             <Text style={[styles.label, { color: colors.text }]}>
-              Category Name
+              Category Name *
             </Text>
             <TextInput
-              style={[inputStyle, { marginBottom: 16 }]}
+              style={[inputStyle, { marginBottom: similar.length > 0 ? 8 : 16 }]}
               value={name}
               onChangeText={setName}
               placeholder="Enter category name..."
               placeholderTextColor={colors.textSubtle}
               autoCapitalize="words"
             />
+            {similar.length > 0 && (
+              <View style={[styles.similarBanner, { borderColor: colors.border }]}>
+                {similar.map((c) => (
+                  <View key={c.id} style={styles.similarRow}>
+                    <View style={styles.similarDot} />
+                    <Text style={[styles.similarText, { color: colors.textMuted }]}>
+                      Already exists:{" "}
+                      <Text style={[styles.similarName, { color: colors.text }]}>{c.name}</Text>
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
             <Text style={[styles.label, { color: colors.text }]}>
               Description (optional)
             </Text>
             <TextInput
-              style={[inputStyle, { height: 100, textAlignVertical: "top" }]}
+              style={[inputStyle, { height: 90, textAlignVertical: "top", marginBottom: 16 }]}
               value={description}
               onChangeText={setDescription}
               placeholder="Describe your category..."
@@ -158,21 +235,132 @@ export default function AddScreen() {
               numberOfLines={4}
             />
 
+            <Text style={[styles.label, { color: colors.text }]}>
+              Cover Image (optional)
+            </Text>
+            {coverAsset ? (
+              <View style={styles.coverPreviewContainer}>
+                <Image source={{ uri: coverAsset.uri }} style={styles.coverPreview} contentFit="cover" />
+                <Pressable
+                  onPress={() => setCoverAsset(null)}
+                  style={styles.removeCoverBtn}
+                >
+                  <Trash2 size={13} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                onPress={handlePickCover}
+                style={[styles.uploadDropzone, { borderColor: colors.border }]}
+              >
+                <ImagePlus size={22} color={colors.textSubtle} />
+                <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
+                  Attach Cover Image
+                </Text>
+              </Pressable>
+            )}
+
             <Pressable
               style={({ pressed }) => [
                 styles.submitButton,
-                { opacity: pressed || createCategory.isPending ? 0.75 : 1 },
+                { opacity: pressed || isSubmitting ? 0.75 : 1 },
               ]}
               onPress={handleSubmit}
-              disabled={createCategory.isPending}
+              disabled={isSubmitting}
             >
-              <Text style={styles.submitButtonText}>
-                {createCategory.isPending ? "Creating..." : "Create Category"}
-              </Text>
+              {isSubmitting ? (
+                <ActivityIndicator color="#000000" size="small" />
+              ) : (
+                <Text style={styles.submitButtonText}>Create Category</Text>
+              )}
             </Pressable>
           </View>
+
+          {/* Existing Categories section matching web AddCategoryForm.tsx */}
+          {categories.length > 0 && (
+            <View style={styles.existingSection}>
+              <Text style={[styles.existingSectionHeader, { color: colors.textSubtle }]}>
+                EXISTING CATEGORIES
+              </Text>
+              <View style={styles.existingList}>
+                {categories.map((cat) => (
+                  <View
+                    key={cat.id}
+                    style={[
+                      styles.existingRow,
+                      { backgroundColor: colors.glassBg, borderColor: colors.border },
+                    ]}
+                  >
+                    <View style={styles.existingThumb}>
+                      <Image
+                        source={{
+                          uri:
+                            cat.coverImageUrl ||
+                            CATEGORY_IMAGES[cat.name] ||
+                            ADD_DARK_IMAGE,
+                        }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                      />
+                    </View>
+                    <View style={styles.existingInfo}>
+                      <Text
+                        style={[styles.existingName, { color: colors.text }]}
+                        numberOfLines={1}
+                      >
+                        {cat.name}
+                      </Text>
+                      {cat.description ? (
+                        <Text
+                          style={[styles.existingDesc, { color: colors.textMuted }]}
+                          numberOfLines={1}
+                        >
+                          {cat.description}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View style={styles.existingActions}>
+                      <Pressable
+                        onPress={() => setActiveCategoryForEdit(cat)}
+                        style={styles.existingActionBtn}
+                        hitSlop={8}
+                      >
+                        <Pencil size={15} color={colors.textMuted} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          showConfirm({
+                            title: "Delete this category?",
+                            message: "This action cannot be undone. All subcategories and content links will be deleted.",
+                            confirmText: "Delete",
+                            destructive: true,
+                            onConfirm: () =>
+                              deleteCategory.mutate({ categoryId: cat.id }),
+                          });
+                        }}
+                        style={styles.existingActionBtn}
+                        hitSlop={8}
+                      >
+                        <Trash2 size={15} color="#EF4444" />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      {/* Edit Category Modal */}
+      <EditCategoryModal
+        category={activeCategoryForEdit}
+        visible={!!activeCategoryForEdit}
+        onClose={() => setActiveCategoryForEdit(null)}
+      />
+
+      <AppDialogRenderer {...dialogState} onHide={hide} />
+      <AppToastRenderer {...toastState} />
     </View>
   );
 }
@@ -236,16 +424,127 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 8,
   },
+  coverPreviewContainer: {
+    width: "100%",
+    height: 140,
+    borderRadius: 12,
+    overflow: "hidden",
+    position: "relative",
+    marginBottom: 16,
+  },
+  coverPreview: {
+    width: "100%",
+    height: "100%",
+  },
+  removeCoverBtn: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(239, 68, 68, 0.85)",
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  uploadDropzone: {
+    height: 80,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    gap: 4,
+    marginBottom: 16,
+  },
+  uploadDropzoneText: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
   submitButton: {
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
-    marginTop: 20,
+    marginTop: 8,
   },
   submitButtonText: {
     color: "#000000",
     fontWeight: "700",
     fontSize: 15,
+  },
+  similarBanner: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 16,
+    backgroundColor: "rgba(234, 179, 8, 0.1)",
+    gap: 6,
+  },
+  similarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  similarDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#EAB308",
+  },
+  similarText: {
+    fontSize: 13,
+  },
+  similarName: {
+    fontWeight: "600",
+  },
+  existingSection: {
+    marginTop: 32,
+    marginBottom: 20,
+  },
+  existingSectionHeader: {
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.8,
+    marginBottom: 12,
+  },
+  existingList: {
+    gap: 8,
+  },
+  existingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 12,
+  },
+  existingThumb: {
+    width: 48,
+    height: 36,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  existingInfo: {
+    flex: 1,
+  },
+  existingName: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  existingDesc: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  existingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  existingActionBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
   },
 });

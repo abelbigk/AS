@@ -1,9 +1,12 @@
 import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { ChevronRight } from "lucide-react-native";
+import { ChevronRight, MoreVertical, Pencil, Trash2, ArrowUp, ArrowDown } from "lucide-react-native";
 import { CroppedImage } from "./CroppedImage";
 import { CATEGORY_IMAGES } from "../lib/constants";
+import { DropdownMenu } from "./DropdownMenu";
+import { useTheme } from "../contexts/ThemeContext";
+import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 
 interface Category {
   id: number;
@@ -17,55 +20,147 @@ interface Category {
 interface CategoryCardProps {
   category: Category;
   count?: number;
-  onPress: () => void;
+  contentCount?: number;
+  onPress?: () => void;
+  onClick?: () => void;
+  onEdit?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onDelete?: () => void;
 }
 
-export function CategoryCard({ category, count, onPress }: CategoryCardProps) {
+export function CategoryCard({
+  category,
+  count,
+  contentCount,
+  onPress,
+  onClick,
+  onEdit,
+  onMoveUp,
+  onMoveDown,
+  onDelete,
+}: CategoryCardProps) {
+  const { colors } = useTheme();
+  const { dialogState, hide, showConfirm } = useAppDialog();
+  const displayCount = count ?? contentCount;
+  const handlePress = onPress ?? onClick ?? (() => {});
+
   const imageUrl =
     category.coverImageUrl ||
     CATEGORY_IMAGES[category.name] ||
     "https://images.unsplash.com/photo-1557683316-973673baf926?w=800&q=80";
 
+  const menuItems = [
+    ...(onEdit
+      ? [
+          {
+            label: "Edit Details",
+            icon: Pencil,
+            onPress: onEdit,
+          },
+        ]
+      : []),
+    ...(onMoveUp
+      ? [
+          {
+            label: "Move Up",
+            icon: ArrowUp,
+            onPress: onMoveUp,
+          },
+        ]
+      : []),
+    ...(onMoveDown
+      ? [
+          {
+            label: "Move Down",
+            icon: ArrowDown,
+            onPress: onMoveDown,
+          },
+        ]
+      : []),
+    ...(onDelete
+      ? [
+          {
+            label: "Delete Category",
+            icon: Trash2,
+            destructive: true,
+            onPress: () => {
+              showConfirm({
+                title: "Delete category?",
+                message: "This action cannot be undone. All subcategories and content links will be deleted.",
+                confirmText: "Delete",
+                destructive: true,
+                onConfirm: onDelete,
+              });
+            },
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        {
-          transform: [{ scale: pressed ? 0.98 : 1 }],
-          opacity: pressed ? 0.9 : 1,
-        },
-      ]}
-    >
-      {/* Background Image */}
-      <View style={styles.imageWrapper}>
-        <CroppedImage src={imageUrl} cropData={category.coverCropData} />
-      </View>
-
-      {/* Gradient Overlay matching web: from-black/55 via-black/20 to-transparent */}
-      <LinearGradient
-        colors={["rgba(0,0,0,0.65)", "rgba(0,0,0,0.3)", "transparent"]}
-        start={{ x: 0, y: 0.5 }}
-        end={{ x: 1, y: 0.5 }}
-        style={styles.gradient}
-      />
-
-      {/* Content */}
-      <View style={styles.content}>
-        <View style={styles.textContainer}>
-          <Text style={styles.title} numberOfLines={2}>
-            {category.name}
-          </Text>
-          {count !== undefined && count > 0 && (
-            <Text style={styles.countText}>
-              {count} item{count !== 1 ? "s" : ""}
-            </Text>
-          )}
+    <>
+      <Pressable
+        onPress={handlePress}
+        style={({ pressed }) => [
+          styles.card,
+          {
+            transform: [{ scale: pressed ? 0.98 : 1 }],
+            opacity: pressed ? 0.9 : 1,
+          },
+        ]}
+      >
+        {/* Background Image */}
+        <View style={styles.imageWrapper}>
+          <CroppedImage src={imageUrl} cropData={category.coverCropData} />
         </View>
 
-        <ChevronRight size={20} color="rgba(255, 255, 255, 0.5)" />
-      </View>
-    </Pressable>
+        {/* Gradient Overlay matching web: from-black/55 via-black/20 to-transparent */}
+        <LinearGradient
+          colors={["rgba(0,0,0,0.65)", "rgba(0,0,0,0.3)", "transparent"]}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={styles.gradient}
+        />
+
+        {/* Content */}
+        <View style={styles.content}>
+          <View style={styles.textContainer}>
+            <Text style={styles.title} numberOfLines={2}>
+              {category.name}
+            </Text>
+            {displayCount !== undefined && displayCount > 0 && (
+              <Text style={styles.countText}>
+                {displayCount} item{displayCount !== 1 ? "s" : ""}
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.actionsRow}>
+            {menuItems.length > 0 && (
+              <DropdownMenu
+                align="right"
+                trigger={(open) => (
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      open();
+                    }}
+                    style={styles.moreBtn}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MoreVertical size={16} color="rgba(255, 255, 255, 0.85)" />
+                  </Pressable>
+                )}
+                items={menuItems}
+              />
+            )}
+            <ChevronRight size={20} color="rgba(255, 255, 255, 0.5)" />
+          </View>
+        </View>
+      </Pressable>
+      <AppDialogRenderer {...dialogState} onHide={hide} />
+    </>
   );
 }
 
@@ -124,5 +219,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "rgba(255, 255, 255, 0.7)",
     marginTop: 2,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  moreBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
   },
 });

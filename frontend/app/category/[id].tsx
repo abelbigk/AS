@@ -8,8 +8,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
-  Modal,
-  Alert,
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -21,9 +19,11 @@ import {
   MoreHorizontal,
   X,
   PlusCircle,
+  FilePlus,
+  FolderMinus,
+  ListChecks,
   Pencil,
   Trash2,
-  Check,
 } from "lucide-react-native";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
@@ -31,6 +31,12 @@ import { CATEGORY_IMAGES } from "../../src/lib/constants";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
 import { SubcategoryCard } from "../../src/components/SubcategoryCard";
 import { ContentDetailModal } from "../../src/components/ContentDetailModal";
+import { EditCategoryModal } from "../../src/components/EditCategoryModal";
+import { EditSubcategoryModal } from "../../src/components/EditSubcategoryModal";
+import { AddSubcategoryModal } from "../../src/components/AddSubcategoryModal";
+import { AddContentModal } from "../../src/components/AddContentModal";
+import { DropdownMenu } from "../../src/components/DropdownMenu";
+import { AppDialogRenderer, useAppDialog } from "../../src/components/AppDialog";
 
 const DEFAULT_BG =
   "https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=80";
@@ -39,25 +45,30 @@ export default function CategoryDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { dialogState, hide, showConfirm } = useAppDialog();
+  const { id, status } = useLocalSearchParams<{ id: string; status?: string }>();
   const categoryId = parseInt(id || "0", 10);
+  const statusFilter = status as "default" | "queued" | "done" | undefined;
   const utils = trpc.useUtils();
 
   // Search mode state
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Edit category modal state
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editDesc, setEditDesc] = useState("");
+  // Selection mode states
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
 
-  // Add subcategory modal state
+  const [isSubcategorySelectMode, setIsSubcategorySelectMode] = useState(false);
+  const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<Set<number>>(new Set());
+
+  // Modals state
+  const [showEditCategoryModal, setShowEditCategoryModal] = useState(false);
   const [showAddSubModal, setShowAddSubModal] = useState(false);
-  const [subName, setSubName] = useState("");
-  const [subDesc, setSubDesc] = useState("");
+  const [showAddContentModal, setShowAddContentModal] = useState(false);
+  const [activeSubcategoryForEdit, setActiveSubcategoryForEdit] = useState<any | null>(null);
 
-  // Content detail modal state
+  // Content detail viewer state
   const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
 
   // Queries
@@ -81,14 +92,6 @@ export default function CategoryDetailScreen() {
   } = trpc.content.listByCategory.useQuery({ categoryId });
 
   // Mutations
-  const updateCategory = trpc.categories.update.useMutation({
-    onSuccess: () => {
-      utils.categories.getById.invalidate({ categoryId });
-      utils.categories.list.invalidate();
-      setShowEditModal(false);
-    },
-  });
-
   const deleteCategory = trpc.categories.delete.useMutation({
     onSuccess: () => {
       utils.categories.list.invalidate();
@@ -96,12 +99,95 @@ export default function CategoryDetailScreen() {
     },
   });
 
-  const createSubcategory = trpc.subcategories.create.useMutation({
+  const deleteSubcategory = trpc.subcategories.delete.useMutation({
     onSuccess: () => {
       utils.subcategories.list.invalidate({ categoryId });
-      setSubName("");
-      setSubDesc("");
-      setShowAddSubModal(false);
+      utils.subcategories.getContentCounts.invalidate({ categoryId });
+    },
+  });
+
+  const reorderSubMutation = trpc.subcategories.reorder.useMutation({
+    onSuccess: () => {
+      utils.subcategories.list.invalidate({ categoryId });
+    },
+  });
+
+  const reorderContentMutation = trpc.content.reorderInCategory.useMutation({
+    onSuccess: () => {
+      utils.content.listByCategory.invalidate({ categoryId });
+    },
+  });
+
+  const handleMoveSubcategory = (subId: number, direction: "up" | "down") => {
+    const currentIndex = subcategories.findIndex((s) => s.id === subId);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= subcategories.length) return;
+
+    const newOrder = [...subcategories];
+    const [moved] = newOrder.splice(currentIndex, 1);
+    newOrder.splice(targetIndex, 0, moved);
+
+    utils.subcategories.list.setData({ categoryId }, newOrder);
+
+    reorderSubMutation.mutate(
+      { categoryId, subcategoryIds: newOrder.map((s) => s.id) },
+      {
+        onError: () => {
+          utils.subcategories.list.invalidate({ categoryId });
+        },
+      }
+    );
+  };
+
+  const handleMoveContent = (contentId: number, direction: "up" | "down") => {
+    const currentIndex = items.findIndex((it) => it.id === contentId);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= items.length) return;
+
+    const newOrder = [...items];
+    const [moved] = newOrder.splice(currentIndex, 1);
+    newOrder.splice(targetIndex, 0, moved);
+
+    utils.content.listByCategory.setData({ categoryId }, newOrder);
+
+    reorderContentMutation.mutate(
+      { categoryId, contentIds: newOrder.map((it) => it.id) },
+      {
+        onError: () => {
+          utils.content.listByCategory.invalidate({ categoryId });
+        },
+      }
+    );
+  };
+
+  const updateStatus = trpc.content.updateStatus.useMutation({
+    onSuccess: () => {
+      utils.content.listByCategory.invalidate({ categoryId });
+      utils.content.listByStatus.invalidate();
+    },
+  });
+
+  const deleteItem = trpc.content.delete.useMutation({
+    onSuccess: () => {
+      utils.content.listByCategory.invalidate({ categoryId });
+      utils.content.listByStatus.invalidate();
+      utils.content.listUncategorized.invalidate();
+    },
+  });
+
+  const updateContent = trpc.content.update.useMutation({
+    onSuccess: () => {
+      utils.content.listByCategory.invalidate({ categoryId });
+    },
+  });
+
+  const batchRemoveFromCategory = trpc.content.batchRemoveFromCategory.useMutation({
+    onSuccess: () => {
+      utils.content.listByCategory.invalidate({ categoryId });
+      setIsSelectMode(false);
+      setSelectedContentIds(new Set());
     },
   });
 
@@ -110,79 +196,134 @@ export default function CategoryDetailScreen() {
     (category?.name ? CATEGORY_IMAGES[category.name] : null) ||
     DEFAULT_BG;
 
+  const statusFilteredItems = useMemo(() => {
+    if (!statusFilter) return items;
+    return items.filter((item) => item.status === statusFilter);
+  }, [items, statusFilter]);
+
+  const statusFilteredSubcategories = useMemo(() => {
+    if (!statusFilter || !items) return subcategories;
+    const subIdsWithStatus = new Set(
+      items.filter((item) => item.status === statusFilter)
+           .flatMap((item: any) => item.subcategoryIds || [])
+    );
+    return subcategories.filter((sub) => subIdsWithStatus.has(sub.id));
+  }, [subcategories, items, statusFilter]);
+
   // Filtered lists based on search
   const displayedSubcategories = useMemo(() => {
-    if (!searchQuery.trim()) return subcategories;
+    if (!searchQuery.trim()) return statusFilteredSubcategories;
     const q = searchQuery.toLowerCase();
-    return subcategories.filter(
+    return statusFilteredSubcategories.filter(
       (s) =>
         s.name.toLowerCase().includes(q) ||
         (s.description && s.description.toLowerCase().includes(q))
     );
-  }, [subcategories, searchQuery]);
+  }, [statusFilteredSubcategories, searchQuery]);
 
   const displayedContent = useMemo(() => {
-    if (!searchQuery.trim()) return items;
+    if (!searchQuery.trim()) return statusFilteredItems;
     const q = searchQuery.toLowerCase();
-    return items.filter(
+    return statusFilteredItems.filter(
       (item) =>
         item.heading.toLowerCase().includes(q) ||
         (item.description && item.description.toLowerCase().includes(q))
     );
-  }, [items, searchQuery]);
+  }, [statusFilteredItems, searchQuery]);
 
-  // Options menu
-  const handleOptionsMenu = () => {
-    Alert.alert("Category Options", undefined, [
-      {
-        text: "Add Subcategory",
-        onPress: () => setShowAddSubModal(true),
+  // Hierarchy 1: Category Header Dropdown Menu Items
+  const categoryMenuItems = [
+    {
+      label: "Add Content",
+      icon: FilePlus,
+      onPress: () => setShowAddContentModal(true),
+    },
+    {
+      label: "Add Subcategory",
+      icon: PlusCircle,
+      onPress: () => setShowAddSubModal(true),
+    },
+    {
+      label: "Remove Subcategories",
+      icon: FolderMinus,
+      disabled: subcategories.length === 0,
+      onPress: () => setIsSubcategorySelectMode(true),
+    },
+    {
+      label: "Edit Details",
+      icon: Pencil,
+      onPress: () => setShowEditCategoryModal(true),
+    },
+    {
+      label: "Delete Category",
+      icon: Trash2,
+      destructive: true,
+      onPress: () => {
+        showConfirm({
+          title: "Delete this category?",
+          message: "This will permanently delete the category and all its contents.",
+          confirmText: "Delete",
+          destructive: true,
+          onConfirm: () => deleteCategory.mutate({ categoryId }),
+        });
       },
-      {
-        text: "Edit Category",
-        onPress: () => {
-          setEditName(category?.name || "");
-          setEditDesc(category?.description || "");
-          setShowEditModal(true);
-        },
-      },
-      {
-        text: "Delete Category",
-        style: "destructive",
-        onPress: () => {
-          Alert.alert(
-            "Delete Category",
-            "This will permanently delete the category and unlink all contents.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Delete",
-                style: "destructive",
-                onPress: () => deleteCategory.mutate({ categoryId }),
-              },
-            ]
-          );
-        },
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
+    },
+  ];
 
-  const handleSaveEdit = () => {
-    if (!editName.trim()) return;
-    updateCategory.mutate({
-      categoryId,
-      name: editName.trim(),
-      description: editDesc.trim() || undefined,
+  // Hierarchy 2: Content Section Header Dropdown Menu Items
+  const contentSectionMenuItems = [
+    {
+      label: "Add Content",
+      icon: FilePlus,
+      onPress: () => setShowAddContentModal(true),
+    },
+    {
+      label: "Remove Contents",
+      icon: ListChecks,
+      disabled: items.length === 0,
+      onPress: () => setIsSelectMode(true),
+    },
+  ];
+
+  // Batch action handlers
+  const handleBatchDeleteSubcategories = () => {
+    if (selectedSubcategoryIds.size === 0) return;
+    showConfirm({
+      title: `Delete ${selectedSubcategoryIds.size} subcategor${selectedSubcategoryIds.size === 1 ? "y" : "ies"}?`,
+      message: "This action cannot be undone. All linked content will be unlinked.",
+      confirmText: "Delete",
+      destructive: true,
+      onConfirm: async () => {
+        for (const subId of Array.from(selectedSubcategoryIds)) {
+          await deleteSubcategory.mutateAsync({ subcategoryId: subId });
+        }
+        setIsSubcategorySelectMode(false);
+        setSelectedSubcategoryIds(new Set());
+      },
     });
   };
 
-  const handleCreateSubcategory = () => {
-    if (!subName.trim()) return;
-    createSubcategory.mutate({
-      categoryId,
-      name: subName.trim(),
-      description: subDesc.trim() || undefined,
+  const handleBatchRemoveContents = () => {
+    if (selectedContentIds.size === 0) return;
+    showConfirm({
+      title: `Remove ${selectedContentIds.size} items?`,
+      message: "Are you sure you want to remove these items from this category?",
+      confirmText: "Remove",
+      destructive: true,
+      onConfirm: () => {
+        batchRemoveFromCategory.mutate({
+          categoryId,
+          itemIds: Array.from(selectedContentIds),
+        });
+      },
+    });
+  };
+
+  const handleRemoveItemFromCategory = (item: ContentItem) => {
+    updateContent.mutate({
+      itemId: item.id,
+      categoryIds: (item.categoryIds || []).filter((id) => id !== categoryId),
+      subcategoryIds: item.subcategoryIds,
     });
   };
 
@@ -190,7 +331,7 @@ export default function CategoryDetailScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Full-screen blurred background image */}
+      {/* Full-screen blurred background image matching web */}
       <Image
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
@@ -215,13 +356,13 @@ export default function CategoryDetailScreen() {
           styles.scrollContent,
           {
             paddingTop: insets.top + (Platform.OS === "web" ? 24 : 12),
-            paddingBottom: insets.bottom + 100,
+            paddingBottom: insets.bottom + 120,
           },
         ]}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
-            onRefresh={refetch}
+            onRefresh={() => { refetch(); }}
             tintColor={colors.accent}
           />
         }
@@ -280,12 +421,17 @@ export default function CategoryDetailScreen() {
                 >
                   <Search size={18} color={colors.text} />
                 </Pressable>
-                <Pressable
-                  onPress={handleOptionsMenu}
-                  style={styles.iconCircleBtn}
-                >
-                  <MoreHorizontal size={18} color={colors.text} />
-                </Pressable>
+
+                {/* Hierarchy 1: Category Header 3-dotted Dropdown Menu */}
+                <DropdownMenu
+                  align="right"
+                  trigger={(open) => (
+                    <Pressable onPress={open} style={styles.iconCircleBtn}>
+                      <MoreHorizontal size={18} color={colors.text} />
+                    </Pressable>
+                  )}
+                  items={categoryMenuItems}
+                />
               </View>
             </View>
           )}
@@ -293,14 +439,28 @@ export default function CategoryDetailScreen() {
           {/* Category description & counts */}
           {!isSearchMode && (
             <View style={styles.categoryMeta}>
+              {statusFilter && (
+                <View style={styles.filterBadgeRow}>
+                  <View
+                    style={[
+                      styles.filterBadgeDot,
+                      { backgroundColor: statusFilter === "queued" ? "#3B82F6" : "#10B981" },
+                    ]}
+                  />
+                  <Text style={styles.filterBadgeText}>
+                    FILTERING BY: {statusFilter.toUpperCase()}
+                  </Text>
+                </View>
+              )}
               {category?.description ? (
                 <Text style={[styles.description, { color: colors.textMuted }]}>
                   {category.description}
                 </Text>
               ) : null}
               <Text style={[styles.countLine, { color: colors.textSubtle }]}>
-                {items.length} item{items.length !== 1 ? "s" : ""}
-                {subcategories.length > 0 ? ` · ${subcategories.length} subcategories` : ""}
+                {displayedContent.length} item{displayedContent.length !== 1 ? "s" : ""}
+                {statusFilter ? " shown" : ""}
+                {displayedSubcategories.length > 0 ? ` · ${displayedSubcategories.length} subcategories` : ""}
               </Text>
             </View>
           )}
@@ -327,7 +487,30 @@ export default function CategoryDetailScreen() {
                             key={sub.id}
                             subcategory={sub}
                             count={subcategoryCounts?.[sub.id] || 0}
-                            onPress={() => router.push(`/subcategory/${sub.id}`)}
+                            isSelectMode={isSubcategorySelectMode}
+                            selected={selectedSubcategoryIds.has(sub.id)}
+                            onPress={() => {
+                              if (isSubcategorySelectMode) {
+                                const newSet = new Set(selectedSubcategoryIds);
+                                if (newSet.has(sub.id)) newSet.delete(sub.id);
+                                else newSet.add(sub.id);
+                                setSelectedSubcategoryIds(newSet);
+                              } else {
+                                router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                              }
+                            }}
+                            onEdit={() => setActiveSubcategoryForEdit(sub)}
+                            onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
+                            onMoveUp={
+                              subcategories.findIndex((s) => s.id === sub.id) > 0
+                                ? () => handleMoveSubcategory(sub.id, "up")
+                                : undefined
+                            }
+                            onMoveDown={
+                              subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
+                                ? () => handleMoveSubcategory(sub.id, "down")
+                                : undefined
+                            }
                           />
                         ))}
                     </View>
@@ -340,7 +523,30 @@ export default function CategoryDetailScreen() {
                             key={sub.id}
                             subcategory={sub}
                             count={subcategoryCounts?.[sub.id] || 0}
-                            onPress={() => router.push(`/subcategory/${sub.id}`)}
+                            isSelectMode={isSubcategorySelectMode}
+                            selected={selectedSubcategoryIds.has(sub.id)}
+                            onPress={() => {
+                              if (isSubcategorySelectMode) {
+                                const newSet = new Set(selectedSubcategoryIds);
+                                if (newSet.has(sub.id)) newSet.delete(sub.id);
+                                else newSet.add(sub.id);
+                                setSelectedSubcategoryIds(newSet);
+                              } else {
+                                router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                              }
+                            }}
+                            onEdit={() => setActiveSubcategoryForEdit(sub)}
+                            onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
+                            onMoveUp={
+                              subcategories.findIndex((s) => s.id === sub.id) > 0
+                                ? () => handleMoveSubcategory(sub.id, "up")
+                                : undefined
+                            }
+                            onMoveDown={
+                              subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
+                                ? () => handleMoveSubcategory(sub.id, "down")
+                                : undefined
+                            }
                           />
                         ))}
                     </View>
@@ -351,9 +557,23 @@ export default function CategoryDetailScreen() {
               {/* CONTENT 2-COLUMN MASONRY GRID */}
               {displayedContent.length > 0 ? (
                 <View style={styles.sectionContainer}>
-                  <Text style={[styles.sectionHeading, { color: colors.textSubtle }]}>
-                    CONTENT
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={[styles.sectionHeading, { color: colors.textSubtle, marginBottom: 0 }]}>
+                      CONTENT
+                    </Text>
+
+                    {/* Hierarchy 2: Content Section Header 3-dotted Dropdown Menu */}
+                    <DropdownMenu
+                      align="right"
+                      trigger={(open) => (
+                        <Pressable onPress={open} style={styles.smallCircleBtn}>
+                          <MoreHorizontal size={14} color={colors.textMuted} />
+                        </Pressable>
+                      )}
+                      items={contentSectionMenuItems}
+                    />
+                  </View>
+
                   <View style={styles.twoColumnGrid}>
                     {/* Left Column */}
                     <View style={styles.gridColumn}>
@@ -363,7 +583,34 @@ export default function CategoryDetailScreen() {
                           <ContentCard
                             key={item.id}
                             item={item as any}
-                            onPress={() => setActiveItem(item as any)}
+                            isSelectMode={isSelectMode}
+                            selected={selectedContentIds.has(item.id)}
+                            onPress={() => {
+                              if (isSelectMode) {
+                                const newSet = new Set(selectedContentIds);
+                                if (newSet.has(item.id)) newSet.delete(item.id);
+                                else newSet.add(item.id);
+                                setSelectedContentIds(newSet);
+                              } else {
+                                setActiveItem(item as any);
+                              }
+                            }}
+                            onUpdateStatus={(newStatus) =>
+                              updateStatus.mutate({ itemId: item.id, status: newStatus })
+                            }
+                            onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
+                            onEdit={() => setActiveItem(item as any)}
+                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                            onMoveUp={
+                              items.findIndex((it) => it.id === item.id) > 0
+                                ? () => handleMoveContent(item.id, "up")
+                                : undefined
+                            }
+                            onMoveDown={
+                              items.findIndex((it) => it.id === item.id) < items.length - 1
+                                ? () => handleMoveContent(item.id, "down")
+                                : undefined
+                            }
                           />
                         ))}
                     </View>
@@ -375,7 +622,34 @@ export default function CategoryDetailScreen() {
                           <ContentCard
                             key={item.id}
                             item={item as any}
-                            onPress={() => setActiveItem(item as any)}
+                            isSelectMode={isSelectMode}
+                            selected={selectedContentIds.has(item.id)}
+                            onPress={() => {
+                              if (isSelectMode) {
+                                const newSet = new Set(selectedContentIds);
+                                if (newSet.has(item.id)) newSet.delete(item.id);
+                                else newSet.add(item.id);
+                                setSelectedContentIds(newSet);
+                              } else {
+                                setActiveItem(item as any);
+                              }
+                            }}
+                            onUpdateStatus={(newStatus) =>
+                              updateStatus.mutate({ itemId: item.id, status: newStatus })
+                            }
+                            onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
+                            onEdit={() => setActiveItem(item as any)}
+                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                            onMoveUp={
+                              items.findIndex((it) => it.id === item.id) > 0
+                                ? () => handleMoveContent(item.id, "up")
+                                : undefined
+                            }
+                            onMoveDown={
+                              items.findIndex((it) => it.id === item.id) < items.length - 1
+                                ? () => handleMoveContent(item.id, "down")
+                                : undefined
+                            }
                           />
                         ))}
                     </View>
@@ -389,7 +663,7 @@ export default function CategoryDetailScreen() {
                   <Text style={[styles.emptySubtitle, { color: colors.textSubtle }]}>
                     {searchQuery.trim().length > 0
                       ? "Try a different search term"
-                      : "Add items from the + tab to see them here"}
+                      : "Add items from the + menu above to see them here"}
                   </Text>
                 </View>
               )}
@@ -398,100 +672,130 @@ export default function CategoryDetailScreen() {
         </View>
       </ScrollView>
 
-      {/* Content Detail Viewer Modal */}
+      {/* Floating Bottom Action Bar for Content Selection Mode */}
+      {isSelectMode && (
+        <View style={styles.floatingBarContainer}>
+          <View style={[styles.floatingBar, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
+            <Text style={[styles.floatingCountText, { color: colors.text }]}>
+              {selectedContentIds.size} selected
+            </Text>
+            <View style={styles.floatingActions}>
+              <Pressable
+                onPress={() => {
+                  const allIds = new Set(displayedContent.map((c) => c.id));
+                  setSelectedContentIds(allIds);
+                }}
+                style={styles.floatingActionBtn}
+              >
+                <Text style={styles.floatingActionBtnText}>Select All</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setIsSelectMode(false);
+                  setSelectedContentIds(new Set());
+                }}
+                style={styles.floatingActionBtn}
+              >
+                <Text style={[styles.floatingActionBtnText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleBatchRemoveContents}
+                disabled={selectedContentIds.size === 0}
+                style={[
+                  styles.floatingDeleteBtn,
+                  selectedContentIds.size === 0 && { opacity: 0.5 },
+                ]}
+              >
+                <Trash2 size={14} color="#FFFFFF" />
+                <Text style={styles.floatingDeleteBtnText}>Remove</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Floating Bottom Action Bar for Subcategory Selection Mode */}
+      {isSubcategorySelectMode && (
+        <View style={styles.floatingBarContainer}>
+          <View style={[styles.floatingBar, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
+            <Text style={[styles.floatingCountText, { color: colors.text }]}>
+              {selectedSubcategoryIds.size} selected
+            </Text>
+            <View style={styles.floatingActions}>
+              <Pressable
+                onPress={() => {
+                  const allIds = new Set(displayedSubcategories.map((s) => s.id));
+                  setSelectedSubcategoryIds(allIds);
+                }}
+                style={styles.floatingActionBtn}
+              >
+                <Text style={styles.floatingActionBtnText}>Select All</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setIsSubcategorySelectMode(false);
+                  setSelectedSubcategoryIds(new Set());
+                }}
+                style={styles.floatingActionBtn}
+              >
+                <Text style={[styles.floatingActionBtnText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleBatchDeleteSubcategories}
+                disabled={selectedSubcategoryIds.size === 0}
+                style={[
+                  styles.floatingDeleteBtn,
+                  selectedSubcategoryIds.size === 0 && { opacity: 0.5 },
+                ]}
+              >
+                <Trash2 size={14} color="#FFFFFF" />
+                <Text style={styles.floatingDeleteBtnText}>Delete</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Full-Screen Content Detail Viewer Modal */}
       <ContentDetailModal
         item={activeItem}
         visible={!!activeItem}
+        activeCategoryId={categoryId}
         onClose={() => setActiveItem(null)}
+        onRemoveFromCategory={() => {
+          if (activeItem) handleRemoveItemFromCategory(activeItem);
+        }}
       />
 
       {/* Edit Category Modal */}
-      <Modal visible={showEditModal} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalSheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Category</Text>
-              <Pressable onPress={() => setShowEditModal(false)}>
-                <X size={20} color={colors.textMuted} />
-              </Pressable>
-            </View>
-
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.border }]}
-              placeholder="Category name"
-              placeholderTextColor={colors.textSubtle}
-              value={editName}
-              onChangeText={setEditName}
-            />
-
-            <TextInput
-              style={[styles.modalInput, styles.multilineInput, { color: colors.text, borderColor: colors.border }]}
-              placeholder="Description (optional)"
-              placeholderTextColor={colors.textSubtle}
-              value={editDesc}
-              onChangeText={setEditDesc}
-              multiline
-              numberOfLines={3}
-            />
-
-            <Pressable
-              onPress={handleSaveEdit}
-              disabled={updateCategory.isPending}
-              style={styles.modalSubmitBtn}
-            >
-              {updateCategory.isPending ? (
-                <ActivityIndicator color="#000000" />
-              ) : (
-                <Text style={styles.modalSubmitText}>Save Changes</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <EditCategoryModal
+        category={category as any}
+        visible={showEditCategoryModal}
+        onClose={() => setShowEditCategoryModal(false)}
+      />
 
       {/* Add Subcategory Modal */}
-      <Modal visible={showAddSubModal} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalSheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Add Subcategory</Text>
-              <Pressable onPress={() => setShowAddSubModal(false)}>
-                <X size={20} color={colors.textMuted} />
-              </Pressable>
-            </View>
+      <AddSubcategoryModal
+        categoryId={categoryId}
+        visible={showAddSubModal}
+        onClose={() => setShowAddSubModal(false)}
+      />
 
-            <TextInput
-              style={[styles.modalInput, { color: colors.text, borderColor: colors.border }]}
-              placeholder="Subcategory name"
-              placeholderTextColor={colors.textSubtle}
-              value={subName}
-              onChangeText={setSubName}
-            />
+      {/* Add Content Modal */}
+      <AddContentModal
+        visible={showAddContentModal}
+        initialCategoryId={categoryId}
+        onClose={() => setShowAddContentModal(false)}
+      />
 
-            <TextInput
-              style={[styles.modalInput, styles.multilineInput, { color: colors.text, borderColor: colors.border }]}
-              placeholder="Description (optional)"
-              placeholderTextColor={colors.textSubtle}
-              value={subDesc}
-              onChangeText={setSubDesc}
-              multiline
-              numberOfLines={3}
-            />
+      {/* Edit Subcategory Modal */}
+      <EditSubcategoryModal
+        subcategory={activeSubcategoryForEdit}
+        visible={!!activeSubcategoryForEdit}
+        onClose={() => setActiveSubcategoryForEdit(null)}
+      />
 
-            <Pressable
-              onPress={handleCreateSubcategory}
-              disabled={createSubcategory.isPending}
-              style={styles.modalSubmitBtn}
-            >
-              {createSubcategory.isPending ? (
-                <ActivityIndicator color="#000000" />
-              ) : (
-                <Text style={styles.modalSubmitText}>Create Subcategory</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <AppDialogRenderer {...dialogState} onHide={hide} />
     </View>
   );
 }
@@ -559,6 +863,30 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     gap: 4,
   },
+  filterBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    marginBottom: 6,
+  },
+  filterBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  filterBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    color: "rgba(255, 255, 255, 0.7)",
+  },
   description: {
     fontSize: 15,
     lineHeight: 22,
@@ -601,7 +929,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   sectionContainer: {
-    marginBottom: 24,
+    marginBottom: 28,
   },
   sectionHeading: {
     fontSize: 11,
@@ -609,6 +937,23 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 10,
     paddingLeft: 2,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  smallCircleBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   twoColumnGrid: {
     flexDirection: "row",
@@ -634,53 +979,69 @@ const styles = StyleSheet.create({
   emptySubtitle: {
     fontSize: 13,
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
-    justifyContent: "flex-end",
+  // Floating Action Bar in select mode
+  floatingBarContainer: {
+    position: "absolute",
+    bottom: 24,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 99,
   },
-  modalSheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    padding: 24,
-    paddingBottom: 40,
-  },
-  modalHeader: {
+  floatingBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  modalInput: {
-    height: 48,
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 30,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    fontSize: 15,
-    marginBottom: 12,
+    width: "90%",
+    maxWidth: 500,
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+      } as any,
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 12,
+        elevation: 8,
+      },
+    }),
   },
-  multilineInput: {
-    height: 80,
-    paddingTop: 12,
-    textAlignVertical: "top",
+  floatingCountText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
-  modalSubmitBtn: {
-    backgroundColor: "#FFFFFF",
-    height: 46,
-    borderRadius: 12,
+  floatingActions: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    marginTop: 8,
+    gap: 10,
   },
-  modalSubmitText: {
-    color: "#000000",
-    fontSize: 15,
-    fontWeight: "700",
+  floatingActionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  floatingActionBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#3B82F6",
+  },
+  floatingDeleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  floatingDeleteBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

@@ -1,0 +1,842 @@
+import React, { useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Modal,
+  ScrollView,
+  Pressable,
+  TextInput,
+  ActivityIndicator,
+  Platform,
+} from "react-native";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+import {
+  X,
+  Plus,
+  ImagePlus,
+  Film,
+  Check,
+  Search,
+  Link,
+  Upload,
+} from "lucide-react-native";
+import { trpc } from "../lib/trpc";
+import { useTheme } from "../contexts/ThemeContext";
+import { uploadFile } from "../lib/upload";
+import { AppDialogRenderer, useAppDialog } from "./AppDialog";
+import { AppToastRenderer, useAppToast } from "./AppToast";
+
+interface AddContentModalProps {
+  visible: boolean;
+  initialCategoryId?: number;
+  initialSubcategoryId?: number;
+  onClose: () => void;
+  onContentAdded?: () => void;
+}
+
+export function AddContentModal({
+  visible,
+  initialCategoryId,
+  initialSubcategoryId,
+  onClose,
+  onContentAdded,
+}: AddContentModalProps) {
+  const { colors, theme } = useTheme();
+  const utils = trpc.useUtils();
+  const { dialogState, hide, showAlert } = useAppDialog();
+  const { toastState, showToast } = useAppToast();
+
+  const [activeTab, setActiveTab] = useState<"create" | "link">("create");
+
+  // Create form state
+  const [heading, setHeading] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
+  const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<number[]>([]);
+
+  const [posterAsset, setPosterAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [mediaAssets, setMediaAssets] = useState<
+    Array<{ asset: ImagePicker.ImagePickerAsset; type: "image" | "video" }>
+  >([]);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState("");
+
+  // Search existing state for link tab
+  const [searchQuery, setSearchQuery] = useState("");
+  const { data: searchResults = [], isLoading: searchLoading } =
+    trpc.content.search.useQuery(
+      { query: searchQuery.trim() },
+      { enabled: visible && activeTab === "link" && searchQuery.trim().length > 0 }
+    );
+
+  const linkMutation = trpc.content.update.useMutation();
+  const createMutation = trpc.content.create.useMutation();
+  const addMediaMutation = trpc.media.add.useMutation();
+
+  const { data: categories = [] } = trpc.categories.list.useQuery(undefined, {
+    enabled: visible,
+  });
+  const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery(undefined, {
+    enabled: visible,
+  });
+
+  useEffect(() => {
+    if (visible) {
+      setHeading("");
+      setDescription("");
+      setSelectedCategoryIds(initialCategoryId ? [initialCategoryId] : []);
+      setSelectedSubcategoryIds(initialSubcategoryId ? [initialSubcategoryId] : []);
+      setPosterAsset(null);
+      setMediaAssets([]);
+      setIsSubmitting(false);
+      setUploadStatus("");
+      setSearchQuery("");
+      setActiveTab("create");
+    }
+  }, [visible, initialCategoryId, initialSubcategoryId]);
+
+  const toggleCategory = (catId: number) => {
+    setSelectedCategoryIds((prev) =>
+      prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId]
+    );
+  };
+
+  const toggleSubcategory = (subId: number) => {
+    setSelectedSubcategoryIds((prev) =>
+      prev.includes(subId) ? prev.filter((id) => id !== subId) : [...prev, subId]
+    );
+  };
+
+  const handlePickPoster = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.85,
+      });
+      if (!res.canceled && res.assets[0]) {
+        setPosterAsset(res.assets[0]);
+      }
+    } catch (err) {
+      console.error("Failed to pick poster:", err);
+    }
+  };
+
+  const handlePickMedia = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images", "videos"],
+        allowsMultipleSelection: true,
+        quality: 0.85,
+      });
+      if (!res.canceled && res.assets.length > 0) {
+        const newItems = res.assets.map((asset) => ({
+          asset,
+          type: (asset.type === "video" ? "video" : "image") as "image" | "video",
+        }));
+        setMediaAssets((prev) => [...prev, ...newItems]);
+      }
+    } catch (err) {
+      console.error("Failed to pick media:", err);
+    }
+  };
+
+  const handleRemoveMedia = (index: number) => {
+    setMediaAssets((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleCreateSubmit = async () => {
+    if (!heading.trim()) {
+      showAlert("Validation", "Heading is required");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setUploadStatus("Creating content...");
+
+    try {
+      let posterUrl: string | undefined = undefined;
+      let posterKey: string | undefined = undefined;
+
+      if (posterAsset) {
+        setUploadStatus("Uploading cover image...");
+        const res = await uploadFile(
+          posterAsset.uri,
+          posterAsset.fileName || `cover_${Date.now()}.jpg`,
+          posterAsset.mimeType || "image/jpeg"
+        );
+        if (res) {
+          posterUrl = res.url;
+          posterKey = res.key;
+        }
+      }
+
+      setUploadStatus("Saving details...");
+      const newItem = await createMutation.mutateAsync({
+        heading: heading.trim(),
+        description: description.trim() || undefined,
+        categoryIds: selectedCategoryIds,
+        subcategoryIds: selectedSubcategoryIds,
+        posterImageUrl: posterUrl,
+        posterImageKey: posterKey,
+      });
+
+      if (newItem && mediaAssets.length > 0) {
+        for (let i = 0; i < mediaAssets.length; i++) {
+          const itemMedia = mediaAssets[i];
+          setUploadStatus(`Uploading media ${i + 1} of ${mediaAssets.length}...`);
+          const res = await uploadFile(
+            itemMedia.asset.uri,
+            itemMedia.asset.fileName || `media_${Date.now()}_${i}.${itemMedia.type === "video" ? "mp4" : "jpg"}`,
+            itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg")
+          );
+
+          if (res) {
+            await addMediaMutation.mutateAsync({
+              contentItemId: newItem.id,
+              url: res.url,
+              key: res.key,
+              type: itemMedia.type,
+              order: i,
+            });
+          }
+        }
+      }
+
+      if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
+      if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
+      utils.content.listByStatus.invalidate();
+      utils.content.listUncategorized.invalidate();
+
+      onContentAdded?.();
+      onClose();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to create content", "error");
+    } finally {
+      setIsSubmitting(false);
+      setUploadStatus("");
+    }
+  };
+
+  const handleLinkItem = async (existingItem: any) => {
+    try {
+      setIsSubmitting(true);
+      const catIds = new Set<number>((existingItem.categoryIds || []) as number[]);
+      const subIds = new Set<number>((existingItem.subcategoryIds || []) as number[]);
+
+      if (initialCategoryId) catIds.add(initialCategoryId);
+      if (initialSubcategoryId) subIds.add(initialSubcategoryId);
+
+      await linkMutation.mutateAsync({
+        itemId: existingItem.id,
+        categoryIds: Array.from(catIds),
+        subcategoryIds: Array.from(subIds),
+      });
+
+      if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
+      if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
+      utils.content.listByStatus.invalidate();
+
+      showToast("Content linked successfully", "success");
+      onContentAdded?.();
+      onClose();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to link content", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+      <View style={[styles.container, { backgroundColor: theme === "dark" ? "#0A0A0A" : "#FFFFFF" }]}>
+        {/* Header */}
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Add Content</Text>
+          <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={10}>
+            <X size={20} color={colors.textMuted} />
+          </Pressable>
+        </View>
+
+        {/* Tab switcher: Create New vs Link Existing */}
+        <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
+          <Pressable
+            onPress={() => setActiveTab("create")}
+            style={[
+              styles.tabItem,
+              activeTab === "create" && { borderBottomColor: colors.text, borderBottomWidth: 2 },
+            ]}
+          >
+            <Upload size={14} color={activeTab === "create" ? colors.text : colors.textSubtle} />
+            <Text
+              style={[
+                styles.tabText,
+                { color: activeTab === "create" ? colors.text : colors.textSubtle },
+              ]}
+            >
+              Create New
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => setActiveTab("link")}
+            style={[
+              styles.tabItem,
+              activeTab === "link" && { borderBottomColor: colors.text, borderBottomWidth: 2 },
+            ]}
+          >
+            <Link size={14} color={activeTab === "link" ? colors.text : colors.textSubtle} />
+            <Text
+              style={[
+                styles.tabText,
+                { color: activeTab === "link" ? colors.text : colors.textSubtle },
+              ]}
+            >
+              Link Existing
+            </Text>
+          </Pressable>
+        </View>
+
+        {activeTab === "create" ? (
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Heading */}
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Heading *</Text>
+              <TextInput
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                value={heading}
+                onChangeText={setHeading}
+                placeholder="Content heading"
+                placeholderTextColor={colors.textSubtle}
+              />
+            </View>
+
+            {/* Description */}
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Description</Text>
+              <TextInput
+                style={[styles.input, styles.multilineInput, { color: colors.text, borderColor: colors.border }]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Description (optional)"
+                placeholderTextColor={colors.textSubtle}
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            {/* Cover Poster Image */}
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Cover Poster</Text>
+              {posterAsset ? (
+                <View style={styles.posterPreviewContainer}>
+                  <Image source={{ uri: posterAsset.uri }} style={styles.posterPreview} contentFit="cover" />
+                  <Pressable
+                    onPress={() => setPosterAsset(null)}
+                    style={styles.removePosterBtn}
+                  >
+                    <X size={14} color="#FFFFFF" />
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={handlePickPoster}
+                  style={[styles.uploadDropzone, { borderColor: colors.border }]}
+                >
+                  <ImagePlus size={24} color={colors.textSubtle} />
+                  <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
+                    Attach Cover Poster Image
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* Categories Multi-Select Checkboxes */}
+            {categories.length > 0 && (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.textMuted }]}>Categories</Text>
+                <View style={styles.checkboxGroup}>
+                  {categories.map((cat) => {
+                    const isChecked = selectedCategoryIds.includes(cat.id);
+                    return (
+                      <Pressable
+                        key={cat.id}
+                        onPress={() => toggleCategory(cat.id)}
+                        style={[
+                          styles.chipOption,
+                          isChecked
+                            ? { backgroundColor: "rgba(59, 130, 246, 0.2)", borderColor: "#3B82F6" }
+                            : { backgroundColor: colors.surface, borderColor: colors.border },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.checkboxSquare,
+                            isChecked ? { backgroundColor: "#3B82F6", borderColor: "#3B82F6" } : { borderColor: colors.textSubtle },
+                          ]}
+                        >
+                          {isChecked && <Check size={12} color="#FFFFFF" />}
+                        </View>
+                        <Text
+                          style={[
+                            styles.chipOptionText,
+                            { color: isChecked ? "#3B82F6" : colors.text },
+                          ]}
+                        >
+                          {cat.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {/* Subcategories Multi-Select Checkboxes */}
+            {allSubcategories.length > 0 && (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.textMuted }]}>Subcategories</Text>
+                <View style={styles.checkboxGroup}>
+                  {allSubcategories.map((sub) => {
+                    const isChecked = selectedSubcategoryIds.includes(sub.id);
+                    return (
+                      <Pressable
+                        key={sub.id}
+                        onPress={() => toggleSubcategory(sub.id)}
+                        style={[
+                          styles.chipOption,
+                          isChecked
+                            ? { backgroundColor: "rgba(59, 130, 246, 0.2)", borderColor: "#3B82F6" }
+                            : { backgroundColor: colors.surface, borderColor: colors.border },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.checkboxSquare,
+                            isChecked ? { backgroundColor: "#3B82F6", borderColor: "#3B82F6" } : { borderColor: colors.textSubtle },
+                          ]}
+                        >
+                          {isChecked && <Check size={12} color="#FFFFFF" />}
+                        </View>
+                        <Text
+                          style={[
+                            styles.chipOptionText,
+                            { color: isChecked ? "#3B82F6" : colors.text },
+                          ]}
+                        >
+                          {sub.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {/* Media Attachments Section */}
+            <View style={styles.fieldGroup}>
+              <View style={styles.mediaHeaderRow}>
+                <Text style={[styles.label, { color: colors.textMuted, marginBottom: 0 }]}>
+                  Media Gallery ({mediaAssets.length})
+                </Text>
+                <Pressable onPress={handlePickMedia} style={styles.addMediaSmallBtn}>
+                  <Plus size={14} color="#3B82F6" />
+                  <Text style={styles.addMediaSmallBtnText}>Add Photos / Videos</Text>
+                </Pressable>
+              </View>
+
+              {mediaAssets.length > 0 && (
+                <View style={styles.mediaGrid}>
+                  {mediaAssets.map((item, idx) => (
+                    <View key={`media-${idx}`} style={styles.mediaThumbnailWrapper}>
+                      <Image source={{ uri: item.asset.uri }} style={styles.mediaThumbnail} contentFit="cover" />
+                      {item.type === "video" && (
+                        <View style={styles.videoBadge}>
+                          <Film size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                      <Pressable
+                        onPress={() => handleRemoveMedia(idx)}
+                        style={styles.deleteMediaThumbnailBtn}
+                      >
+                        <X size={12} color="#FFFFFF" />
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Submit Button */}
+            <Pressable
+              onPress={handleCreateSubmit}
+              disabled={isSubmitting}
+              style={[styles.saveButton, isSubmitting && { opacity: 0.6 }]}
+            >
+              {isSubmitting ? (
+                <View style={styles.savingRow}>
+                  <ActivityIndicator color="#000000" size="small" />
+                  <Text style={styles.saveButtonText}>{uploadStatus || "Creating..."}</Text>
+                </View>
+              ) : (
+                <Text style={styles.saveButtonText}>Create Content</Text>
+              )}
+            </Pressable>
+          </ScrollView>
+        ) : (
+          /* Link Existing Content Tab */
+          <View style={styles.linkContainer}>
+            <View style={[styles.searchBar, { borderColor: colors.border }]}>
+              <Search size={16} color={colors.textSubtle} style={{ marginRight: 8 }} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.text }]}
+                placeholder="Search existing items to link..."
+                placeholderTextColor={colors.textSubtle}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+              {searchQuery.length > 0 && (
+                <Pressable onPress={() => setSearchQuery("")}>
+                  <X size={16} color={colors.textSubtle} />
+                </Pressable>
+              )}
+            </View>
+
+            {searchLoading ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="small" color={colors.accent} />
+              </View>
+            ) : searchResults.length > 0 ? (
+              <ScrollView style={styles.searchResultsList}>
+                {searchResults.map((result: any) => (
+                  <View
+                    key={result.id}
+                    style={[styles.resultItem, { borderBottomColor: colors.border }]}
+                  >
+                    {result.posterImageUrl ? (
+                      <Image
+                        source={{ uri: result.posterImageUrl }}
+                        style={styles.resultPoster}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <View style={[styles.resultPosterPlaceholder, { backgroundColor: colors.surface }]}>
+                        <Film size={16} color={colors.textSubtle} />
+                      </View>
+                    )}
+                    <View style={styles.resultInfo}>
+                      <Text style={[styles.resultHeading, { color: colors.text }]} numberOfLines={1}>
+                        {result.heading}
+                      </Text>
+                      {result.description ? (
+                        <Text style={[styles.resultDesc, { color: colors.textMuted }]} numberOfLines={1}>
+                          {result.description}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Pressable
+                      onPress={() => handleLinkItem(result)}
+                      disabled={isSubmitting}
+                      style={styles.linkActionBtn}
+                    >
+                      <Text style={styles.linkActionBtnText}>Link</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.emptySearchBox}>
+                <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
+                  {searchQuery.trim().length > 0
+                    ? "No matching items found"
+                    : "Type above to search existing content"}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    </Modal>
+    <AppDialogRenderer {...dialogState} onHide={hide} />
+    <AppToastRenderer {...toastState} />
+  </>
+);
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  closeBtn: {
+    padding: 6,
+  },
+  tabBar: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+  },
+  tabItem: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 60,
+  },
+  fieldGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  input: {
+    height: 46,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+  },
+  multilineInput: {
+    height: 80,
+    paddingTop: 12,
+    textAlignVertical: "top",
+  },
+  posterPreviewContainer: {
+    width: "100%",
+    height: 160,
+    borderRadius: 14,
+    overflow: "hidden",
+    position: "relative",
+  },
+  posterPreview: {
+    width: "100%",
+    height: "100%",
+  },
+  removePosterBtn: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  uploadDropzone: {
+    height: 90,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    gap: 6,
+  },
+  uploadDropzoneText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  checkboxGroup: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chipOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  checkboxSquare: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chipOptionText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  mediaHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  addMediaSmallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  addMediaSmallBtnText: {
+    color: "#3B82F6",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  mediaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  mediaThumbnailWrapper: {
+    width: 85,
+    height: 85,
+    borderRadius: 10,
+    overflow: "hidden",
+    position: "relative",
+    backgroundColor: "rgba(0,0,0,0.2)",
+  },
+  mediaThumbnail: {
+    width: "100%",
+    height: "100%",
+  },
+  videoBadge: {
+    position: "absolute",
+    bottom: 4,
+    left: 4,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    borderRadius: 4,
+    padding: 3,
+  },
+  deleteMediaThumbnailBtn: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    backgroundColor: "rgba(239, 68, 68, 0.85)",
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveButton: {
+    backgroundColor: "#FFFFFF",
+    height: 48,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  saveButtonText: {
+    color: "#000000",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  savingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  linkContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 44,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    marginBottom: 16,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+  },
+  loadingBox: {
+    paddingVertical: 40,
+    alignItems: "center",
+  },
+  searchResultsList: {
+    flex: 1,
+  },
+  resultItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  resultPoster: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+  },
+  resultPosterPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  resultInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  resultHeading: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  resultDesc: {
+    fontSize: 12,
+  },
+  linkActionBtn: {
+    backgroundColor: "#3B82F6",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  linkActionBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  emptySearchBox: {
+    paddingVertical: 60,
+    alignItems: "center",
+  },
+  emptySearchText: {
+    fontSize: 14,
+  },
+});

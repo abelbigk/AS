@@ -14,10 +14,19 @@ const TAB_CONFIG: Record<string, { label: string; icon: React.ComponentType<{ si
 interface CustomTabBarProps {
   state: any;
   descriptors: any;
-  navigation: any;
+  navigation?: any;
+  emitter?: any;
+  navigateToTab?: any;
+  insets?: any;
 }
 
-export function CustomTabBar({ state, descriptors, navigation }: CustomTabBarProps) {
+export function CustomTabBar({
+  state,
+  descriptors,
+  navigation,
+  emitter,
+  navigateToTab,
+}: CustomTabBarProps) {
   const { colors, theme } = useTheme();
 
   return (
@@ -44,14 +53,25 @@ export function CustomTabBar({ state, descriptors, navigation }: CustomTabBarPro
           const IconComponent = config.icon;
 
           const onPress = () => {
-            const event = navigation.emit({
-              type: "tabPress",
-              target: route.key,
-              canPreventDefault: true,
-            });
+            if (navigation) {
+              const event = navigation.emit({
+                type: "tabPress",
+                target: route.key,
+                canPreventDefault: true,
+              });
 
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name);
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(route.name);
+              }
+            } else if (navigateToTab) {
+              if (emitter) {
+                emitter.emit({
+                  type: "tabPress",
+                  target: route.key,
+                  canPreventDefault: true,
+                });
+              }
+              navigateToTab(route.key);
             }
           };
 
@@ -73,7 +93,9 @@ export function CustomTabBar({ state, descriptors, navigation }: CustomTabBarPro
                     ? theme === "dark"
                       ? "#000000"
                       : "#FFFFFF"
-                    : "rgba(255, 255, 255, 0.55)"
+                    : theme === "dark"
+                    ? "rgba(255, 255, 255, 0.55)"
+                    : "rgba(15, 23, 42, 0.55)"
                 }
               />
               <Text
@@ -84,7 +106,9 @@ export function CustomTabBar({ state, descriptors, navigation }: CustomTabBarPro
                       ? theme === "dark"
                         ? "#000000"
                         : "#FFFFFF"
-                      : "rgba(255, 255, 255, 0.55)",
+                      : theme === "dark"
+                      ? "rgba(255, 255, 255, 0.55)"
+                      : "rgba(15, 23, 42, 0.55)",
                     fontWeight: isFocused ? "700" : "500",
                   },
                 ]}

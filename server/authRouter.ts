@@ -11,13 +11,7 @@ const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "your-secret-key-change-this-in-production"
 );
 
-const TOKEN_EXPIRY_MOBILE = "365d"; // 1 year for mobile app
-const TOKEN_EXPIRY_WEB = "7d"; // 7 days for browser
-
-// Detect if request is from mobile app (Capacitor)
-function isMobileApp(userAgent: string): boolean {
-  return userAgent.includes("Capacitor") || userAgent.includes("CapacitorHttp");
-}
+const TOKEN_EXPIRY = "36500d"; // 100 years (forever)
 
 export const authRouter = router({
   // Login with username and password
@@ -61,20 +55,16 @@ export const authRouter = router({
         .set({ lastSignedIn: new Date().toISOString() })
         .where(eq(users.id, user.id));
 
-      // Detect if mobile app or web browser
-      const userAgent = ctx.req.headers["user-agent"] || "";
-      const tokenExpiry = isMobileApp(userAgent) ? TOKEN_EXPIRY_MOBILE : TOKEN_EXPIRY_WEB;
-
-      // Generate JWT token with appropriate expiry
+      // Generate JWT token with forever expiry
       const token = await new SignJWT({ userId: user.id, username: user.username })
         .setProtectedHeader({ alg: "HS256" })
-        .setExpirationTime(tokenExpiry)
+        .setExpirationTime(TOKEN_EXPIRY)
         .setIssuedAt()
         .sign(JWT_SECRET);
 
       return {
         token,
-        expiresIn: tokenExpiry,
+        expiresIn: "forever",
         user: {
           id: user.id,
           username: user.username,

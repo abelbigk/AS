@@ -183,11 +183,6 @@ export default function Login() {
               </button>
             </div>
           </div>
-
-          {/* Footer note */}
-          <p className="text-center text-xs text-gray-500 dark:text-white/40 mt-6">
-            Session remains active for {sessionDuration}
-          </p>
         </div>
       </div>
     </div>

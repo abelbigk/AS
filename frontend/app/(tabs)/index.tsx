@@ -18,7 +18,10 @@ import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import { DARK_IMAGE, LIGHT_IMAGE } from "../../src/lib/constants";
 import { CategoryCard } from "../../src/components/CategoryCard";
-import { ContentCard } from "../../src/components/ContentCard";
+import { SubcategoryCard } from "../../src/components/SubcategoryCard";
+import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
+import { ContentDetailModal } from "../../src/components/ContentDetailModal";
+import { EditCategoryModal } from "../../src/components/EditCategoryModal";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -27,6 +30,10 @@ export default function HomeScreen() {
 
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
+  const [activeCategoryForEdit, setActiveCategoryForEdit] = useState<any | null>(null);
+
+  const utils = trpc.useUtils();
 
   const {
     data: categories = [],
@@ -34,6 +41,40 @@ export default function HomeScreen() {
     refetch,
     isRefetching,
   } = trpc.categories.list.useQuery();
+
+  const reorderMutation = trpc.categories.reorder.useMutation({
+    onSuccess: () => {
+      utils.categories.list.invalidate();
+    },
+  });
+
+  const deleteCategoryMutation = trpc.categories.delete.useMutation({
+    onSuccess: () => {
+      utils.categories.list.invalidate();
+    },
+  });
+
+  const handleMoveCategory = (categoryId: number, direction: "up" | "down") => {
+    const currentIndex = categories.findIndex((c) => c.id === categoryId);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= categories.length) return;
+
+    const newOrder = [...categories];
+    const [moved] = newOrder.splice(currentIndex, 1);
+    newOrder.splice(targetIndex, 0, moved);
+
+    utils.categories.list.setData(undefined, newOrder);
+
+    reorderMutation.mutate(
+      { categoryIds: newOrder.map((c) => c.id) },
+      {
+        onError: () => {
+          utils.categories.list.invalidate();
+        },
+      }
+    );
+  };
 
   const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery(
     undefined,
@@ -69,6 +110,7 @@ export default function HomeScreen() {
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
+        blurRadius={Platform.OS !== "web" ? 25 : undefined}
       />
       <View
         style={[
@@ -94,7 +136,7 @@ export default function HomeScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
-            onRefresh={refetch}
+            onRefresh={() => { refetch(); }}
             tintColor={colors.accent}
           />
         }
@@ -162,7 +204,40 @@ export default function HomeScreen() {
                     </View>
                   )}
 
-                  {/* Contents match */}
+                  {/* Subcategories match: 2-column masonry */}
+                  {matchingSubcategories.length > 0 && (
+                    <View style={styles.searchSection}>
+                      <Text style={styles.sectionHeader}>
+                        SUBCATEGORIES ({matchingSubcategories.length})
+                      </Text>
+                      <View style={styles.twoColumnGrid}>
+                        <View style={styles.gridColumn}>
+                          {matchingSubcategories
+                            .filter((_, i) => i % 2 === 0)
+                            .map((sub) => (
+                              <SubcategoryCard
+                                key={sub.id}
+                                subcategory={sub}
+                                onPress={() => router.push(`/subcategory/${sub.id}`)}
+                              />
+                            ))}
+                        </View>
+                        <View style={styles.gridColumn}>
+                          {matchingSubcategories
+                            .filter((_, i) => i % 2 === 1)
+                            .map((sub) => (
+                              <SubcategoryCard
+                                key={sub.id}
+                                subcategory={sub}
+                                onPress={() => router.push(`/subcategory/${sub.id}`)}
+                              />
+                            ))}
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Contents match: 2-column masonry */}
                   {searchLoading ? (
                     <View style={styles.loadingContainer}>
                       <ActivityIndicator size="small" color="#FFFFFF" />
@@ -172,13 +247,30 @@ export default function HomeScreen() {
                       <Text style={styles.sectionHeader}>
                         CONTENTS ({searchContents.length})
                       </Text>
-                      {searchContents.map((item) => (
-                        <ContentCard
-                          key={item.id}
-                          item={item as any}
-                          onPress={() => {}}
-                        />
-                      ))}
+                      <View style={styles.twoColumnGrid}>
+                        <View style={styles.gridColumn}>
+                          {searchContents
+                            .filter((_, i) => i % 2 === 0)
+                            .map((item) => (
+                              <ContentCard
+                                key={item.id}
+                                item={item as any}
+                                onPress={() => setActiveItem(item as any)}
+                              />
+                            ))}
+                        </View>
+                        <View style={styles.gridColumn}>
+                          {searchContents
+                            .filter((_, i) => i % 2 === 1)
+                            .map((item) => (
+                              <ContentCard
+                                key={item.id}
+                                item={item as any}
+                                onPress={() => setActiveItem(item as any)}
+                              />
+                            ))}
+                        </View>
+                      </View>
                     </View>
                   ) : null}
 
@@ -225,11 +317,23 @@ export default function HomeScreen() {
                   {/* Categories Vertical List */}
                   {categories.length > 0 ? (
                     <View style={styles.categoryList}>
-                      {categories.map((category) => (
+                      {categories.map((category, index) => (
                         <CategoryCard
                           key={category.id}
                           category={category}
                           onPress={() => router.push(`/category/${category.id}`)}
+                          onEdit={() => setActiveCategoryForEdit(category)}
+                          onDelete={() => deleteCategoryMutation.mutate({ categoryId: category.id })}
+                          onMoveUp={
+                            index > 0
+                              ? () => handleMoveCategory(category.id, "up")
+                              : undefined
+                          }
+                          onMoveDown={
+                            index < categories.length - 1
+                              ? () => handleMoveCategory(category.id, "down")
+                              : undefined
+                          }
                         />
                       ))}
                     </View>
@@ -244,6 +348,20 @@ export default function HomeScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Content Detail Viewer Modal */}
+      <ContentDetailModal
+        item={activeItem}
+        visible={!!activeItem}
+        onClose={() => setActiveItem(null)}
+      />
+
+      {/* Edit Category Modal */}
+      <EditCategoryModal
+        category={activeCategoryForEdit}
+        visible={!!activeCategoryForEdit}
+        onClose={() => setActiveCategoryForEdit(null)}
+      />
     </View>
   );
 }
@@ -257,6 +375,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       web: {
         backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
       } as any,
     }),
   },
@@ -266,7 +385,7 @@ const styles = StyleSheet.create({
   },
   maxWidthWrapper: {
     width: "100%",
-    maxWidth: 672, // max-w-2xl
+    maxWidth: 672,
   },
   headerRow: {
     flexDirection: "row",
@@ -297,7 +416,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   categoryList: {
-    gap: 4,
+    gap: 12,
   },
   searchHeader: {
     flexDirection: "row",
@@ -326,7 +445,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 70,
-    textAlign: "center",
   },
   emptySearchTitle: {
     fontSize: 16,
@@ -347,10 +465,18 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   sectionHeader: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
     color: "rgba(255, 255, 255, 0.45)",
     letterSpacing: 0.8,
+  },
+  twoColumnGrid: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  gridColumn: {
+    flex: 1,
   },
   fullLoadingContainer: {
     height: 300,

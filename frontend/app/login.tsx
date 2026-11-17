@@ -6,7 +6,6 @@ import {
   TextInput,
   Pressable,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -16,10 +15,12 @@ import { Lock, User } from "lucide-react-native";
 import { trpc } from "../src/lib/trpc";
 import { useAuth } from "../src/contexts/AuthContext";
 import { DARK_IMAGE } from "../src/lib/constants";
+import { AppDialogRenderer, useAppDialog } from "../src/components/AppDialog";
 
 export default function LoginScreen() {
   const router = useRouter();
   const { setAuth } = useAuth();
+  const { dialogState, hide, showAlert } = useAppDialog();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -31,18 +32,18 @@ export default function LoginScreen() {
       router.replace("/");
     },
     onError: (err) => {
-      Alert.alert("Login Failed", err.message || "Invalid credentials");
+      showAlert("Login Failed", err.message || "Invalid credentials");
     },
   });
 
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: () => {
-      Alert.alert("Success", "Account created! Please sign in.");
+      showAlert("Success", "Account created! Please sign in.");
       setIsRegistering(false);
       setPassword("");
     },
     onError: (err) => {
-      Alert.alert("Registration Failed", err.message || "Could not register");
+      showAlert("Registration Failed", err.message || "Could not register");
     },
   });
 
@@ -50,7 +51,7 @@ export default function LoginScreen() {
 
   const handleSubmit = () => {
     if (!username.trim() || !password.trim()) {
-      Alert.alert("Validation", "Please fill in all fields");
+      showAlert("Validation", "Please fill in all fields");
       return;
     }
 
@@ -179,13 +180,9 @@ export default function LoginScreen() {
               </Text>
             </Pressable>
           </View>
-
-          {/* Footer note */}
-          <Text style={styles.footerNote}>
-            Session remains active for 7 days
-          </Text>
         </View>
       </KeyboardAvoidingView>
+      <AppDialogRenderer {...dialogState} onHide={hide} />
     </View>
   );
 }
@@ -325,11 +322,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "rgba(255, 255, 255, 0.7)",
     fontWeight: "500",
-  },
-  footerNote: {
-    textAlign: "center",
-    fontSize: 12,
-    color: "rgba(255, 255, 255, 0.4)",
-    marginTop: 24,
   },
 });

@@ -1,9 +1,20 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable, Platform, Alert } from "react-native";
+import React, { useState } from "react";
+import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { Image } from "expo-image";
-import { CroppedImage } from "./CroppedImage";
 import { useTheme } from "../contexts/ThemeContext";
-import { Clock, CheckCircle2, MoreVertical, Trash2 } from "lucide-react-native";
+import {
+  Clock,
+  CheckCircle2,
+  MoreVertical,
+  Pencil,
+  Trash2,
+  FolderMinus,
+  FolderPlus,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react-native";
+import { DropdownMenu } from "./DropdownMenu";
+import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 
 export interface ContentItem {
   id: number;
@@ -22,76 +33,212 @@ export interface ContentItem {
 interface ContentCardProps {
   item: ContentItem;
   categoryName?: string;
+  isSelectMode?: boolean;
+  selected?: boolean;
   onPress: () => void;
   onUpdateStatus?: (status: "default" | "queued" | "done") => void;
+  onRemoveFromCategory?: () => void;
+  onRemoveFromSubcategory?: () => void;
+  onCategorize?: () => void;
+  onEdit?: () => void;
   onDelete?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }
 
 export function ContentCard({
   item,
   categoryName,
+  isSelectMode,
+  selected,
   onPress,
   onUpdateStatus,
+  onRemoveFromCategory,
+  onRemoveFromSubcategory,
+  onCategorize,
+  onEdit,
   onDelete,
+  onMoveUp,
+  onMoveDown,
 }: ContentCardProps) {
   const { colors, theme } = useTheme();
+  const [aspectRatio, setAspectRatio] = useState<number>(3 / 4);
+  const { dialogState, hide, showConfirm } = useAppDialog();
 
   const isQueued = item.status === "queued";
   const isDone = item.status === "done";
 
-  const handleMorePress = (e: any) => {
-    e.stopPropagation?.();
-    const options: { text: string; onPress?: () => void; style?: "default" | "cancel" | "destructive" }[] = [];
-
-    if (onUpdateStatus) {
-      options.push({
-        text: isQueued ? "Unqueue" : "Queue",
-        onPress: () => onUpdateStatus(isQueued ? "default" : "queued"),
-      });
-      options.push({
-        text: isDone ? "Mark Undone" : "Mark Done",
-        onPress: () => onUpdateStatus(isDone ? "default" : "done"),
-      });
-    }
-
-    if (onDelete) {
-      options.push({
-        text: "Delete",
-        style: "destructive",
-        onPress: onDelete,
-      });
-    }
-
-    options.push({ text: "Cancel", style: "cancel" });
-
-    Alert.alert("Options", undefined, options);
+  const handleConfirmDelete = () => {
+    showConfirm({
+      title: "Delete this item?",
+      message: "This action cannot be undone. This will permanently delete the content.",
+      confirmText: "Delete",
+      destructive: true,
+      onConfirm: onDelete,
+    });
   };
 
+  const handleConfirmRemoveCategory = () => {
+    showConfirm({
+      title: "Remove from category?",
+      message: "Are you sure you want to remove this item from this category? It will still be available in your other categories.",
+      confirmText: "Remove",
+      destructive: true,
+      onConfirm: onRemoveFromCategory,
+    });
+  };
+
+  const handleConfirmRemoveSubcategory = () => {
+    showConfirm({
+      title: "Remove from subcategory?",
+      message: "Are you sure you want to remove this item from this subcategory. It will still be available in your other categories.",
+      confirmText: "Remove",
+      destructive: true,
+      onConfirm: onRemoveFromSubcategory,
+    });
+  };
+
+  // Menu items for this specific card
+  const menuItems = [
+    ...(onUpdateStatus
+      ? [
+          {
+            label: isQueued ? "Unqueue" : "Queue",
+            icon: Clock,
+            onPress: () => onUpdateStatus(isQueued ? "default" : "queued"),
+          },
+          {
+            label: isDone ? "Undone" : "Done",
+            icon: CheckCircle2,
+            onPress: () => onUpdateStatus(isDone ? "default" : "done"),
+          },
+        ]
+      : []),
+    ...(onEdit
+      ? [
+          {
+            label: "Edit Details",
+            icon: Pencil,
+            onPress: onEdit,
+          },
+        ]
+      : []),
+    ...(onMoveUp
+      ? [
+          {
+            label: "Move Up",
+            icon: ArrowUp,
+            onPress: onMoveUp,
+          },
+        ]
+      : []),
+    ...(onMoveDown
+      ? [
+          {
+            label: "Move Down",
+            icon: ArrowDown,
+            onPress: onMoveDown,
+          },
+        ]
+      : []),
+    ...(onRemoveFromCategory
+      ? [
+          {
+            label: "Remove from Category",
+            icon: FolderMinus,
+            onPress: handleConfirmRemoveCategory,
+          },
+        ]
+      : []),
+    ...(onRemoveFromSubcategory
+      ? [
+          {
+            label: "Remove from Subcategory",
+            icon: FolderMinus,
+            onPress: handleConfirmRemoveSubcategory,
+          },
+        ]
+      : []),
+    ...(onCategorize
+      ? [
+          {
+            label: "Categorize content",
+            icon: FolderPlus,
+            onPress: onCategorize,
+          },
+        ]
+      : []),
+    ...(onDelete
+      ? [
+          {
+            label: "Delete",
+            icon: Trash2,
+            destructive: true,
+            onPress: handleConfirmDelete,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <Pressable
+    <>
+      <Pressable
       onPress={onPress}
       style={({ pressed }) => [
         styles.card,
         {
           backgroundColor:
-            theme === "dark" ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.75)",
-          borderColor:
-            theme === "dark" ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)",
+            theme === "dark" ? "rgba(255, 255, 255, 0.07)" : "rgba(255, 255, 255, 0.8)",
+          borderColor: selected
+            ? "#3B82F6"
+            : theme === "dark"
+            ? "rgba(255, 255, 255, 0.12)"
+            : "rgba(0, 0, 0, 0.08)",
+          borderWidth: selected ? 2 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
           opacity: pressed ? 0.9 : 1,
         },
       ]}
     >
+      {/* Selection checkbox */}
+      {isSelectMode && (
+        <View style={styles.selectionCheckbox}>
+          <View
+            style={[
+              styles.checkboxBox,
+              selected
+                ? { backgroundColor: "#3B82F6", borderColor: "#3B82F6" }
+                : { backgroundColor: "rgba(0, 0, 0, 0.45)", borderColor: "rgba(255, 255, 255, 0.4)" },
+            ]}
+          >
+            <CheckCircle2
+              size={14}
+              color={selected ? "#FFFFFF" : "transparent"}
+            />
+          </View>
+        </View>
+      )}
+
       {/* Poster Image Container */}
       {item.posterImageUrl ? (
-        <View style={styles.imageWrapper}>
-          <CroppedImage
-            src={item.posterImageUrl}
-            cropData={item.posterCropData}
+        <View style={[styles.imageWrapper, { aspectRatio }]}>
+          <Image
+            source={{ uri: item.posterImageUrl }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={200}
+            onLoad={(e) => {
+              if (e.source.width && e.source.height) {
+                const rawRatio = e.source.width / e.source.height;
+                const clamped = Math.max(0.6, Math.min(1.8, rawRatio));
+                setAspectRatio(clamped);
+              }
+            }}
           />
 
-          {/* Status pill on image */}
-          {item.status !== "default" && (
+          {/* Status badge on image */}
+          {!isSelectMode && item.status !== "default" && (
             <View style={styles.statusPill}>
               {isQueued && (
                 <View style={[styles.badge, { backgroundColor: "rgba(59, 130, 246, 0.85)" }]}>
@@ -109,15 +256,69 @@ export function ContentCard({
           )}
 
           {/* 3-dot menu button on image */}
-          <Pressable
-            onPress={handleMorePress}
-            style={styles.moreBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <MoreVertical size={14} color="rgba(255, 255, 255, 0.8)" />
-          </Pressable>
+          {!isSelectMode && menuItems.length > 0 && (
+            <View style={styles.moreBtnWrapper}>
+              <DropdownMenu
+                align="right"
+                trigger={(open) => (
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      open();
+                    }}
+                    style={styles.moreBtn}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MoreVertical size={14} color="rgba(255, 255, 255, 0.85)" />
+                  </Pressable>
+                )}
+                items={menuItems}
+              />
+            </View>
+          )}
         </View>
-      ) : null}
+      ) : (
+        /* No image - show colored block matching web */
+        <View style={[styles.noImageBlock, { backgroundColor: colors.surface }]}>
+          {item.status !== "default" && (
+            <View style={styles.noImageStatusPill}>
+              {isQueued && (
+                <View style={[styles.badge, { backgroundColor: "rgba(59, 130, 246, 0.3)" }]}>
+                  <Clock size={10} color="#3B82F6" />
+                  <Text style={[styles.badgeText, { color: "#3B82F6" }]}>Queued</Text>
+                </View>
+              )}
+              {isDone && (
+                <View style={[styles.badge, { backgroundColor: "rgba(16, 185, 129, 0.3)" }]}>
+                  <CheckCircle2 size={10} color="#10B981" />
+                  <Text style={[styles.badgeText, { color: "#10B981" }]}>Done</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {!isSelectMode && menuItems.length > 0 && (
+            <View style={styles.moreBtnWrapper}>
+              <DropdownMenu
+                align="right"
+                trigger={(open) => (
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      open();
+                    }}
+                    style={styles.moreBtn}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MoreVertical size={14} color={colors.textMuted} />
+                  </Pressable>
+                )}
+                items={menuItems}
+              />
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Info Container */}
       <View style={styles.content}>
@@ -138,16 +339,18 @@ export function ContentCard({
         ) : null}
       </View>
     </Pressable>
-  );
+    <AppDialogRenderer {...dialogState} onHide={hide} />
+  </>
+);
 }
 
 const styles = StyleSheet.create({
   card: {
     width: "100%",
     borderRadius: 16,
-    borderWidth: 1,
     overflow: "hidden",
     marginBottom: 12,
+    position: "relative",
     ...Platform.select({
       web: {
         backdropFilter: "blur(12px)",
@@ -163,12 +366,35 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  selectionCheckbox: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    zIndex: 25,
+  },
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   imageWrapper: {
     width: "100%",
-    height: 140,
     backgroundColor: "rgba(0, 0, 0, 0.3)",
     position: "relative",
     overflow: "hidden",
+  },
+  noImageBlock: {
+    width: "100%",
+    height: 80,
+    position: "relative",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  noImageStatusPill: {
+    alignSelf: "center",
   },
   statusPill: {
     position: "absolute",
@@ -189,20 +415,22 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "600",
   },
-  moreBtn: {
+  moreBtnWrapper: {
     position: "absolute",
     top: 8,
     right: 8,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    zIndex: 15,
+  },
+  moreBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: "rgba(0, 0, 0, 0.55)",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 10,
   },
   content: {
-    padding: 10,
+    padding: 11,
     gap: 4,
   },
   categoryTag: {

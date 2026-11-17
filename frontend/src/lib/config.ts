@@ -10,8 +10,18 @@ export function getBaseApiUrl(): string {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
+  // If running in browser on a production domain, automatically adapt to host origin
+  if (
+    Platform.OS === "web" &&
+    typeof window !== "undefined" &&
+    window.location?.origin &&
+    !window.location.hostname.includes("localhost") &&
+    !window.location.hostname.includes("127.0.0.1")
+  ) {
+    return window.location.origin;
+  }
+
   // Always use the live Render backend by default
-  // The Render backend's CORS allows all localhost origins for Expo dev
   return RENDER_URL;
 }
 
