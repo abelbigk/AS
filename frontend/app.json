@@ -35,7 +35,9 @@
       "expo-secure-store",
       "expo-status-bar",
       "expo-video",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-audio",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
@@ -57,7 +59,10 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "UIBackgroundModes": ["location", "fetch"],
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ],
         "NSLocationWhenInUseUsageDescription": "Allow access to your location to track delivery coordinates.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow background location tracking so delivery coordinates update even when the app is closed.",
         "NSLocationAlwaysUsageDescription": "Allow background location tracking so delivery coordinates update even when the app is closed."

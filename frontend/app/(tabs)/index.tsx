@@ -474,9 +474,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     alignItems: "flex-start",
+    width: "100%",
   },
   gridColumn: {
     flex: 1,
+    minWidth: 0,
   },
   fullLoadingContainer: {
     height: 300,

@@ -26,12 +26,8 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
 
   const htmlContent = useMemo(() => {
     const isDark = theme === "dark";
-    const tileUrl = isDark
-      ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-      : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-    const tileAttr = isDark
-      ? '&copy; <a href="https://carto.com/">CARTO</a>'
-      : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+    const tileUrl = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    const tileAttr = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
     const safeLocations = JSON.stringify(locations);
 
@@ -47,6 +43,7 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body, html, #map { width: 100%; height: 100%; background: ${isDark ? "#121212" : "#f5f5f5"}; }
           .leaflet-container { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+          ${isDark ? '.leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(90%) contrast(90%); }' : ''}
           .custom-popup .leaflet-popup-content-wrapper {
             background: ${isDark ? "rgba(24, 24, 27, 0.95)" : "rgba(255, 255, 255, 0.95)"};
             color: ${isDark ? "#ffffff" : "#000000"};

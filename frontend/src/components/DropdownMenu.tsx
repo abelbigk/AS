@@ -44,14 +44,25 @@ export function DropdownMenu({
   const openMenu = () => {
     if (triggerRef.current && typeof triggerRef.current.measureInWindow === "function") {
       triggerRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
-        const top = Math.min(y + height + 6, windowHeight - 250);
+        const menuWidth = 195;
+        let left: number;
         if (align === "right") {
-          const right = Math.max(16, windowWidth - (x + width));
-          setMenuPos({ top, right });
+          left = x + width - menuWidth;
         } else {
-          const left = Math.max(16, x);
-          setMenuPos({ top, left });
+          left = x;
         }
+
+        // Clamp horizontally so it is never off-screen
+        left = Math.max(12, Math.min(left, windowWidth - menuWidth - 12));
+
+        const approxMenuHeight = items.length * 44 + 16;
+        let top = y + height + 6;
+        // If opening below overflows the bottom, flip above trigger
+        if (top + approxMenuHeight > windowHeight - 12) {
+          top = Math.max(12, y - approxMenuHeight - 6);
+        }
+
+        setMenuPos({ top, left });
         setVisible(true);
       });
     } else {

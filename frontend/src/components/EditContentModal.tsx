@@ -20,13 +20,13 @@ import {
   Plus,
   Check,
   Film,
-  Camera,
 } from "lucide-react-native";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
 import { uploadFile } from "../lib/upload";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import type { ContentItem } from "./ContentCard";
+import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
 
 interface EditContentModalProps {
   item: ContentItem | null;
@@ -51,9 +51,7 @@ export function EditContentModal({
   const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<number[]>([]);
 
   // Poster state
-  const [posterUrl, setPosterUrl] = useState<string | null>(null);
-  const [removePoster, setRemovePoster] = useState(false);
-  const [newPosterAsset, setNewPosterAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [posterImage, setPosterImage] = useState<ImageValue | null>(null);
 
   // New media state
   const [pendingMedia, setPendingMedia] = useState<
@@ -93,9 +91,11 @@ export function EditContentModal({
       setDescription(item.description || "");
       setSelectedCategoryIds(item.categoryIds || []);
       setSelectedSubcategoryIds(item.subcategoryIds || []);
-      setPosterUrl(item.posterImageUrl || null);
-      setRemovePoster(false);
-      setNewPosterAsset(null);
+      if (item.posterImageUrl) {
+        setPosterImage({ uri: item.posterImageUrl, isUrl: true, asset: null });
+      } else {
+        setPosterImage(null);
+      }
       setPendingMedia([]);
       setSavingProgress("");
     }
@@ -117,23 +117,6 @@ export function EditContentModal({
     );
   };
 
-  // Pick cover poster image
-  const handlePickPoster = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets[0]) {
-        setNewPosterAsset(res.assets[0]);
-        setPosterUrl(res.assets[0].uri);
-        setRemovePoster(false);
-      }
-    } catch (err) {
-      console.error("Failed to pick poster:", err);
-    }
-  };
 
   // Add more media attachments
   const handlePickMoreMedia = async () => {
@@ -182,22 +165,28 @@ export function EditContentModal({
     setSavingProgress("Saving details...");
 
     try {
-      let finalPosterUrl = posterUrl;
-      let finalPosterKey = item.posterImageKey;
+      let finalPosterUrl: string | undefined = undefined;
+      let finalPosterKey: string | undefined = item.posterImageKey || undefined;
 
       // If user selected a new poster image, upload it
-      if (newPosterAsset) {
-        setSavingProgress("Uploading cover image...");
-        const uploadRes = await uploadFile(
-          newPosterAsset.uri,
-          newPosterAsset.fileName || `cover_${Date.now()}.jpg`,
-          newPosterAsset.mimeType || "image/jpeg"
-        );
-        if (uploadRes) {
-          finalPosterUrl = uploadRes.url;
-          finalPosterKey = uploadRes.key;
+      if (posterImage) {
+        if (posterImage.isUrl) {
+          finalPosterUrl = posterImage.uri;
+        } else if (posterImage.asset) {
+          setSavingProgress("Uploading cover image...");
+          const uploadRes = await uploadFile(
+            posterImage.asset.uri,
+            posterImage.asset.fileName || `cover_${Date.now()}.jpg`,
+            posterImage.asset.mimeType || "image/jpeg"
+          );
+          if (uploadRes) {
+            finalPosterUrl = uploadRes.url;
+            finalPosterKey = uploadRes.key;
+          }
         }
       }
+
+      const shouldRemovePoster = !posterImage;
 
       // Update the main content record
       await updateContentMutation.mutateAsync({
@@ -206,9 +195,9 @@ export function EditContentModal({
         description: description.trim() || undefined,
         categoryIds: selectedCategoryIds,
         subcategoryIds: selectedSubcategoryIds,
-        posterImageUrl: removePoster ? undefined : finalPosterUrl || undefined,
-        posterImageKey: removePoster ? undefined : finalPosterKey || undefined,
-        removePoster,
+        posterImageUrl: shouldRemovePoster ? undefined : finalPosterUrl,
+        posterImageKey: shouldRemovePoster ? undefined : finalPosterKey,
+        removePoster: shouldRemovePoster,
       });
 
       // Upload and attach any pending media files
@@ -299,39 +288,11 @@ export function EditContentModal({
 
           {/* Cover Poster Image */}
           <View style={styles.fieldGroup}>
-            <Text style={[styles.label, { color: colors.textMuted }]}>Cover Poster</Text>
-            {posterUrl && !removePoster ? (
-              <View style={styles.posterPreviewContainer}>
-                <Image source={{ uri: posterUrl }} style={styles.posterPreview} contentFit="cover" />
-                <View style={styles.posterActions}>
-                  <Pressable onPress={handlePickPoster} style={styles.posterActionBtn}>
-                    <Camera size={14} color="#FFFFFF" />
-                    <Text style={styles.posterActionText}>Replace</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      setRemovePoster(true);
-                      setPosterUrl(null);
-                      setNewPosterAsset(null);
-                    }}
-                    style={[styles.posterActionBtn, { backgroundColor: "rgba(239, 68, 68, 0.85)" }]}
-                  >
-                    <Trash2 size={14} color="#FFFFFF" />
-                    <Text style={styles.posterActionText}>Remove</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <Pressable
-                onPress={handlePickPoster}
-                style={[styles.uploadDropzone, { borderColor: colors.border }]}
-              >
-                <ImagePlus size={24} color={colors.textSubtle} />
-                <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
-                  Add Cover Poster Image
-                </Text>
-              </Pressable>
-            )}
+            <ImagePickerToggle
+              label="Cover Poster"
+              currentImageUrl={posterImage?.uri}
+              onImageSelected={setPosterImage}
+            />
           </View>
 
           {/* Categories Multi-Select Checkboxes */}

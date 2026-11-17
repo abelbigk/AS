@@ -27,6 +27,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { uploadFile } from "../lib/upload";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import { AppToastRenderer, useAppToast } from "./AppToast";
+import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
 
 interface AddContentModalProps {
   visible: boolean;
@@ -56,7 +57,7 @@ export function AddContentModal({
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<number[]>([]);
 
-  const [posterAsset, setPosterAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [mediaAssets, setMediaAssets] = useState<
     Array<{ asset: ImagePicker.ImagePickerAsset; type: "image" | "video" }>
   >([]);
@@ -89,7 +90,7 @@ export function AddContentModal({
       setDescription("");
       setSelectedCategoryIds(initialCategoryId ? [initialCategoryId] : []);
       setSelectedSubcategoryIds(initialSubcategoryId ? [initialSubcategoryId] : []);
-      setPosterAsset(null);
+      setCoverImage(null);
       setMediaAssets([]);
       setIsSubmitting(false);
       setUploadStatus("");
@@ -110,20 +111,7 @@ export function AddContentModal({
     );
   };
 
-  const handlePickPoster = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets[0]) {
-        setPosterAsset(res.assets[0]);
-      }
-    } catch (err) {
-      console.error("Failed to pick poster:", err);
-    }
-  };
+
 
   const handlePickMedia = async () => {
     try {
@@ -161,16 +149,20 @@ export function AddContentModal({
       let posterUrl: string | undefined = undefined;
       let posterKey: string | undefined = undefined;
 
-      if (posterAsset) {
-        setUploadStatus("Uploading cover image...");
-        const res = await uploadFile(
-          posterAsset.uri,
-          posterAsset.fileName || `cover_${Date.now()}.jpg`,
-          posterAsset.mimeType || "image/jpeg"
-        );
-        if (res) {
-          posterUrl = res.url;
-          posterKey = res.key;
+      if (coverImage) {
+        if (coverImage.isUrl) {
+          posterUrl = coverImage.uri;
+        } else if (coverImage.asset) {
+          setUploadStatus("Uploading cover image...");
+          const res = await uploadFile(
+            coverImage.asset.uri,
+            coverImage.asset.fileName || `cover_${Date.now()}.jpg`,
+            coverImage.asset.mimeType || "image/jpeg"
+          );
+          if (res) {
+            posterUrl = res.url;
+            posterKey = res.key;
+          }
         }
       }
 
@@ -335,28 +327,12 @@ export function AddContentModal({
 
             {/* Cover Poster Image */}
             <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Cover Poster</Text>
-              {posterAsset ? (
-                <View style={styles.posterPreviewContainer}>
-                  <Image source={{ uri: posterAsset.uri }} style={styles.posterPreview} contentFit="cover" />
-                  <Pressable
-                    onPress={() => setPosterAsset(null)}
-                    style={styles.removePosterBtn}
-                  >
-                    <X size={14} color="#FFFFFF" />
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={handlePickPoster}
-                  style={[styles.uploadDropzone, { borderColor: colors.border }]}
-                >
-                  <ImagePlus size={24} color={colors.textSubtle} />
-                  <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
-                    Attach Cover Poster Image
-                  </Text>
-                </Pressable>
-              )}
+              <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
+              <ImagePickerToggle
+                label="Attach Cover Image"
+                currentImageUrl={coverImage?.uri}
+                onImageSelected={setCoverImage}
+              />
             </View>
 
             {/* Categories Multi-Select Checkboxes */}

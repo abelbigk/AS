@@ -325,9 +325,11 @@ export default function SettingsScreen() {
                   <View style={{ paddingVertical: 18, alignItems: "center" }}>
                     <ActivityIndicator color={colors.accent} />
                   </View>
-                ) : allUsers.length > 0 ? (
+                ) : allUsers.filter((u: any) => u.id !== user?.id && u.username !== user?.username).length > 0 ? (
                   <View style={{ gap: 8 }}>
-                    {allUsers.map((u: any) => (
+                    {allUsers
+                      .filter((u: any) => u.id !== user?.id && u.username !== user?.username)
+                      .map((u: any) => (
                       <DropdownMenu
                         key={u.id}
                         align="right"
@@ -682,30 +684,6 @@ export default function SettingsScreen() {
                     </Text>
                   </View>
                 </View>
-
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.locationActionBtn,
-                    {
-                      backgroundColor: colors.accent || "#3B82F6",
-                      opacity: pressed ? 0.8 : 1,
-                    },
-                  ]}
-                  onPress={() => {
-                    const u = selectedUserForDetail;
-                    setSelectedUserForDetail(null);
-                    router.push(
-                      `/loc?userId=${u.id}&username=${encodeURIComponent(
-                        u.username
-                      )}`
-                    );
-                  }}
-                >
-                  <MapPin size={18} color="#FFFFFF" />
-                  <Text style={styles.locationActionBtnText}>
-                    View Location History
-                  </Text>
-                </Pressable>
               </View>
             )}
           </View>
@@ -805,9 +783,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     alignItems: "flex-start",
+    width: "100%",
   },
   gridColumn: {
     flex: 1,
+    minWidth: 0,
   },
   emptyUncategorized: {
     alignItems: "center",

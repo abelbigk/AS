@@ -71,11 +71,12 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Background Image with blur overlay */}
+      {/* Background Image with blur */}
       <Image
         source={{ uri: DARK_IMAGE }}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
+        blurRadius={Platform.OS === "web" ? 25 : 35}
       />
       <View
         style={[
@@ -193,10 +194,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#0A0A0A",
   },
   backdropOverlay: {
-    backgroundColor: "rgba(10, 10, 10, 0.55)",
+    backgroundColor: "rgba(10, 10, 10, 0.6)",
     ...Platform.select({
       web: {
-        backdropFilter: "blur(20px)",
+        backdropFilter: "blur(25px)",
       } as any,
     }),
   },

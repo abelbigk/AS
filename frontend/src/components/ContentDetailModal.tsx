@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Image } from "expo-image";
+import { VideoView, useVideoPlayer } from "expo-video";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowLeft,
@@ -23,6 +24,7 @@ import {
   Calendar,
   Images,
   Film,
+  Music,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { trpc } from "../lib/trpc";
@@ -31,7 +33,37 @@ import { DropdownMenu } from "./DropdownMenu";
 import { CroppedImage } from "./CroppedImage";
 import { EditContentModal } from "./EditContentModal";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
+import { SoundControl } from "./SoundControl";
+import { SoundPickerModal } from "./SoundPickerModal";
 import type { ContentItem } from "./ContentCard";
+
+// ─── VideoSlide sub-component ─────────────────────────────────────────────────
+function VideoSlide({
+  uri,
+  onPlayingChange,
+}: {
+  uri: string;
+  onPlayingChange: (playing: boolean) => void;
+}) {
+  const player = useVideoPlayer({ uri }, (p) => {
+    p.loop = false;
+  });
+
+  useEffect(() => {
+    const sub = player.addListener("playingChange", (e: { isPlaying: boolean }) => {
+      onPlayingChange(e.isPlaying);
+    });
+    return () => sub.remove();
+  }, [player, onPlayingChange]);
+
+  return (
+    <VideoView
+      player={player}
+      style={{ width: "100%", height: "100%" }}
+      nativeControls
+    />
+  );
+}
 
 interface ContentDetailModalProps {
   item: ContentItem | null;
@@ -63,6 +95,13 @@ export function ContentDetailModal({
 
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [soundPickerOpen, setSoundPickerOpen] = useState(false);
+  const [activeSound, setActiveSound] = useState<{ id: number; url: string; title: string; name?: string | null } | null>(null);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+
+  const handleVideoPlayingChange = useCallback((playing: boolean) => {
+    setIsVideoPlaying(playing);
+  }, []);
 
   // Re-fetch item to keep it fresh
   const { data: freshItem } = trpc.content.getById.useQuery(
@@ -70,6 +109,13 @@ export function ContentDetailModal({
     { enabled: !!item?.id && visible }
   );
   const displayItem = freshItem || item;
+
+  // Sync activeSound from freshItem
+  useEffect(() => {
+    if (freshItem) {
+      setActiveSound((freshItem as any).sound ?? null);
+    }
+  }, [freshItem]);
 
   // Fetch attached media items
   const { data: mediaItems = [], isLoading: mediaLoading } =
@@ -95,6 +141,18 @@ export function ContentDetailModal({
       utils.content.listUncategorized.invalidate();
       onDeleted?.();
       onClose();
+    },
+  });
+
+  const assignSound = trpc.sounds.assignToContent.useMutation({
+    onSuccess: () => {
+      if (item?.id) utils.content.getById.invalidate({ itemId: item.id });
+    },
+  });
+
+  const removeSound = trpc.sounds.removeFromContent.useMutation({
+    onSuccess: () => {
+      if (item?.id) utils.content.getById.invalidate({ itemId: item.id });
     },
   });
 
@@ -279,6 +337,27 @@ export function ContentDetailModal({
                 {displayItem.heading}
               </Text>
 
+              {/* Sound control / add sound pill */}
+              <View style={styles.soundRow}>
+                {activeSound ? (
+                  <SoundControl
+                    sound={activeSound}
+                    isParentVideoPlaying={isVideoPlaying}
+                    onSoundClick={() => setSoundPickerOpen(true)}
+                  />
+                ) : (
+                  <Pressable
+                    onPress={() => setSoundPickerOpen(true)}
+                    style={[styles.addSoundPill, { borderColor: colors.border }]}
+                  >
+                    <Music size={12} color={colors.textMuted} />
+                    <Text style={[styles.addSoundText, { color: colors.textMuted }]}>
+                      Add Sound
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+
               {/* Created Date */}
               {(displayItem as any).createdAt && (
                 <View style={styles.dateRow}>
@@ -342,16 +421,17 @@ export function ContentDetailModal({
                             { width: sliderWidth },
                           ]}
                         >
-                          <Image
-                            source={{ uri: m.url }}
-                            style={styles.slideImage}
-                            contentFit="contain"
-                          />
-                          {m.type === "video" && (
-                            <View style={styles.slideVideoOverlay}>
-                              <Film size={28} color="#FFFFFF" />
-                              <Text style={styles.slideVideoText}>Video</Text>
-                            </View>
+                          {m.type === "video" ? (
+                            <VideoSlide
+                              uri={m.url}
+                              onPlayingChange={handleVideoPlayingChange}
+                            />
+                          ) : (
+                            <Image
+                              source={{ uri: m.url }}
+                              style={styles.slideImage}
+                              contentFit="contain"
+                            />
                           )}
                         </View>
                       ))}
@@ -458,6 +538,22 @@ export function ContentDetailModal({
         }}
       />
       <AppDialogRenderer {...dialogState} onHide={hide} />
+      <SoundPickerModal
+        visible={soundPickerOpen}
+        currentSoundId={activeSound?.id}
+        contentId={item?.id}
+        onClose={() => setSoundPickerOpen(false)}
+        onSelect={(sound) => {
+          setActiveSound(sound);
+          setSoundPickerOpen(false);
+          if (!item?.id) return;
+          if (sound) {
+            assignSound.mutate({ contentId: item.id, soundId: sound.id });
+          } else {
+            removeSound.mutate({ contentId: item.id });
+          }
+        }}
+      />
     </>
   );
 }
@@ -639,5 +735,24 @@ const styles = StyleSheet.create({
   statusActionText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  soundRow: {
+    marginTop: 8,
+    marginBottom: 4,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  addSoundPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  addSoundText: {
+    fontSize: 12,
+    fontWeight: "500",
   },
 });

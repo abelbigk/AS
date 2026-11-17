@@ -9,9 +9,8 @@ import {
   TextInput,
   ActivityIndicator,
 } from "react-native";
-import { Image } from "expo-image";
-import * as ImagePicker from "expo-image-picker";
-import { X, ImagePlus, Trash2, Camera, Check } from "lucide-react-native";
+import { X, Check } from "lucide-react-native";
+import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
 import { uploadFile } from "../lib/upload";
@@ -44,9 +43,7 @@ export function EditSubcategoryModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | undefined>(undefined);
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
-  const [removeCover, setRemoveCover] = useState(false);
-  const [newCoverAsset, setNewCoverAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const { data: categories = [] } = trpc.categories.list.useQuery(undefined, {
@@ -60,30 +57,15 @@ export function EditSubcategoryModal({
       setName(subcategory.name || "");
       setDescription(subcategory.description || "");
       setSelectedCategoryId(subcategory.categoryId);
-      setCoverUrl(subcategory.coverImageUrl || null);
-      setRemoveCover(false);
-      setNewCoverAsset(null);
+      if (subcategory.coverImageUrl) {
+        setCoverImage({ uri: subcategory.coverImageUrl, isUrl: true, asset: null });
+      } else {
+        setCoverImage(null);
+      }
     }
   }, [subcategory, visible]);
 
   if (!subcategory) return null;
-
-  const handlePickCover = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets[0]) {
-        setNewCoverAsset(res.assets[0]);
-        setCoverUrl(res.assets[0].uri);
-        setRemoveCover(false);
-      }
-    } catch (err) {
-      console.error("Failed to pick cover:", err);
-    }
-  };
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -93,29 +75,35 @@ export function EditSubcategoryModal({
 
     setIsSaving(true);
     try {
-      let finalCoverUrl = coverUrl;
-      let finalCoverKey = subcategory.coverImageKey;
+      let finalCoverUrl: string | undefined = undefined;
+      let finalCoverKey: string | undefined = subcategory.coverImageKey || undefined;
 
-      if (newCoverAsset) {
-        const uploadRes = await uploadFile(
-          newCoverAsset.uri,
-          newCoverAsset.fileName || `sub_cover_${Date.now()}.jpg`,
-          newCoverAsset.mimeType || "image/jpeg"
-        );
-        if (uploadRes) {
-          finalCoverUrl = uploadRes.url;
-          finalCoverKey = uploadRes.key;
+      if (coverImage) {
+        if (coverImage.isUrl) {
+          finalCoverUrl = coverImage.uri;
+        } else if (coverImage.asset) {
+          const uploadRes = await uploadFile(
+            coverImage.asset.uri,
+            coverImage.asset.fileName || `sub_cover_${Date.now()}.jpg`,
+            coverImage.asset.mimeType || "image/jpeg"
+          );
+          if (uploadRes) {
+            finalCoverUrl = uploadRes.url;
+            finalCoverKey = uploadRes.key;
+          }
         }
       }
+
+      const shouldRemove = !coverImage;
 
       await updateSubcategoryMutation.mutateAsync({
         subcategoryId: subcategory.id,
         categoryId: selectedCategoryId,
         name: name.trim(),
         description: description.trim() || undefined,
-        coverImageUrl: removeCover ? undefined : finalCoverUrl || undefined,
-        coverImageKey: removeCover ? undefined : finalCoverKey || undefined,
-        removeCover,
+        coverImageUrl: shouldRemove ? undefined : finalCoverUrl,
+        coverImageKey: shouldRemove ? undefined : finalCoverKey,
+        removeCover: shouldRemove,
       });
 
       utils.subcategories.getById.invalidate({ subcategoryId: subcategory.id });
@@ -208,36 +196,11 @@ export function EditSubcategoryModal({
 
             {/* Cover Image */}
             <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
-              {coverUrl && !removeCover ? (
-                <View style={styles.coverPreviewContainer}>
-                  <Image source={{ uri: coverUrl }} style={styles.coverPreview} contentFit="cover" />
-                  <View style={styles.coverActions}>
-                    <Pressable onPress={handlePickCover} style={styles.coverActionBtn}>
-                      <Camera size={13} color="#FFFFFF" />
-                      <Text style={styles.coverActionText}>Replace</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        setRemoveCover(true);
-                        setCoverUrl(null);
-                        setNewCoverAsset(null);
-                      }}
-                      style={[styles.coverActionBtn, { backgroundColor: "rgba(239, 68, 68, 0.85)" }]}
-                    >
-                      <Trash2 size={13} color="#FFFFFF" />
-                      <Text style={styles.coverActionText}>Remove</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ) : (
-                <Pressable onPress={handlePickCover} style={[styles.uploadDropzone, { borderColor: colors.border }]}>
-                  <ImagePlus size={22} color={colors.textSubtle} />
-                  <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
-                    Attach Cover Image
-                  </Text>
-                </Pressable>
-              )}
+              <ImagePickerToggle
+                label="Cover Image"
+                currentImageUrl={coverImage?.uri}
+                onImageSelected={setCoverImage}
+              />
             </View>
 
             <Pressable

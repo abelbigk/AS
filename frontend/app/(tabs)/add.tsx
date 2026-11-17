@@ -21,6 +21,7 @@ import { EditCategoryModal } from "../../src/components/EditCategoryModal";
 import { CATEGORY_IMAGES } from "../../src/lib/constants";
 import { AppDialogRenderer, useAppDialog } from "../../src/components/AppDialog";
 import { AppToastRenderer, useAppToast } from "../../src/components/AppToast";
+import { ImagePickerToggle, type ImageValue } from "../../src/components/ImagePickerToggle";
 
 const ADD_DARK_IMAGE =
   "https://images.unsplash.com/photo-1499750310107-5fef28a66643?w=1600&q=80";
@@ -36,7 +37,7 @@ export default function AddScreen() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [coverAsset, setCoverAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeCategoryForEdit, setActiveCategoryForEdit] = useState<any | null>(null);
 
@@ -59,20 +60,7 @@ export default function AddScreen() {
 
   const bgImage = theme === "dark" ? ADD_DARK_IMAGE : ADD_LIGHT_IMAGE;
 
-  const handlePickCover = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets[0]) {
-        setCoverAsset(res.assets[0]);
-      }
-    } catch (err) {
-      console.error("Failed to pick cover image:", err);
-    }
-  };
+
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -85,15 +73,19 @@ export default function AddScreen() {
       let coverUrl: string | undefined = undefined;
       let coverKey: string | undefined = undefined;
 
-      if (coverAsset) {
-        const uploadRes = await uploadFile(
-          coverAsset.uri,
-          coverAsset.fileName || `category_cover_${Date.now()}.jpg`,
-          coverAsset.mimeType || "image/jpeg"
-        );
-        if (uploadRes) {
-          coverUrl = uploadRes.url;
-          coverKey = uploadRes.key;
+      if (coverImage) {
+        if (coverImage.isUrl) {
+          coverUrl = coverImage.uri;
+        } else if (coverImage.asset) {
+          const uploadRes = await uploadFile(
+            coverImage.asset.uri,
+            coverImage.asset.fileName || `category_cover_${Date.now()}.jpg`,
+            coverImage.asset.mimeType || "image/jpeg"
+          );
+          if (uploadRes) {
+            coverUrl = uploadRes.url;
+            coverKey = uploadRes.key;
+          }
         }
       }
 
@@ -108,7 +100,7 @@ export default function AddScreen() {
       showToast("Category created!", "success");
       setName("");
       setDescription("");
-      setCoverAsset(null);
+      setCoverImage(null);
       router.push("/");
     } catch (err: any) {
       showToast(err?.message || "Failed to create category.", "error");
@@ -235,30 +227,11 @@ export default function AddScreen() {
               numberOfLines={4}
             />
 
-            <Text style={[styles.label, { color: colors.text }]}>
-              Cover Image (optional)
-            </Text>
-            {coverAsset ? (
-              <View style={styles.coverPreviewContainer}>
-                <Image source={{ uri: coverAsset.uri }} style={styles.coverPreview} contentFit="cover" />
-                <Pressable
-                  onPress={() => setCoverAsset(null)}
-                  style={styles.removeCoverBtn}
-                >
-                  <Trash2 size={13} color="#FFFFFF" />
-                </Pressable>
-              </View>
-            ) : (
-              <Pressable
-                onPress={handlePickCover}
-                style={[styles.uploadDropzone, { borderColor: colors.border }]}
-              >
-                <ImagePlus size={22} color={colors.textSubtle} />
-                <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
-                  Attach Cover Image
-                </Text>
-              </Pressable>
-            )}
+            <ImagePickerToggle
+              label="Cover Image (optional)"
+              currentImageUrl={coverImage?.uri}
+              onImageSelected={setCoverImage}
+            />
 
             <Pressable
               style={({ pressed }) => [

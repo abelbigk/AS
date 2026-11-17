@@ -627,6 +627,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     marginBottom: 16,
+    width: "100%",
   },
   searchBar: {
     flex: 1,
@@ -663,9 +664,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     alignItems: "flex-start",
+    width: "100%",
   },
   gridColumn: {
     flex: 1,
+    minWidth: 0,
   },
   loadingContainer: {
     paddingVertical: 60,

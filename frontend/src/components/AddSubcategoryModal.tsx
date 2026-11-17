@@ -16,6 +16,7 @@ import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
 import { uploadFile } from "../lib/upload";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
+import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
 
 interface AddSubcategoryModalProps {
   categoryId: number;
@@ -36,7 +37,7 @@ export function AddSubcategoryModal({
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [coverAsset, setCoverAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery();
@@ -50,20 +51,7 @@ export function AddSubcategoryModal({
 
   const createSubcategoryMutation = trpc.subcategories.create.useMutation();
 
-  const handlePickCover = async () => {
-    try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.85,
-      });
-      if (!res.canceled && res.assets[0]) {
-        setCoverAsset(res.assets[0]);
-      }
-    } catch (err) {
-      console.error("Failed to pick cover:", err);
-    }
-  };
+
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -76,15 +64,19 @@ export function AddSubcategoryModal({
       let coverUrl: string | undefined = undefined;
       let coverKey: string | undefined = undefined;
 
-      if (coverAsset) {
-        const uploadRes = await uploadFile(
-          coverAsset.uri,
-          coverAsset.fileName || `sub_cover_${Date.now()}.jpg`,
-          coverAsset.mimeType || "image/jpeg"
-        );
-        if (uploadRes) {
-          coverUrl = uploadRes.url;
-          coverKey = uploadRes.key;
+      if (coverImage) {
+        if (coverImage.isUrl) {
+          coverUrl = coverImage.uri;
+        } else if (coverImage.asset) {
+          const uploadRes = await uploadFile(
+            coverImage.asset.uri,
+            coverImage.asset.fileName || `sub_cover_${Date.now()}.jpg`,
+            coverImage.asset.mimeType || "image/jpeg"
+          );
+          if (uploadRes) {
+            coverUrl = uploadRes.url;
+            coverKey = uploadRes.key;
+          }
         }
       }
 
@@ -99,7 +91,7 @@ export function AddSubcategoryModal({
       utils.subcategories.list.invalidate({ categoryId });
       setName("");
       setDescription("");
-      setCoverAsset(null);
+      setCoverImage(null);
       onSubcategoryCreated?.();
       onClose();
     } catch (err: any) {
@@ -162,24 +154,11 @@ export function AddSubcategoryModal({
             {/* Cover Image */}
             <View style={styles.fieldGroup}>
               <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
-              {coverAsset ? (
-                <View style={styles.coverPreviewContainer}>
-                  <Image source={{ uri: coverAsset.uri }} style={styles.coverPreview} contentFit="cover" />
-                  <Pressable
-                    onPress={() => setCoverAsset(null)}
-                    style={styles.removeCoverBtn}
-                  >
-                    <Trash2 size={13} color="#FFFFFF" />
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable onPress={handlePickCover} style={[styles.uploadDropzone, { borderColor: colors.border }]}>
-                  <ImagePlus size={22} color={colors.textSubtle} />
-                  <Text style={[styles.uploadDropzoneText, { color: colors.textMuted }]}>
-                    Attach Cover Image (optional)
-                  </Text>
-                </Pressable>
-              )}
+              <ImagePickerToggle
+                label="Attach Cover Image (optional)"
+                currentImageUrl={coverImage?.uri}
+                onImageSelected={setCoverImage}
+              />
             </View>
 
             <Pressable
