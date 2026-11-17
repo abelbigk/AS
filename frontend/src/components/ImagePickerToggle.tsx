@@ -15,53 +15,59 @@ import { useTheme } from "../contexts/ThemeContext";
 export interface ImageValue {
   uri: string;
   isUrl: boolean;
-  asset?: ImagePicker.ImagePickerAsset | null;
+  asset: ImagePicker.ImagePickerAsset | null;
 }
 
 interface ImagePickerToggleProps {
   label?: string;
   currentImageUrl?: string | null;
   onImageSelected: (value: ImageValue | null) => void;
-  aspectRatio?: number;
+  naturalRatio?: boolean;
 }
 
 export function ImagePickerToggle({
   label = "Cover Image",
   currentImageUrl,
   onImageSelected,
-  aspectRatio = 16 / 9,
+  naturalRatio = true,
 }: ImagePickerToggleProps) {
   const { colors, theme } = useTheme();
+
   const [tab, setTab] = useState<"file" | "url">("file");
   const [urlInput, setUrlInput] = useState("");
-  const [previewUri, setPreviewUri] = useState<string | null>(currentImageUrl || null);
-  const [isValidatingUrl, setIsValidatingUrl] = useState(false);
+  // Old/existing cover (displayed at top)
+  const [existingCoverUrl, setExistingCoverUrl] = useState<string | null>(currentImageUrl ?? null);
+  // Newly chosen replacement cover (displayed below)
+  const [newCover, setNewCover] = useState<ImageValue | null>(null);
+
+  // Aspect ratios for natural display
+  const [existingAspectRatio, setExistingAspectRatio] = useState<number | undefined>(undefined);
+  const [newAspectRatio, setNewAspectRatio] = useState<number | undefined>(undefined);
 
   useEffect(() => {
-    if (currentImageUrl) {
-      setPreviewUri(currentImageUrl);
-      if (currentImageUrl.startsWith("http")) {
-        setUrlInput(currentImageUrl);
-      }
-    }
+    setExistingCoverUrl(currentImageUrl ?? null);
   }, [currentImageUrl]);
 
   const handlePickFile = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.85,
+        allowsEditing: false, // keep original size and aspect ratio
+        quality: 0.9,
       });
 
       if (!res.canceled && res.assets[0]) {
         const asset = res.assets[0];
-        setPreviewUri(asset.uri);
-        onImageSelected({
+        if (asset.width && asset.height) {
+          setNewAspectRatio(asset.width / asset.height);
+        }
+        const val: ImageValue = {
           uri: asset.uri,
           isUrl: false,
           asset,
-        });
+        };
+        setNewCover(val);
+        onImageSelected(val);
       }
     } catch (err) {
       console.error("Failed to pick image:", err);
@@ -74,36 +80,63 @@ export function ImagePickerToggle({
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
       return;
     }
-    setPreviewUri(trimmed);
-    onImageSelected({
+    const val: ImageValue = {
       uri: trimmed,
       isUrl: true,
       asset: null,
-    });
+    };
+    setNewCover(val);
+    onImageSelected(val);
   };
 
-  const handleClear = () => {
-    setPreviewUri(null);
+  const handleClearExisting = () => {
+    setExistingCoverUrl(null);
+    if (!newCover) {
+      onImageSelected(null);
+    }
+  };
+
+  const handleClearNew = () => {
+    setNewCover(null);
     setUrlInput("");
-    onImageSelected(null);
+    if (existingCoverUrl) {
+      onImageSelected({
+        uri: existingCoverUrl,
+        isUrl: true,
+        asset: null,
+      });
+    } else {
+      onImageSelected(null);
+    }
   };
 
   return (
     <View style={styles.container}>
-      {/* Existing or New Preview */}
-      {previewUri ? (
-        <View style={[styles.previewContainer, { aspectRatio }]}>
-          <Image source={{ uri: previewUri }} style={styles.previewImage} contentFit="cover" />
-          <Pressable onPress={handleClear} style={styles.removeBtn} hitSlop={8}>
-            <Trash2 size={14} color="#FFFFFF" />
-          </Pressable>
-          <View style={styles.replaceBanner}>
-            <Text style={styles.replaceBannerText}>Replace below ↓</Text>
+      {/* 1. Existing Old Cover Image at original size */}
+      {existingCoverUrl ? (
+        <View style={styles.sectionBlock}>
+          <View style={[styles.imageCard, existingAspectRatio ? { aspectRatio: existingAspectRatio } : styles.fallbackHeight]}>
+            <Image
+              source={{ uri: existingCoverUrl }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              onLoad={(e) => {
+                if (e.source.width && e.source.height) {
+                  setExistingAspectRatio(e.source.width / e.source.height);
+                }
+              }}
+            />
+            <Pressable onPress={handleClearExisting} style={styles.removeBtn} hitSlop={8}>
+              <Trash2 size={14} color="#FFFFFF" />
+            </Pressable>
+            <View style={styles.replaceBanner}>
+              <Text style={styles.replaceBannerText}>Replace below ↓</Text>
+            </View>
           </View>
         </View>
       ) : null}
 
-      {/* Segmented Switcher */}
+      {/* 2. Switcher for Replace with File or Replace with URL */}
       <View
         style={[
           styles.tabBar,
@@ -129,24 +162,17 @@ export function ImagePickerToggle({
         >
           <ImagePlus
             size={14}
-            color={
-              tab === "file"
-                ? "#FFFFFF"
-                : colors.textMuted
-            }
+            color={tab === "file" ? "#FFFFFF" : colors.textMuted}
           />
           <Text
             style={[
               styles.tabText,
               {
-                color:
-                  tab === "file"
-                    ? "#FFFFFF"
-                    : colors.textMuted,
+                color: tab === "file" ? "#FFFFFF" : colors.textMuted,
               },
             ]}
           >
-            {previewUri ? "Replace with file" : "Upload"}
+            {existingCoverUrl ? "Replace with file" : "Upload"}
           </Text>
         </Pressable>
 
@@ -165,29 +191,22 @@ export function ImagePickerToggle({
         >
           <Link
             size={14}
-            color={
-              tab === "url"
-                ? "#FFFFFF"
-                : colors.textMuted
-            }
+            color={tab === "url" ? "#FFFFFF" : colors.textMuted}
           />
           <Text
             style={[
               styles.tabText,
               {
-                color:
-                  tab === "url"
-                    ? "#FFFFFF"
-                    : colors.textMuted,
+                color: tab === "url" ? "#FFFFFF" : colors.textMuted,
               },
             ]}
           >
-            {previewUri ? "Replace with URL" : "URL"}
+            {existingCoverUrl ? "Replace with URL" : "URL"}
           </Text>
         </Pressable>
       </View>
 
-      {/* Tab Content */}
+      {/* 3. Input controls for file / url */}
       {tab === "file" ? (
         <Pressable
           onPress={handlePickFile}
@@ -202,72 +221,100 @@ export function ImagePickerToggle({
         >
           <ImagePlus size={24} color={colors.textSubtle} />
           <Text style={[styles.dropzoneText, { color: colors.textMuted }]}>
-            {previewUri ? "Choose a different image file" : label}
+            {existingCoverUrl ? "Choose replacement image file" : label}
           </Text>
         </Pressable>
       ) : (
-        <View style={styles.urlInputRow}>
-          <TextInput
-            style={[
-              styles.urlInput,
-              {
-                color: colors.text,
-                borderColor: colors.border,
-                backgroundColor:
-                  theme === "dark" ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)",
-              },
-            ]}
-            placeholder="https://..."
-            placeholderTextColor={colors.textSubtle}
-            value={urlInput}
-            onChangeText={(txt) => {
-              setUrlInput(txt);
-              if (txt.trim().startsWith("http://") || txt.trim().startsWith("https://")) {
-                setPreviewUri(txt.trim());
-                onImageSelected({
-                  uri: txt.trim(),
-                  isUrl: true,
-                  asset: null,
-                });
-              }
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Pressable
-            onPress={handleApplyUrl}
-            style={[
-              styles.urlApplyBtn,
-              {
-                backgroundColor: colors.accent,
-                opacity: urlInput.trim().length > 7 ? 1 : 0.5,
-              },
-            ]}
-            disabled={urlInput.trim().length <= 7}
-          >
-            <Check size={16} color="#FFFFFF" />
-          </Pressable>
+        <View style={styles.urlInputBlock}>
+          <View style={styles.urlInputRow}>
+            <TextInput
+              style={[
+                styles.urlInput,
+                {
+                  color: colors.text,
+                  borderColor: colors.border,
+                  backgroundColor:
+                    theme === "dark" ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)",
+                },
+              ]}
+              placeholder="https://i.pinimg.com/... or image URL"
+              placeholderTextColor={colors.textSubtle}
+              value={urlInput}
+              onChangeText={(txt) => {
+                setUrlInput(txt);
+                if (txt.trim().startsWith("http://") || txt.trim().startsWith("https://")) {
+                  const val: ImageValue = {
+                    uri: txt.trim(),
+                    isUrl: true,
+                    asset: null,
+                  };
+                  setNewCover(val);
+                  onImageSelected(val);
+                }
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Pressable
+              onPress={handleApplyUrl}
+              style={[
+                styles.urlApplyBtn,
+                {
+                  backgroundColor: colors.accent,
+                  opacity: urlInput.trim().length > 7 ? 1 : 0.5,
+                },
+              ]}
+              disabled={urlInput.trim().length <= 7}
+            >
+              <Check size={16} color="#FFFFFF" />
+            </Pressable>
+          </View>
         </View>
       )}
+
+      {/* 4. Replacement New Cover Image Viewer (below) at original size */}
+      {newCover ? (
+        <View style={styles.sectionBlock}>
+          <View style={[styles.imageCard, newAspectRatio ? { aspectRatio: newAspectRatio } : styles.fallbackHeight]}>
+            <Image
+              source={{ uri: newCover.uri }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              onLoad={(e) => {
+                if (e.source.width && e.source.height) {
+                  setNewAspectRatio(e.source.width / e.source.height);
+                }
+              }}
+            />
+            <Pressable onPress={handleClearNew} style={styles.removeBtn} hitSlop={8}>
+              <Trash2 size={14} color="#FFFFFF" />
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    gap: 8,
+    gap: 10,
+    width: "100%",
   },
-  previewContainer: {
+  sectionBlock: {
+    width: "100%",
+  },
+  imageCard: {
     width: "100%",
     borderRadius: 14,
     overflow: "hidden",
     position: "relative",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.12)",
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
   },
-  previewImage: {
-    width: "100%",
-    height: "100%",
+  fallbackHeight: {
+    height: 200,
   },
   removeBtn: {
     position: "absolute",
@@ -286,14 +333,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    paddingVertical: 5,
+    paddingHorizontal: 12,
   },
   replaceBannerText: {
-    color: "rgba(255, 255, 255, 0.75)",
+    color: "rgba(255, 255, 255, 0.85)",
     fontSize: 11,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   tabBar: {
     flexDirection: "row",
@@ -307,50 +354,47 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 7,
-    borderRadius: 8,
     gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  tabItemActive: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
-  },
+  tabItemActive: {},
   tabText: {
     fontSize: 12,
     fontWeight: "600",
   },
   dropzone: {
-    height: 74,
-    borderRadius: 12,
+    height: 90,
+    borderRadius: 14,
     borderWidth: 1.5,
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
+    gap: 6,
   },
   dropzoneText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "500",
+  },
+  urlInputBlock: {
+    gap: 8,
   },
   urlInputRow: {
     flexDirection: "row",
-    alignItems: "center",
     gap: 8,
+    alignItems: "center",
   },
   urlInput: {
     flex: 1,
     height: 42,
-    borderRadius: 10,
     borderWidth: 1,
+    borderRadius: 10,
     paddingHorizontal: 12,
     fontSize: 13,
   },
   urlApplyBtn: {
-    width: 42,
     height: 42,
+    width: 42,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",

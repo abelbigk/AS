@@ -145,7 +145,7 @@ export default function HomeScreen() {
         <View style={styles.maxWidthWrapper}>
           {isSearchMode ? (
             /* Search Mode Header & Results */
-            <View>
+            <View style={{ width: "100%" }}>
               <View style={styles.searchHeader}>
                 <Pressable
                   onPress={() => {
@@ -423,9 +423,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     marginBottom: 28,
+    width: "100%",
   },
   searchBar: {
     flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     height: 44,
@@ -437,6 +439,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
+    minWidth: 0,
     fontSize: 14,
     color: "#FFFFFF",
     height: "100%",

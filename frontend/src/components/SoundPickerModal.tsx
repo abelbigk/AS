@@ -207,18 +207,19 @@ export function SoundPickerModal({
     <>
       <Modal
         visible={visible}
-        animationType="slide"
-        transparent={false}
+        animationType="fade"
+        transparent={true}
         onRequestClose={handleClose}
       >
-        <View style={[styles.container, { backgroundColor: colors.bg }]}>
-          {/* Header */}
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Choose Sound</Text>
-            <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={8}>
-              <X size={20} color={colors.text} />
-            </Pressable>
-          </View>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.dialogSheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
+            {/* Header */}
+            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>Choose Sound</Text>
+              <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={8}>
+                <X size={20} color={colors.text} />
+              </Pressable>
+            </View>
 
           <ScrollView
             style={styles.scroll}
@@ -383,15 +384,28 @@ export function SoundPickerModal({
             </Pressable>
           </View>
         </View>
-      </Modal>
-      <AppDialogRenderer {...dialogState} onHide={hide} />
-    </>
-  );
+      </View>
+    </Modal>
+    <AppDialogRenderer {...dialogState} onHide={hide} />
+  </>
+);
 }
 
 const styles = StyleSheet.create({
-  container: {
+  modalBackdrop: {
     flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  dialogSheet: {
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: "82%",
+    borderRadius: 24,
+    borderWidth: 1,
+    overflow: "hidden",
   },
   header: {
     flexDirection: "row",

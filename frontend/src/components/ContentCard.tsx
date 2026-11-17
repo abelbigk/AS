@@ -221,18 +221,16 @@ export function ContentCard({
 
       {/* Poster Image Container */}
       {item.posterImageUrl ? (
-        <View style={[styles.imageWrapper, { aspectRatio }]}>
+        <View style={[styles.imageWrapper, aspectRatio ? { aspectRatio } : undefined]}>
           <Image
             source={{ uri: item.posterImageUrl }}
-            style={StyleSheet.absoluteFill}
+            style={aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage}
             contentFit="cover"
             cachePolicy="memory-disk"
             transition={200}
             onLoad={(e) => {
               if (e.source.width && e.source.height) {
-                const rawRatio = e.source.width / e.source.height;
-                const clamped = Math.max(0.6, Math.min(1.8, rawRatio));
-                setAspectRatio(clamped);
+                setAspectRatio(e.source.width / e.source.height);
               }
             }}
           />
@@ -385,6 +383,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.3)",
     position: "relative",
     overflow: "hidden",
+    minHeight: 120,
+  },
+  naturalImage: {
+    width: "100%",
+    minHeight: 120,
   },
   noImageBlock: {
     width: "100%",

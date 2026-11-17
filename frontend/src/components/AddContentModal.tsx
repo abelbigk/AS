@@ -28,6 +28,7 @@ import { uploadFile } from "../lib/upload";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import { AppToastRenderer, useAppToast } from "./AppToast";
 import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
+import { UploadProgress } from "./UploadProgress";
 
 interface AddContentModalProps {
   visible: boolean;
@@ -64,6 +65,11 @@ export function AddContentModal({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadLoadedBytes, setUploadLoadedBytes] = useState(0);
+  const [uploadTotalBytes, setUploadTotalBytes] = useState(0);
+  const [uploadStage, setUploadStage] = useState<"idle" | "cover" | "saving_entry" | "media" | "processing">("idle");
+  const [currentUploadFileName, setCurrentUploadFileName] = useState("Media file");
 
   // Search existing state for link tab
   const [searchQuery, setSearchQuery] = useState("");
@@ -144,6 +150,7 @@ export function AddContentModal({
 
     setIsSubmitting(true);
     setUploadStatus("Creating content...");
+    setUploadStage("cover");
 
     try {
       let posterUrl: string | undefined = undefined;
@@ -153,11 +160,19 @@ export function AddContentModal({
         if (coverImage.isUrl) {
           posterUrl = coverImage.uri;
         } else if (coverImage.asset) {
+          setUploadStage("cover");
+          const fName = coverImage.asset.fileName || `cover_${Date.now()}.jpg`;
+          setCurrentUploadFileName(fName);
           setUploadStatus("Uploading cover image...");
           const res = await uploadFile(
             coverImage.asset.uri,
-            coverImage.asset.fileName || `cover_${Date.now()}.jpg`,
-            coverImage.asset.mimeType || "image/jpeg"
+            fName,
+            coverImage.asset.mimeType || "image/jpeg",
+            (loaded, total) => {
+              setUploadLoadedBytes(loaded);
+              setUploadTotalBytes(total);
+              setUploadPct(Math.round((loaded / total) * 100));
+            }
           );
           if (res) {
             posterUrl = res.url;
@@ -166,6 +181,7 @@ export function AddContentModal({
         }
       }
 
+      setUploadStage("saving_entry");
       setUploadStatus("Saving details...");
       const newItem = await createMutation.mutateAsync({
         heading: heading.trim(),
@@ -177,13 +193,22 @@ export function AddContentModal({
       });
 
       if (newItem && mediaAssets.length > 0) {
+        setUploadStage("media");
         for (let i = 0; i < mediaAssets.length; i++) {
           const itemMedia = mediaAssets[i];
+          const mName = itemMedia.asset.fileName || `media_${Date.now()}_${i}.${itemMedia.type === "video" ? "mp4" : "jpg"}`;
+          setCurrentUploadFileName(mName);
+          setUploadPct(0);
           setUploadStatus(`Uploading media ${i + 1} of ${mediaAssets.length}...`);
           const res = await uploadFile(
             itemMedia.asset.uri,
-            itemMedia.asset.fileName || `media_${Date.now()}_${i}.${itemMedia.type === "video" ? "mp4" : "jpg"}`,
-            itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg")
+            mName,
+            itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg"),
+            (loaded, total) => {
+              setUploadLoadedBytes(loaded);
+              setUploadTotalBytes(total);
+              setUploadPct(Math.round((loaded / total) * 100));
+            }
           );
 
           if (res) {
@@ -197,6 +222,8 @@ export function AddContentModal({
           }
         }
       }
+
+      setUploadStage("idle");
 
       if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
       if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
@@ -450,6 +477,18 @@ export function AddContentModal({
                 </View>
               )}
             </View>
+
+            {/* Real-time Upload Progress card with byte-by-byte metrics and speed */}
+            {isSubmitting && (
+              <UploadProgress
+                pct={uploadPct}
+                loadedBytes={uploadLoadedBytes}
+                totalBytes={uploadTotalBytes}
+                isSubmitting={isSubmitting}
+                stage={uploadStage}
+                fileName={currentUploadFileName}
+              />
+            )}
 
             {/* Submit Button */}
             <Pressable

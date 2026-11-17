@@ -11,7 +11,8 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Image } from "expo-image";
-import { VideoView, useVideoPlayer } from "expo-video";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowLeft,
@@ -25,6 +26,7 @@ import {
   Images,
   Film,
   Music,
+  Download,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { trpc } from "../lib/trpc";
@@ -35,35 +37,8 @@ import { EditContentModal } from "./EditContentModal";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import { SoundControl } from "./SoundControl";
 import { SoundPickerModal } from "./SoundPickerModal";
+import { CustomVideoPlayer } from "./CustomVideoPlayer";
 import type { ContentItem } from "./ContentCard";
-
-// ─── VideoSlide sub-component ─────────────────────────────────────────────────
-function VideoSlide({
-  uri,
-  onPlayingChange,
-}: {
-  uri: string;
-  onPlayingChange: (playing: boolean) => void;
-}) {
-  const player = useVideoPlayer({ uri }, (p) => {
-    p.loop = false;
-  });
-
-  useEffect(() => {
-    const sub = player.addListener("playingChange", (e: { isPlaying: boolean }) => {
-      onPlayingChange(e.isPlaying);
-    });
-    return () => sub.remove();
-  }, [player, onPlayingChange]);
-
-  return (
-    <VideoView
-      player={player}
-      style={{ width: "100%", height: "100%" }}
-      nativeControls
-    />
-  );
-}
 
 interface ContentDetailModalProps {
   item: ContentItem | null;
@@ -95,6 +70,7 @@ export function ContentDetailModal({
 
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [coverAspectRatio, setCoverAspectRatio] = useState<number | undefined>(undefined);
   const [soundPickerOpen, setSoundPickerOpen] = useState(false);
   const [activeSound, setActiveSound] = useState<{ id: number; url: string; title: string; name?: string | null } | null>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
@@ -102,6 +78,31 @@ export function ContentDetailModal({
   const handleVideoPlayingChange = useCallback((playing: boolean) => {
     setIsVideoPlaying(playing);
   }, []);
+
+  const handleDownloadCurrentMedia = async () => {
+    const current = mediaItems[activeMediaIndex];
+    if (!current?.url) return;
+    try {
+      if (Platform.OS === "web") {
+        const a = document.createElement("a");
+        a.href = current.url;
+        a.download = `media_${Date.now()}.${current.type === "video" ? "mp4" : "jpg"}`;
+        a.target = "_blank";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        const fileExt = current.type === "video" ? "mp4" : "jpg";
+        const fileUri = `${FileSystem.documentDirectory}media_${Date.now()}.${fileExt}`;
+        const downloadRes = await FileSystem.downloadAsync(current.url, fileUri);
+        if (downloadRes.uri && (await Sharing.isAvailableAsync())) {
+          await Sharing.shareAsync(downloadRes.uri);
+        }
+      }
+    } catch (e) {
+      console.error("Download failed", e);
+    }
+  };
 
   // Re-fetch item to keep it fresh
   const { data: freshItem } = trpc.content.getById.useQuery(
@@ -337,69 +338,50 @@ export function ContentDetailModal({
                 {displayItem.heading}
               </Text>
 
-              {/* Sound control / add sound pill */}
-              <View style={styles.soundRow}>
-                {activeSound ? (
-                  <SoundControl
-                    sound={activeSound}
-                    isParentVideoPlaying={isVideoPlaying}
-                    onSoundClick={() => setSoundPickerOpen(true)}
-                  />
-                ) : (
+              {/* 1. Header controls: Download Button | Sound Control Pill | Media Counter (1/2) */}
+              <View style={styles.topControlRow}>
+                {mediaItems.length > 0 ? (
                   <Pressable
-                    onPress={() => setSoundPickerOpen(true)}
-                    style={[styles.addSoundPill, { borderColor: colors.border }]}
+                    onPress={handleDownloadCurrentMedia}
+                    style={[styles.downloadBtn, { backgroundColor: colors.glassBg, borderColor: colors.border }]}
                   >
-                    <Music size={12} color={colors.textMuted} />
-                    <Text style={[styles.addSoundText, { color: colors.textMuted }]}>
-                      Add Sound
-                    </Text>
+                    <Download size={13} color={colors.text} />
+                    <Text style={[styles.downloadBtnText, { color: colors.text }]}>Download</Text>
                   </Pressable>
-                )}
+                ) : <View style={{ width: 80 }} />}
+
+                {/* Sound pill in middle */}
+                <View style={styles.soundControlWrapper}>
+                  {activeSound ? (
+                    <SoundControl
+                      sound={activeSound}
+                      isParentVideoPlaying={isVideoPlaying}
+                      onSoundClick={() => setSoundPickerOpen(true)}
+                    />
+                  ) : (
+                    <Pressable
+                      onPress={() => setSoundPickerOpen(true)}
+                      style={[styles.addSoundPill, { borderColor: colors.border }]}
+                    >
+                      <Music size={12} color={colors.textMuted} />
+                      <Text style={[styles.addSoundText, { color: colors.textMuted }]}>
+                        Add Sound
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+
+                {/* Counter on right */}
+                {mediaItems.length > 0 ? (
+                  <Text style={[styles.mediaCounterText, { color: colors.textMuted }]}>
+                    {activeMediaIndex + 1}/{mediaItems.length}
+                  </Text>
+                ) : <View style={{ width: 30 }} />}
               </View>
 
-              {/* Created Date */}
-              {(displayItem as any).createdAt && (
-                <View style={styles.dateRow}>
-                  <Calendar size={13} color={colors.textSubtle} />
-                  <Text style={[styles.dateText, { color: colors.textSubtle }]}>
-                    {format(new Date((displayItem as any).createdAt), "PPP")}
-                  </Text>
-                </View>
-              )}
-
-              {/* Description */}
-              {displayItem.description ? (
-                <Text style={[styles.description, { color: colors.textMuted }]}>
-                  {displayItem.description}
-                </Text>
-              ) : null}
-
-              {/* Cover Poster Image */}
-              {displayItem.posterImageUrl ? (
-                <View style={styles.posterContainer}>
-                  <CroppedImage
-                    src={displayItem.posterImageUrl}
-                    cropData={displayItem.posterCropData}
-                    containerStyle={styles.posterImageWrapper}
-                  />
-                </View>
-              ) : null}
-
-              {/* Media Section */}
-              <View style={styles.mediaSection}>
-                <View style={styles.mediaSectionHeader}>
-                  <Images size={14} color={colors.textSubtle} />
-                  <Text style={[styles.mediaSectionTitle, { color: colors.textSubtle }]}>
-                    Media · {mediaLoading ? "…" : `${mediaItems.length} item${mediaItems.length !== 1 ? "s" : ""}`}
-                  </Text>
-                </View>
-
-                {mediaLoading ? (
-                  <View style={[styles.mediaBoxPlaceholder, { borderColor: colors.border }]}>
-                    <ActivityIndicator size="small" color={colors.accent} />
-                  </View>
-                ) : mediaItems.length > 0 ? (
+              {/* 2. Media Section comes FIRST if media exists */}
+              {mediaItems.length > 0 ? (
+                <View style={styles.mediaSection}>
                   <View style={styles.mediaSliderContainer}>
                     <ScrollView
                       horizontal
@@ -422,7 +404,7 @@ export function ContentDetailModal({
                           ]}
                         >
                           {m.type === "video" ? (
-                            <VideoSlide
+                            <CustomVideoPlayer
                               uri={m.url}
                               onPlayingChange={handleVideoPlayingChange}
                             />
@@ -456,15 +438,53 @@ export function ContentDetailModal({
                       </View>
                     )}
                   </View>
-                ) : (
-                  <View style={[styles.mediaEmptyBox, { borderColor: colors.border }]}>
-                    <Images size={24} color={colors.textSubtle} />
-                    <Text style={[styles.mediaEmptyText, { color: colors.textSubtle }]}>
-                      No media here
-                    </Text>
+                </View>
+              ) : null}
+
+              {/* 3. Created Date */}
+              {(displayItem as any).createdAt && (
+                <View style={styles.dateRow}>
+                  <Calendar size={13} color={colors.textSubtle} />
+                  <Text style={[styles.dateText, { color: colors.textSubtle }]}>
+                    {format(new Date((displayItem as any).createdAt), "PPP")}
+                  </Text>
+                </View>
+              )}
+
+              {/* 4. Description */}
+              {displayItem.description ? (
+                <Text style={[styles.description, { color: colors.textMuted }]}>
+                  {displayItem.description}
+                </Text>
+              ) : null}
+
+              {/* 5. Cover Poster Image in its ORIGINAL SIZE (comes after description, or first if no media) */}
+              {displayItem.posterImageUrl ? (
+                <View style={styles.posterContainer}>
+                  <View style={[styles.posterImageWrapper, coverAspectRatio ? { aspectRatio: coverAspectRatio } : { minHeight: 200 }]}>
+                    <Image
+                      source={{ uri: displayItem.posterImageUrl }}
+                      style={StyleSheet.absoluteFill}
+                      contentFit="contain"
+                      onLoad={(e) => {
+                        if (e.source.width && e.source.height) {
+                          setCoverAspectRatio(e.source.width / e.source.height);
+                        }
+                      }}
+                    />
                   </View>
-                )}
-              </View>
+                </View>
+              ) : null}
+
+              {/* If no media was found, show the empty box at the bottom */}
+              {mediaItems.length === 0 && !mediaLoading && (
+                <View style={[styles.mediaEmptyBox, { borderColor: colors.border, marginBottom: 20 }]}>
+                  <Images size={24} color={colors.textSubtle} />
+                  <Text style={[styles.mediaEmptyText, { color: colors.textSubtle }]}>
+                    No media here
+                  </Text>
+                </View>
+              )}
 
               {/* Status Action Buttons */}
               <View style={styles.bottomActionsRow}>
@@ -643,7 +663,8 @@ const styles = StyleSheet.create({
   },
   posterImageWrapper: {
     width: "100%",
-    height: 320,
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    position: "relative",
   },
   mediaSection: {
     marginBottom: 28,
@@ -741,6 +762,38 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     flexDirection: "row",
     alignItems: "center",
+  },
+  topControlRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 10,
+    marginBottom: 16,
+    gap: 8,
+  },
+  downloadBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  downloadBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  soundControlWrapper: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mediaCounterText: {
+    fontSize: 12,
+    fontWeight: "700",
+    width: 32,
+    textAlign: "right",
   },
   addSoundPill: {
     flexDirection: "row",

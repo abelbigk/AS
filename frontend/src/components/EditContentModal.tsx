@@ -27,6 +27,7 @@ import { uploadFile } from "../lib/upload";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import type { ContentItem } from "./ContentCard";
 import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
+import { UploadProgress } from "./UploadProgress";
 
 interface EditContentModalProps {
   item: ContentItem | null;
@@ -60,6 +61,11 @@ export function EditContentModal({
 
   const [isSaving, setIsSaving] = useState(false);
   const [savingProgress, setSavingProgress] = useState("");
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadLoadedBytes, setUploadLoadedBytes] = useState(0);
+  const [uploadTotalBytes, setUploadTotalBytes] = useState(0);
+  const [uploadStage, setUploadStage] = useState<"idle" | "cover" | "saving_entry" | "media" | "processing">("idle");
+  const [currentUploadFileName, setCurrentUploadFileName] = useState("Media file");
 
   // Categories & Subcategories data
   const { data: categories = [] } = trpc.categories.list.useQuery(undefined, {
@@ -163,6 +169,7 @@ export function EditContentModal({
 
     setIsSaving(true);
     setSavingProgress("Saving details...");
+    setUploadStage("cover");
 
     try {
       let finalPosterUrl: string | undefined = undefined;
@@ -173,11 +180,19 @@ export function EditContentModal({
         if (posterImage.isUrl) {
           finalPosterUrl = posterImage.uri;
         } else if (posterImage.asset) {
+          setUploadStage("cover");
+          const fName = posterImage.asset.fileName || `cover_${Date.now()}.jpg`;
+          setCurrentUploadFileName(fName);
           setSavingProgress("Uploading cover image...");
           const uploadRes = await uploadFile(
             posterImage.asset.uri,
-            posterImage.asset.fileName || `cover_${Date.now()}.jpg`,
-            posterImage.asset.mimeType || "image/jpeg"
+            fName,
+            posterImage.asset.mimeType || "image/jpeg",
+            (loaded, total) => {
+              setUploadLoadedBytes(loaded);
+              setUploadTotalBytes(total);
+              setUploadPct(Math.round((loaded / total) * 100));
+            }
           );
           if (uploadRes) {
             finalPosterUrl = uploadRes.url;
@@ -186,6 +201,7 @@ export function EditContentModal({
         }
       }
 
+      setUploadStage("saving_entry");
       const shouldRemovePoster = !posterImage;
 
       // Update the main content record
@@ -202,15 +218,24 @@ export function EditContentModal({
 
       // Upload and attach any pending media files
       if (pendingMedia.length > 0) {
+        setUploadStage("media");
         for (let i = 0; i < pendingMedia.length; i++) {
           const itemMedia = pendingMedia[i];
+          const mName = itemMedia.asset.fileName || `media_${Date.now()}_${i}.${itemMedia.type === "video" ? "mp4" : "jpg"}`;
+          setCurrentUploadFileName(mName);
+          setUploadPct(0);
           setSavingProgress(
             `Uploading media ${i + 1} of ${pendingMedia.length}...`
           );
           const uploadRes = await uploadFile(
             itemMedia.asset.uri,
-            itemMedia.asset.fileName || `media_${Date.now()}_${i}.${itemMedia.type === "video" ? "mp4" : "jpg"}`,
-            itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg")
+            mName,
+            itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg"),
+            (loaded, total) => {
+              setUploadLoadedBytes(loaded);
+              setUploadTotalBytes(total);
+              setUploadPct(Math.round((loaded / total) * 100));
+            }
           );
 
           if (uploadRes) {
@@ -224,6 +249,8 @@ export function EditContentModal({
           }
         }
       }
+
+      setUploadStage("idle");
 
       // Invalidate queries so all views refresh
       utils.content.listByCategory.invalidate();
@@ -430,6 +457,18 @@ export function EditContentModal({
               ))}
             </View>
           </View>
+
+          {/* Real-time Upload Progress card with byte-by-byte metrics and speed */}
+          {isSaving && (
+            <UploadProgress
+              pct={uploadPct}
+              loadedBytes={uploadLoadedBytes}
+              totalBytes={uploadTotalBytes}
+              isSubmitting={isSaving}
+              stage={uploadStage}
+              fileName={currentUploadFileName}
+            />
+          )}
 
           {/* Save Button */}
           <Pressable

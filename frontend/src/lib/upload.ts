@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { Platform } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
 import { getBaseApiUrl } from "./config";
 
 export interface UploadResult {
@@ -33,39 +34,60 @@ export async function uploadFile(
     });
 
     if (!prepareRes.ok) {
-      throw new Error(`Failed to prepare upload: ${prepareRes.statusText}`);
+      const errText = await prepareRes.text();
+      throw new Error(`Failed to prepare upload: ${prepareRes.statusText} - ${errText}`);
     }
 
     const { uploadUrl, publicUrl, key } = await prepareRes.json();
 
     // 2. Upload file data directly to presigned URL
     if (Platform.OS === "web") {
-      // On web, fetch the blob from blob: or data: URL
       const blobRes = await fetch(fileUri);
       const blob = await blobRes.blob();
 
       await axios.put(uploadUrl, blob, {
-        headers: { "Content-Type": mimeType },
+        headers: { "Content-Type": mimeType || "application/octet-stream" },
         onUploadProgress: (e) => {
           if (onProgress && e.total) {
             onProgress(e.loaded, e.total);
           }
         },
       });
-    } else {
-      // On native mobile (Android/iOS)
-      // Read file into blob or FormData
-      const response = await fetch(fileUri);
-      const blob = await response.blob();
 
-      await axios.put(uploadUrl, blob, {
-        headers: { "Content-Type": mimeType },
-        onUploadProgress: (e) => {
-          if (onProgress && e.total) {
-            onProgress(e.loaded, e.total);
-          }
+      if (onProgress) onProgress(blob.size, blob.size);
+    } else {
+      // Native iOS / Android: Use expo-file-system uploadAsync for streaming binary uploads with progress
+      const uploadTask = FileSystem.createUploadTask(
+        uploadUrl,
+        fileUri,
+        {
+          headers: {
+            "Content-Type": mimeType || "application/octet-stream",
+          },
+          httpMethod: "PUT",
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
         },
-      });
+        (data) => {
+          if (onProgress && data.totalBytesExpectedToSend > 0) {
+            onProgress(data.totalBytesSent, data.totalBytesExpectedToSend);
+          }
+        }
+      );
+
+      const result = await uploadTask.uploadAsync();
+      if (!result || result.status < 200 || result.status >= 300) {
+        // Fallback: try reading as blob via fetch
+        const response = await fetch(fileUri);
+        const blob = await response.blob();
+        await axios.put(uploadUrl, blob, {
+          headers: { "Content-Type": mimeType || "application/octet-stream" },
+          onUploadProgress: (e) => {
+            if (onProgress && e.total) {
+              onProgress(e.loaded, e.total);
+            }
+          },
+        });
+      }
     }
 
     return { url: publicUrl, key };
