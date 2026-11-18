@@ -339,16 +339,16 @@ export function ContentDetailModal({
               </Text>
 
               {/* 1. Header controls: Download Button | Sound Control Pill | Media Counter (1/2) */}
+              {/* Only shown if there is media — sound is only allowed when media exists */}
+              {mediaItems.length > 0 && (
               <View style={styles.topControlRow}>
-                {mediaItems.length > 0 ? (
-                  <Pressable
-                    onPress={handleDownloadCurrentMedia}
-                    style={[styles.downloadBtn, { backgroundColor: colors.glassBg, borderColor: colors.border }]}
-                  >
-                    <Download size={13} color={colors.text} />
-                    <Text style={[styles.downloadBtnText, { color: colors.text }]}>Download</Text>
-                  </Pressable>
-                ) : <View style={{ width: 80 }} />}
+                <Pressable
+                  onPress={handleDownloadCurrentMedia}
+                  style={[styles.downloadBtn, { backgroundColor: colors.glassBg, borderColor: colors.border }]}
+                >
+                  <Download size={13} color={colors.text} />
+                  <Text style={[styles.downloadBtnText, { color: colors.text }]}>Download</Text>
+                </Pressable>
 
                 {/* Sound pill in middle */}
                 <View style={styles.soundControlWrapper}>
@@ -372,12 +372,11 @@ export function ContentDetailModal({
                 </View>
 
                 {/* Counter on right */}
-                {mediaItems.length > 0 ? (
-                  <Text style={[styles.mediaCounterText, { color: colors.textMuted }]}>
-                    {activeMediaIndex + 1}/{mediaItems.length}
-                  </Text>
-                ) : <View style={{ width: 30 }} />}
+                <Text style={[styles.mediaCounterText, { color: colors.textMuted }]}>
+                  {activeMediaIndex + 1}/{mediaItems.length}
+                </Text>
               </View>
+              )}
 
               {/* 2. Media Section comes FIRST if media exists */}
               {mediaItems.length > 0 ? (

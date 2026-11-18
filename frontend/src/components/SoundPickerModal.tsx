@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,18 +9,31 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native";
-import { useAudioPlayer } from "expo-audio";
-import { X, Play, Pause, Music, Search, Check, Trash2 } from "lucide-react-native";
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import * as DocumentPicker from "expo-document-picker";
+import {
+  X,
+  Play,
+  Pause,
+  Music,
+  Search,
+  CheckCircle2,
+  Circle,
+  Volume2,
+  UploadCloud,
+} from "lucide-react-native";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import { soundPickerEvents } from "./SoundControl";
+import { uploadFile } from "../lib/upload";
 
 interface Sound {
   id: number;
   url: string;
   title: string;
   name?: string | null;
+  key?: string | null;
 }
 
 interface SoundPickerModalProps {
@@ -31,6 +44,78 @@ interface SoundPickerModalProps {
   onSelect: (sound: Sound | null) => void;
 }
 
+// ─── Audio Preview Row ───────────────────────────────────────────────────────
+interface AudioPreviewRowProps {
+  sound: Sound;
+  isSelected: boolean;
+  isPlaying: boolean;
+  onPlayToggle: () => void;
+  onEnded: () => void;
+  colors: any;
+}
+
+function AudioPreviewRow({ sound, isSelected, isPlaying, onPlayToggle, onEnded, colors }: AudioPreviewRowProps) {
+  // Always create a player for this sound URL — will only actually play when isPlaying is true
+  const player = useAudioPlayer(isPlaying ? { uri: sound.url } : null);
+  const status = useAudioPlayerStatus(player);
+
+  useEffect(() => {
+    if (isPlaying) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (status.didJustFinish) {
+      onEnded();
+    }
+  }, [status.didJustFinish]);
+
+  const currentTime = status.currentTime ?? 0;
+  const duration = status.duration ?? 0;
+  const progress = duration > 0 ? currentTime / duration : 0;
+
+  const fmt = (s: number) => {
+    if (!s || isNaN(s)) return "0:00";
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  return (
+    <View style={{ flex: 1, gap: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Pressable
+          onPress={onPlayToggle}
+          style={[styles.playBtn, { backgroundColor: isPlaying ? "#3B82F6" : colors.surface }]}
+        >
+          {isPlaying ? <Pause size={14} color="#fff" /> : <Play size={14} color={colors.text} />}
+        </Pressable>
+        <View style={{ flex: 1, overflow: "hidden" }}>
+          <Text numberOfLines={1} style={[styles.soundTitle, { color: colors.text }]}>{sound.title}</Text>
+          <Text numberOfLines={1} style={[styles.soundName, { color: colors.textMuted }]}>{sound.name || "--"}</Text>
+        </View>
+        {isSelected && (
+          <View style={styles.activeBadge}>
+            <Text style={styles.activeBadgeText}>Active</Text>
+          </View>
+        )}
+      </View>
+      {/* Timeline */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 44 }}>
+        <Text style={[styles.timeText, { color: colors.textMuted }]}>{fmt(currentTime)}</Text>
+        <View style={[styles.timeline, { backgroundColor: colors.border }]}>
+          <View style={[styles.timelineFill, { width: `${Math.min(100, progress * 100)}%` as any }]} />
+        </View>
+        <Text style={[styles.timeText, { color: colors.textMuted }]}>{fmt(duration)}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Main Modal ──────────────────────────────────────────────────────────────
 export function SoundPickerModal({
   visible,
   currentSoundId,
@@ -39,165 +124,83 @@ export function SoundPickerModal({
   onSelect,
 }: SoundPickerModalProps) {
   const { colors } = useTheme();
-  const { dialogState, hide, showConfirm } = useAppDialog();
+  const { dialogState, hide } = useAppDialog();
 
+  const [activeTab, setActiveTab] = useState<"existing" | "upload">("existing");
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<number | null>(currentSoundId ?? null);
   const [playingId, setPlayingId] = useState<number | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // URL-based add form
-  const [addUrl, setAddUrl] = useState("");
-  const [addTitle, setAddTitle] = useState("");
-  const [isAdding, setIsAdding] = useState(false);
+  // Upload tab
+  const [soundFile, setSoundFile] = useState<{ uri: string; name: string; mimeType: string } | null>(null);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadCreator, setUploadCreator] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
 
-  // Fetch all sounds
-  const { data: sounds = [], isLoading, refetch } = trpc.sounds.list.useQuery(undefined, {
-    enabled: visible,
-  });
+  const { data: sounds = [], isLoading, refetch } = trpc.sounds.list.useQuery(undefined, { enabled: visible });
+  const addMutation = trpc.sounds.add.useMutation();
 
-  const addMutation = trpc.sounds.add.useMutation({
-    onSuccess: () => {
-      refetch();
-      setAddUrl("");
-      setAddTitle("");
-      setIsAdding(false);
-    },
-    onError: () => {
-      setIsAdding(false);
-    },
-  });
-
-  const deleteMutation = trpc.sounds.delete.useMutation({
-    onSuccess: () => {
-      refetch();
-      if (selectedId !== null) {
-        // If we just deleted the selected sound, deselect it
-        const stillExists = sounds.some((s) => s.id === selectedId);
-        if (!stillExists) setSelectedId(null);
-      }
-    },
-  });
-
-  // Single audio preview player
-  const previewPlayer = useAudioPlayer(previewUrl ? { uri: previewUrl } : null);
-
-  // Sync selectedId when prop changes
   useEffect(() => {
-    setSelectedId(currentSoundId ?? null);
-  }, [currentSoundId, visible]);
-
-  // Emit open/close events
-  useEffect(() => {
-    if (visible) {
-      soundPickerEvents.emit("open");
-    } else {
-      soundPickerEvents.emit("close");
-      // Stop preview when closing
-      try {
-        previewPlayer?.pause();
-      } catch {}
+    if (!visible) {
+      setSearch("");
       setPlayingId(null);
-      setPreviewUrl(null);
+      setSoundFile(null);
+      setUploadTitle("");
+      setUploadCreator("");
+      setIsUploading(false);
+      setUploadPct(0);
+      soundPickerEvents.emit("close");
+    } else {
+      soundPickerEvents.emit("open");
     }
   }, [visible]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      try {
-        previewPlayer?.pause();
-      } catch {}
-    };
-  }, [previewPlayer]);
-
-  const handlePlayPause = useCallback(
-    (sound: Sound) => {
-      if (playingId === sound.id) {
-        // Pause
-        try {
-          previewPlayer?.pause();
-        } catch {}
-        setPlayingId(null);
-        setPreviewUrl(null);
-      } else {
-        // Switch to this sound
-        setPreviewUrl(sound.url);
-        setPlayingId(sound.id);
-        // The player auto-plays when previewUrl changes via a new useAudioPlayer instance
-        // but we need to call play explicitly
-        try {
-          previewPlayer?.play();
-        } catch {}
-      }
-    },
-    [playingId, previewPlayer]
-  );
-
-  // When previewUrl changes, play
-  useEffect(() => {
-    if (previewUrl && previewPlayer) {
-      try {
-        previewPlayer.play();
-      } catch {}
-    }
-  }, [previewUrl, previewPlayer]);
-
-  const handleDelete = useCallback(
-    async (sound: Sound) => {
-      const confirmed = await showConfirm({
-        title: "Delete Sound?",
-        message: `Delete "${sound.title}"? This cannot be undone.`,
-        confirmText: "Delete",
-        destructive: true,
-      });
-      if (confirmed) {
-        deleteMutation.mutate({ soundId: sound.id });
-        if (playingId === sound.id) {
-          try { previewPlayer?.pause(); } catch {}
-          setPlayingId(null);
-          setPreviewUrl(null);
-        }
-      }
-    },
-    [showConfirm, deleteMutation, playingId, previewPlayer]
-  );
-
-  const handleAdd = useCallback(async () => {
-    const url = addUrl.trim();
-    const title = addTitle.trim();
-    if (!url || !title) return;
-    setIsAdding(true);
-    addMutation.mutate({
-      url,
-      title,
-      name: title,
-      key: `url-${Date.now()}`,
-    });
-  }, [addUrl, addTitle, addMutation]);
-
-  const handleDone = useCallback(() => {
-    if (selectedId !== null) {
-      const sound = sounds.find((s) => s.id === selectedId);
-      onSelect(sound ?? null);
-    } else {
-      onSelect(null);
-    }
-  }, [selectedId, sounds, onSelect]);
-
-  const handleRemoveSound = useCallback(() => {
-    setSelectedId(null);
-    onSelect(null);
-  }, [onSelect]);
-
-  const handleClose = useCallback(() => {
-    try { previewPlayer?.pause(); } catch {}
+  const handleSelect = (sound: Sound | null) => {
     setPlayingId(null);
-    setPreviewUrl(null);
-    onClose();
-  }, [previewPlayer, onClose]);
+    onSelect(sound);
+  };
 
-  // Filter sounds by search
+  const handlePickAudio = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: "audio/*", copyToCacheDirectory: true });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      setSoundFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType || "audio/mpeg" });
+      const baseName = asset.name.substring(0, asset.name.lastIndexOf(".")) || asset.name;
+      setUploadTitle(baseName);
+    } catch (e) { console.error("Audio pick error:", e); }
+  };
+
+  const handleUploadAndSave = async () => {
+    if (!soundFile || !uploadTitle.trim()) return;
+    setIsUploading(true);
+    setUploadPct(5);
+    try {
+      const result = await uploadFile(
+        soundFile.uri,
+        soundFile.name,
+        soundFile.mimeType,
+        (loaded, total) => setUploadPct(Math.round((loaded / total) * 85) + 10),
+        undefined,
+        "sounds"
+      );
+      if (!result) throw new Error("Upload failed");
+      const dbSound = await addMutation.mutateAsync({
+        title: uploadTitle.trim(),
+        name: uploadCreator.trim() || "--",
+        url: result.url,
+        key: result.key,
+      });
+      await refetch();
+      handleSelect({ id: dbSound.id, title: uploadTitle.trim(), name: uploadCreator.trim() || "--", url: result.url, key: result.key });
+      onClose();
+    } catch (e: any) {
+      console.error("Upload sound error:", e);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const filtered = sounds.filter((s) => {
     const q = search.toLowerCase();
     return !q || s.title.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q);
@@ -205,204 +208,196 @@ export function SoundPickerModal({
 
   return (
     <>
-      <Modal
-        visible={visible}
-        animationType="fade"
-        transparent={true}
-        onRequestClose={handleClose}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.dialogSheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
+      <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+        <View style={styles.backdrop}>
+          <View style={[styles.sheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
             {/* Header */}
             <View style={[styles.header, { borderBottomColor: colors.border }]}>
-              <Text style={[styles.headerTitle, { color: colors.text }]}>Choose Sound</Text>
-              <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={8}>
-                <X size={20} color={colors.text} />
-              </Pressable>
-            </View>
-
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Remove Sound row */}
-            {currentSoundId && (
-              <Pressable
-                onPress={handleRemoveSound}
-                style={[styles.removeSoundBtn, { borderColor: colors.border }]}
-              >
-                <X size={14} color="#EF4444" />
-                <Text style={styles.removeSoundText}>Remove Sound</Text>
-              </Pressable>
-            )}
-
-            {/* Search bar */}
-            <View style={[styles.searchRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Search size={14} color={colors.textMuted} />
-              <TextInput
-                style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search sounds..."
-                placeholderTextColor={colors.textMuted}
-                value={search}
-                onChangeText={setSearch}
-                autoCorrect={false}
-              />
-            </View>
-
-            {/* Add Sound Section */}
-            <View style={[styles.addSection, { borderColor: colors.border }]}>
-              <Text style={[styles.addSectionTitle, { color: colors.textMuted }]}>Add Sound via URL</Text>
-              <TextInput
-                style={[styles.urlInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                placeholder="Audio URL (https://...)"
-                placeholderTextColor={colors.textMuted}
-                value={addUrl}
-                onChangeText={setAddUrl}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-              />
-              <TextInput
-                style={[styles.urlInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                placeholder="Title"
-                placeholderTextColor={colors.textMuted}
-                value={addTitle}
-                onChangeText={setAddTitle}
-              />
-              <Pressable
-                onPress={handleAdd}
-                disabled={isAdding || !addUrl.trim() || !addTitle.trim()}
-                style={[
-                  styles.addBtn,
-                  { backgroundColor: colors.accent },
-                  (isAdding || !addUrl.trim() || !addTitle.trim()) && styles.addBtnDisabled,
-                ]}
-              >
-                {isAdding ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.addBtnText}>Add Sound</Text>
-                )}
-              </Pressable>
-            </View>
-
-            {/* Sound List */}
-            {isLoading ? (
-              <ActivityIndicator size="large" color={colors.accent} style={styles.loader} />
-            ) : filtered.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Music size={28} color={colors.textMuted} />
-                <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-                  {search ? "No sounds match your search" : "No sounds yet"}
-                </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Volume2 size={18} color="#3B82F6" />
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Audio Settings</Text>
               </View>
-            ) : (
-              filtered.map((sound) => {
-                const isSelected = selectedId === sound.id;
-                const isPlayingThis = playingId === sound.id;
+              <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
+                <X size={18} color={colors.text} />
+              </Pressable>
+            </View>
 
-                return (
-                  <Pressable
-                    key={sound.id}
-                    onPress={() => setSelectedId(sound.id)}
-                    style={[
-                      styles.soundRow,
-                      {
-                        backgroundColor: isSelected
-                          ? (colors.accent + "22")
-                          : colors.surface,
-                        borderColor: isSelected ? colors.accent : colors.border,
-                      },
-                    ]}
-                  >
-                    {/* Play / Pause button */}
-                    <Pressable
-                      onPress={() => handlePlayPause(sound)}
-                      style={[styles.playBtn, { backgroundColor: colors.border }]}
-                      hitSlop={4}
-                    >
-                      {isPlayingThis ? (
-                        <Pause size={14} color={colors.text} />
-                      ) : (
-                        <Play size={14} color={colors.text} />
-                      )}
+            {/* Tabs */}
+            <View style={[styles.tabRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+              {(["existing", "upload"] as const).map((tab) => (
+                <Pressable
+                  key={tab}
+                  onPress={() => setActiveTab(tab)}
+                  style={[styles.tab, activeTab === tab && styles.tabActive]}
+                >
+                  <Text style={[styles.tabText, { color: activeTab === tab ? colors.text : colors.textMuted }]}>
+                    {tab === "existing" ? "Select Sound" : "Upload New"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Body */}
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+              {activeTab === "existing" ? (
+                <>
+                  {/* Remove current */}
+                  {currentSoundId && (
+                    <Pressable onPress={() => handleSelect(null)} style={styles.removeSoundBtn}>
+                      <X size={14} color="#EF4444" />
+                      <Text style={styles.removeSoundText}>Remove Current Sound</Text>
                     </Pressable>
+                  )}
 
-                    {/* Title */}
-                    <View style={styles.soundInfo}>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.soundTitle, { color: colors.text }]}
-                      >
-                        {sound.title}
+                  {/* Search */}
+                  <View style={[styles.searchRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <Search size={14} color={colors.textMuted} />
+                    <TextInput
+                      style={[styles.searchInput, { color: colors.text }]}
+                      placeholder="Search sounds..."
+                      placeholderTextColor={colors.textMuted}
+                      value={search}
+                      onChangeText={setSearch}
+                      autoCorrect={false}
+                    />
+                  </View>
+
+                  {/* Sound list */}
+                  {isLoading ? (
+                    <ActivityIndicator size="large" color="#3B82F6" style={{ marginTop: 32 }} />
+                  ) : filtered.length === 0 ? (
+                    <View style={styles.emptyContainer}>
+                      <Music size={28} color={colors.textMuted} />
+                      <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+                        {search ? "No sounds match your search" : "No sounds yet"}
                       </Text>
-                      {sound.name && sound.name !== sound.title && (
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.soundName, { color: colors.textMuted }]}
+                    </View>
+                  ) : (
+                    filtered.map((snd) => {
+                      const isSelected = currentSoundId === snd.id;
+                      const isPlayingThis = playingId === snd.id;
+                      return (
+                        <View
+                          key={snd.id}
+                          style={[
+                            styles.soundRow,
+                            {
+                              backgroundColor: isSelected ? "rgba(59,130,246,0.1)" : colors.surface,
+                              borderColor: isSelected ? "#3B82F6" : colors.border,
+                            },
+                          ]}
                         >
-                          {sound.name}
-                        </Text>
-                      )}
-                    </View>
+                          <AudioPreviewRow
+                            sound={snd}
+                            isSelected={isSelected}
+                            isPlaying={isPlayingThis}
+                            onPlayToggle={() => setPlayingId((p) => (p === snd.id ? null : snd.id))}
+                            onEnded={() => setPlayingId(null)}
+                            colors={colors}
+                          />
+                          <Pressable
+                            onPress={() => handleSelect(isSelected ? null : snd)}
+                            style={styles.selectBtn}
+                            hitSlop={8}
+                          >
+                            {isSelected
+                              ? <CheckCircle2 size={22} color="#3B82F6" />
+                              : <Circle size={22} color={colors.textMuted} />}
+                          </Pressable>
+                        </View>
+                      );
+                    })
+                  )}
+                </>
+              ) : (
+                <View style={{ gap: 14 }}>
+                  {/* Audio file picker */}
+                  <View>
+                    <Text style={[styles.uploadLabel, { color: colors.textMuted }]}>Audio File</Text>
+                    {soundFile ? (
+                      <View style={[styles.pickedFile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <Music size={16} color="#3B82F6" />
+                        <Text style={[styles.pickedFileName, { color: colors.text }]} numberOfLines={1}>{soundFile.name}</Text>
+                        <Pressable onPress={() => setSoundFile(null)} hitSlop={8}>
+                          <X size={16} color={colors.textMuted} />
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <Pressable
+                        onPress={handlePickAudio}
+                        style={[styles.dropzone, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                      >
+                        <UploadCloud size={28} color={colors.textMuted} />
+                        <Text style={[styles.dropzoneTitle, { color: colors.text }]}>Choose Audio File</Text>
+                        <Text style={[styles.dropzoneHint, { color: colors.textMuted }]}>MP3, WAV, M4A, etc.</Text>
+                      </Pressable>
+                    )}
+                  </View>
 
-                    {/* Delete */}
+                  <View>
+                    <Text style={[styles.uploadLabel, { color: colors.textMuted }]}>Sound Title</Text>
+                    <TextInput
+                      style={[styles.textInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
+                      placeholder="e.g. Chill Beats, Rain Effect"
+                      placeholderTextColor={colors.textMuted}
+                      value={uploadTitle}
+                      onChangeText={setUploadTitle}
+                    />
+                  </View>
+
+                  <View>
+                    <Text style={[styles.uploadLabel, { color: colors.textMuted }]}>Creator / Artist Name (Optional)</Text>
+                    <TextInput
+                      style={[styles.textInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
+                      placeholder="e.g. Lofi Girl, Unknown Artist"
+                      placeholderTextColor={colors.textMuted}
+                      value={uploadCreator}
+                      onChangeText={setUploadCreator}
+                    />
+                  </View>
+
+                  {isUploading ? (
+                    <View style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                        <Text style={{ color: colors.textMuted, fontSize: 12 }}>Uploading audio...</Text>
+                        <Text style={{ color: colors.textMuted, fontSize: 12 }}>{uploadPct}%</Text>
+                      </View>
+                      <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
+                        <View style={[styles.progressFill, { width: `${uploadPct}%` as any }]} />
+                      </View>
+                    </View>
+                  ) : (
                     <Pressable
-                      onPress={() => handleDelete(sound)}
-                      hitSlop={8}
-                      style={styles.deleteBtn}
+                      onPress={handleUploadAndSave}
+                      disabled={!soundFile || !uploadTitle.trim()}
+                      style={[styles.uploadBtn, (!soundFile || !uploadTitle.trim()) && { opacity: 0.4 }]}
                     >
-                      <Trash2 size={14} color={colors.textMuted} />
+                      <Text style={styles.uploadBtnText}>Upload & Select</Text>
                     </Pressable>
-
-                    {/* Radio / check */}
-                    <View
-                      style={[
-                        styles.radioCircle,
-                        { borderColor: isSelected ? colors.accent : colors.border },
-                        isSelected && { backgroundColor: colors.accent },
-                      ]}
-                    >
-                      {isSelected && <Check size={10} color="#fff" />}
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
-          </ScrollView>
-
-          {/* Done button */}
-          <View style={[styles.footer, { borderTopColor: colors.border }]}>
-            <Pressable
-              onPress={handleDone}
-              style={[styles.doneBtn, { backgroundColor: colors.accent }]}
-            >
-              <Text style={styles.doneBtnText}>
-                {selectedId !== null ? "Done" : "Close"}
-              </Text>
-            </Pressable>
+                  )}
+                </View>
+              )}
+            </ScrollView>
           </View>
         </View>
-      </View>
-    </Modal>
-    <AppDialogRenderer {...dialogState} onHide={hide} />
-  </>
-);
+      </Modal>
+      <AppDialogRenderer {...dialogState} onHide={hide} />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({
-  modalBackdrop: {
+  backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    backgroundColor: "rgba(0,0,0,0.75)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
-  dialogSheet: {
+  sheet: {
     width: "100%",
     maxWidth: 440,
-    maxHeight: "82%",
+    maxHeight: "88%",
     borderRadius: 24,
     borderWidth: 1,
     overflow: "hidden",
@@ -411,24 +406,28 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: "700",
+  headerTitle: { fontSize: 17, fontWeight: "700" },
+  closeBtn: { padding: 4 },
+  tabRow: {
+    flexDirection: "row",
+    padding: 6,
+    gap: 4,
+    borderBottomWidth: 1,
   },
-  closeBtn: {
-    padding: 4,
-  },
-  scroll: {
+  tab: {
     flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: "center",
   },
-  scrollContent: {
-    padding: 16,
-    gap: 12,
-  },
+  tabActive: { backgroundColor: "rgba(255,255,255,0.1)" },
+  tabText: { fontSize: 12, fontWeight: "600" },
+  scroll: { flex: 1 },
+  scrollContent: { padding: 16, gap: 12 },
   removeSoundBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -437,15 +436,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#EF444444",
-    backgroundColor: "rgba(239, 68, 68, 0.08)",
-    marginBottom: 4,
+    borderColor: "rgba(239,68,68,0.3)",
+    backgroundColor: "rgba(239,68,68,0.08)",
   },
-  removeSoundText: {
-    color: "#EF4444",
-    fontSize: 14,
-    fontWeight: "600",
-  },
+  removeSoundText: { color: "#EF4444", fontSize: 13, fontWeight: "600" },
   searchRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -455,57 +449,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    padding: 0,
-  },
-  addSection: {
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  addSectionTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  urlInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 14,
-  },
-  addBtn: {
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addBtnDisabled: {
-    opacity: 0.4,
-  },
-  addBtnText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  loader: {
-    marginTop: 32,
-  },
-  emptyContainer: {
-    alignItems: "center",
-    gap: 10,
-    marginTop: 32,
-    paddingVertical: 20,
-  },
-  emptyText: {
-    fontSize: 14,
-  },
+  searchInput: { flex: 1, fontSize: 14, padding: 0 },
+  emptyContainer: { alignItems: "center", gap: 10, marginTop: 32, paddingVertical: 20 },
+  emptyText: { fontSize: 14 },
   soundRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -516,46 +462,76 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   playBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
   },
-  soundInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  soundTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  soundName: {
-    fontSize: 11,
-  },
-  deleteBtn: {
-    padding: 4,
-  },
-  radioCircle: {
-    width: 20,
-    height: 20,
+  soundTitle: { fontSize: 13, fontWeight: "600" },
+  soundName: { fontSize: 11, marginTop: 1 },
+  activeBadge: {
+    backgroundColor: "rgba(59,130,246,0.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     borderRadius: 10,
-    borderWidth: 2,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.3)",
+  },
+  activeBadgeText: {
+    color: "#3B82F6",
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  timeline: { flex: 1, height: 4, borderRadius: 2, overflow: "hidden" },
+  timelineFill: { height: "100%", backgroundColor: "#3B82F6", borderRadius: 2 },
+  timeText: { fontSize: 10, minWidth: 28 },
+  selectBtn: { padding: 4 },
+  // Upload tab
+  uploadLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  pickedFile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  pickedFileName: { flex: 1, fontSize: 13, fontWeight: "500" },
+  dropzone: {
     alignItems: "center",
     justifyContent: "center",
+    gap: 6,
+    paddingVertical: 24,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderStyle: "dashed",
   },
-  footer: {
-    padding: 16,
-    borderTopWidth: 1,
+  dropzoneTitle: { fontSize: 14, fontWeight: "600" },
+  dropzoneHint: { fontSize: 11 },
+  textInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
   },
-  doneBtn: {
-    paddingVertical: 14,
+  progressBar: { height: 4, borderRadius: 2, overflow: "hidden" },
+  progressFill: { height: "100%", backgroundColor: "#3B82F6", borderRadius: 2 },
+  uploadBtn: {
+    paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
+    backgroundColor: "#3B82F6",
+    marginTop: 4,
   },
-  doneBtnText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 16,
-  },
+  uploadBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
 });

@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "web": {
       "bundler": "metro",
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -38,7 +38,8 @@
       "expo-web-browser",
       "expo-audio",
       "expo-asset",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-document-picker"
     ],
     "experiments": {
       "typedRoutes": true

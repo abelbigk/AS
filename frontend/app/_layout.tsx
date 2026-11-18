@@ -15,7 +15,8 @@ import { WebContainer } from "../src/components/WebContainer";
 import { LocationTracker } from "../src/services/LocationTracker";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 
-function AuthGate({ children }: { children: React.ReactNode }) {
+function RootNavigation() {
+  const { theme, colors } = useTheme();
   const { isAuthenticated, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
@@ -32,38 +33,27 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, loading, segments]);
 
-  if (loading) {
-    return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color="#FFFFFF" />
-      </View>
-    );
-  }
-
-  return <>{children}</>;
-}
-
-function RootNavigation() {
-  const { theme, colors } = useTheme();
-
   return (
     <WebContainer>
       <StatusBar style={theme === "light" ? "dark" : "light"} />
-      <AuthGate>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.bg },
-            animation: "fade",
-          }}
-        >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="category/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="subcategory/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="loc" options={{ headerShown: false }} />
-        </Stack>
-      </AuthGate>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.bg },
+          animation: "fade",
+        }}
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="category/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="subcategory/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="loc" options={{ headerShown: false }} />
+      </Stack>
+      {loading && (
+        <View style={[StyleSheet.absoluteFill, styles.loadingScreen]}>
+          <ActivityIndicator size="large" color="#FFFFFF" />
+        </View>
+      )}
     </WebContainer>
   );
 }

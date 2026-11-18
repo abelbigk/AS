@@ -1,11 +1,9 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { CheckCircle2, MoreVertical, Pencil, Trash2, ArrowUp, ArrowDown } from "lucide-react-native";
+import { CheckCircle2 } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useTheme } from "../contexts/ThemeContext";
-import { DropdownMenu } from "./DropdownMenu";
-import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 
 interface SubcategoryCardProps {
   subcategory: {
@@ -32,66 +30,12 @@ export function SubcategoryCard({
   isSelectMode,
   selected,
   onPress,
-  onEdit,
-  onDelete,
-  onMoveUp,
-  onMoveDown,
 }: SubcategoryCardProps) {
   const { colors, theme } = useTheme();
   const [aspectRatio, setAspectRatio] = useState<number>(4 / 3);
-  const { dialogState, hide, showConfirm } = useAppDialog();
-
-  const menuItems = [
-    ...(onEdit
-      ? [
-          {
-            label: "Edit Details",
-            icon: Pencil,
-            onPress: onEdit,
-          },
-        ]
-      : []),
-    ...(onMoveUp
-      ? [
-          {
-            label: "Move Up",
-            icon: ArrowUp,
-            onPress: onMoveUp,
-          },
-        ]
-      : []),
-    ...(onMoveDown
-      ? [
-          {
-            label: "Move Down",
-            icon: ArrowDown,
-            onPress: onMoveDown,
-          },
-        ]
-      : []),
-    ...(onDelete
-      ? [
-          {
-            label: "Delete",
-            icon: Trash2,
-            destructive: true,
-            onPress: () => {
-              showConfirm({
-                title: "Delete subcategory?",
-                message: "This action cannot be undone. All content linked to it will be unlinked.",
-                confirmText: "Delete",
-                destructive: true,
-                onConfirm: onDelete,
-              });
-            },
-          },
-        ]
-      : []),
-  ];
 
   return (
-    <>
-      <Pressable
+    <Pressable
       onPress={onPress}
       style={({ pressed }) => [
         styles.card,
@@ -148,30 +92,11 @@ export function SubcategoryCard({
             style={StyleSheet.absoluteFill}
           />
 
-          {/* Top-right count badge & 3-dot menu */}
+          {/* Top-right count badge */}
           <View style={styles.topRightRow}>
             <View style={styles.countBadge}>
               <Text style={styles.countBadgeText}>{count}</Text>
             </View>
-
-            {!isSelectMode && menuItems.length > 0 && (
-              <DropdownMenu
-                align="right"
-                trigger={(open) => (
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      open();
-                    }}
-                    style={styles.moreBtn}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <MoreVertical size={13} color="rgba(255, 255, 255, 0.85)" />
-                  </Pressable>
-                )}
-                items={menuItems}
-              />
-            )}
           </View>
 
           {/* Bottom text overlay */}
@@ -188,30 +113,11 @@ export function SubcategoryCard({
         </View>
       ) : (
         <View style={styles.noImageContent}>
-          {/* Top-right count badge & 3-dot menu */}
+          {/* Top-right count badge */}
           <View style={styles.topRightRow}>
             <View style={[styles.countBadge, { backgroundColor: colors.surfaceHover }]}>
               <Text style={[styles.countBadgeText, { color: colors.textMuted }]}>{count}</Text>
             </View>
-
-            {!isSelectMode && menuItems.length > 0 && (
-              <DropdownMenu
-                align="right"
-                trigger={(open) => (
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      open();
-                    }}
-                    style={[styles.moreBtn, { backgroundColor: colors.surfaceHover }]}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <MoreVertical size={13} color={colors.textMuted} />
-                  </Pressable>
-                )}
-                items={menuItems}
-              />
-            )}
           </View>
 
           <View style={styles.bottomInfoNoImage}>
@@ -227,9 +133,7 @@ export function SubcategoryCard({
         </View>
       )}
     </Pressable>
-    <AppDialogRenderer {...dialogState} onHide={hide} />
-  </>
-);
+  );
 }
 
 const styles = StyleSheet.create({

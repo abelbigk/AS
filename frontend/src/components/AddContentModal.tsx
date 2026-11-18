@@ -362,8 +362,8 @@ export function AddContentModal({
               />
             </View>
 
-            {/* Categories Multi-Select Checkboxes */}
-            {categories.length > 0 && (
+            {/* Categories Multi-Select — hidden when initialCategoryId is preset */}
+            {!initialCategoryId && categories.length > 0 && (
               <View style={styles.fieldGroup}>
                 <Text style={[styles.label, { color: colors.textMuted }]}>Categories</Text>
                 <View style={styles.checkboxGroup}>
@@ -403,10 +403,12 @@ export function AddContentModal({
               </View>
             )}
 
-            {/* Subcategories Multi-Select Checkboxes */}
-            {allSubcategories.length > 0 && (
+            {/* Subcategories — hidden when initialSubcategoryId is preset; label omits "Optional" when inside a subcategory context */}
+            {!initialSubcategoryId && allSubcategories.length > 0 && (
               <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { color: colors.textMuted }]}>Subcategories</Text>
+                <Text style={[styles.label, { color: colors.textMuted }]}>
+                  {initialCategoryId ? "Subcategory" : "Subcategories (Optional)"}
+                </Text>
                 <View style={styles.checkboxGroup}>
                   {allSubcategories.map((sub) => {
                     const isChecked = selectedSubcategoryIds.includes(sub.id);

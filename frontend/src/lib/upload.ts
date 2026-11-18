@@ -13,7 +13,9 @@ export async function uploadFile(
   fileUri: string,
   fileName: string,
   mimeType: string,
-  onProgress?: (loaded: number, total: number) => void
+  onProgress?: (loaded: number, total: number) => void,
+  _abortSignal?: AbortSignal,
+  prefix: string = "content"
 ): Promise<UploadResult | null> {
   try {
     const token = await AsyncStorage.getItem("auth_token");
@@ -29,7 +31,7 @@ export async function uploadFile(
       body: JSON.stringify({
         filename: fileName,
         contentType: mimeType || "application/octet-stream",
-        prefix: "content",
+        prefix,
       }),
     });
 
