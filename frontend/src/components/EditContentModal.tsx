@@ -58,6 +58,8 @@ export function EditContentModal({
   const [pendingMedia, setPendingMedia] = useState<
     Array<{ asset: ImagePicker.ImagePickerAsset; type: "image" | "video" }>
   >([]);
+  // Media items queued for deletion on Save Changes
+  const [deletedMediaIds, setDeletedMediaIds] = useState<number[]>([]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [savingProgress, setSavingProgress] = useState("");
@@ -103,6 +105,7 @@ export function EditContentModal({
         setPosterImage(null);
       }
       setPendingMedia([]);
+      setDeletedMediaIds([]);
       setSavingProgress("");
     }
   }, [item, visible]);
@@ -144,14 +147,16 @@ export function EditContentModal({
     }
   };
 
-  // Delete existing media
+  // Delete existing media (staged for deletion until Save Changes is pressed)
   const handleDeleteExistingMedia = (mediaId: number) => {
     showConfirm({
-      title: "Delete Media",
-      message: "Are you sure you want to remove this media file?",
-      confirmText: "Delete",
+      title: "Remove Media",
+      message: "Remove this media attachment? The deletion will be applied when you tap 'Save Changes'.",
+      confirmText: "Remove",
       destructive: true,
-      onConfirm: () => deleteMediaMutation.mutate({ mediaId }),
+      onConfirm: () => {
+        setDeletedMediaIds((prev) => (prev.includes(mediaId) ? prev : [...prev, mediaId]));
+      },
     });
   };
 
@@ -246,6 +251,18 @@ export function EditContentModal({
               type: itemMedia.type,
               order: (mediaItems.length || 0) + i,
             });
+          }
+        }
+      }
+
+      // Delete any media items that were queued for deletion
+      if (deletedMediaIds.length > 0) {
+        setSavingProgress("Removing deleted media...");
+        for (const mediaId of deletedMediaIds) {
+          try {
+            await deleteMediaMutation.mutateAsync({ mediaId });
+          } catch (e) {
+            console.error("Failed to delete media:", mediaId, e);
           }
         }
       }
@@ -408,7 +425,10 @@ export function EditContentModal({
           <View style={styles.fieldGroup}>
             <View style={styles.mediaHeaderRow}>
               <Text style={[styles.label, { color: colors.textMuted, marginBottom: 0 }]}>
-                Media Attachments ({mediaItems.length + pendingMedia.length})
+                Media Attachments (
+                {mediaItems.filter((m) => !deletedMediaIds.includes(m.id)).length +
+                  pendingMedia.length}
+                )
               </Text>
               <Pressable onPress={handlePickMoreMedia} style={styles.addMediaSmallBtn}>
                 <Plus size={14} color="#3B82F6" />
@@ -416,24 +436,26 @@ export function EditContentModal({
               </Pressable>
             </View>
 
-            {/* List of existing media */}
+            {/* List of existing media (excluding those queued for deletion) */}
             <View style={styles.mediaGrid}>
-              {mediaItems.map((m) => (
-                <View key={m.id} style={styles.mediaThumbnailWrapper}>
-                  <Image source={{ uri: m.url }} style={styles.mediaThumbnail} contentFit="cover" />
-                  {m.type === "video" && (
-                    <View style={styles.videoBadge}>
-                      <Film size={12} color="#FFFFFF" />
-                    </View>
-                  )}
-                  <Pressable
-                    onPress={() => handleDeleteExistingMedia(m.id)}
-                    style={styles.deleteMediaThumbnailBtn}
-                  >
-                    <Trash2 size={12} color="#FFFFFF" />
-                  </Pressable>
-                </View>
-              ))}
+              {mediaItems
+                .filter((m) => !deletedMediaIds.includes(m.id))
+                .map((m) => (
+                  <View key={m.id} style={styles.mediaThumbnailWrapper}>
+                    <Image source={{ uri: m.url }} style={styles.mediaThumbnail} contentFit="cover" />
+                    {m.type === "video" && (
+                      <View style={styles.videoBadge}>
+                        <Film size={12} color="#FFFFFF" />
+                      </View>
+                    )}
+                    <Pressable
+                      onPress={() => handleDeleteExistingMedia(m.id)}
+                      style={styles.deleteMediaThumbnailBtn}
+                    >
+                      <Trash2 size={12} color="#FFFFFF" />
+                    </Pressable>
+                  </View>
+                ))}
 
               {/* List of pending media */}
               {pendingMedia.map((pm, idx) => (
