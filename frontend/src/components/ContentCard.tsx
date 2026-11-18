@@ -25,6 +25,7 @@ export interface ContentItem {
   posterImageKey?: string | null;
   posterCropData?: string | null;
   soundId?: number | null;
+  location?: string | null;
   status: "default" | "queued" | "done";
   categoryIds?: number[];
   subcategoryIds?: number[];

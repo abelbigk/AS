@@ -373,6 +373,7 @@ export const appRouter = router({
         posterImageUrl: z.string().optional(),
         posterImageKey: z.string().optional(),
         posterCropData: z.string().optional(),
+        location: z.string().nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         // Look for existing content with same heading
@@ -394,7 +395,8 @@ export const appRouter = router({
           input.posterImageKey,
           input.posterCropData,
           input.categoryIds || [],
-          input.subcategoryIds || []
+          input.subcategoryIds || [],
+          input.location ?? undefined
         );
       }),
 
@@ -421,6 +423,7 @@ export const appRouter = router({
         posterCropData: z.string().optional(),
         removePoster: z.boolean().optional(),
         soundId: z.number().nullable().optional(),
+        location: z.string().nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const existing = await getContentItemById(input.itemId, ctx.user.id);
@@ -437,6 +440,7 @@ export const appRouter = router({
           posterImageKey: input.removePoster ? null : input.posterImageKey,
           posterCropData: input.removePoster ? null : input.posterCropData,
           soundId: input.soundId,
+          location: input.location,
         });
         if (input.soundId !== undefined && oldSoundId && oldSoundId !== input.soundId) {
           await cleanupUnusedSound(oldSoundId);

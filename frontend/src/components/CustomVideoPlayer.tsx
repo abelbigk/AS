@@ -14,11 +14,12 @@ import { DropdownMenu, DropdownItem } from "./DropdownMenu";
 
 interface CustomVideoPlayerProps {
   uri: string;
+  isActive?: boolean;
   onPlayingChange?: (isPlaying: boolean) => void;
   style?: any;
 }
 
-export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPlayerProps) {
+export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style }: CustomVideoPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showInitialPlay, setShowInitialPlay] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
@@ -30,10 +31,29 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
   const containerRef = useRef<any>(null);
   const videoViewRef = useRef<VideoView>(null);
   const pinchStartDistance = useRef<number | null>(null);
+  const dragStartX = useRef<number>(0);
+  const dragStartProgress = useRef<number>(0);
 
   const player = useVideoPlayer({ uri }, (p) => {
     p.loop = true;
   });
+
+  // Pause video if it becomes inactive (e.g. user slides to another media item)
+  useEffect(() => {
+    if (!isActive && isPlaying) {
+      player.pause();
+      setIsPlaying(false);
+    }
+  }, [isActive, isPlaying, player]);
+
+  // Pause on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        player.pause();
+      } catch {}
+    };
+  }, [player]);
 
   useEffect(() => {
     const sub = player.addListener("playingChange", (e) => {
@@ -65,29 +85,35 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
 
   // Enter fullscreen helper across platforms
   const enterFullscreen = () => {
-    if (Platform.OS === "web") {
-      const el = containerRef.current as any;
-      if (el?.requestFullscreen) {
-        el.requestFullscreen().catch(() => {});
-        setIsFullscreen(true);
-        return;
+    try {
+      if (Platform.OS === "web") {
+        const el = containerRef.current as any;
+        if (el?.requestFullscreen && typeof document !== "undefined" && !document.fullscreenElement) {
+          el.requestFullscreen().catch(() => {});
+          setIsFullscreen(true);
+          return;
+        }
       }
-    }
-    videoViewRef.current?.enterFullscreen();
-    setIsFullscreen(true);
+      videoViewRef.current?.enterFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } catch {}
   };
 
-  // Exit fullscreen helper across platforms
+  // Exit fullscreen helper across platforms safely
   const exitFullscreen = () => {
-    if (Platform.OS === "web") {
-      if (typeof document !== "undefined" && document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
+    try {
+      if (Platform.OS === "web") {
+        if (typeof document !== "undefined" && document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
         setIsFullscreen(false);
         return;
       }
+      videoViewRef.current?.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    } catch {
+      setIsFullscreen(false);
     }
-    videoViewRef.current?.exitFullscreen();
-    setIsFullscreen(false);
   };
 
   // Pinch-to-zoom → fullscreen (supports Web touch devices & Native)
@@ -166,12 +192,7 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
     }
   };
 
-  const seekToPosition = (ratio: number) => {
-    const clampedRatio = Math.max(0, Math.min(1, ratio));
-    const target = (duration || player.duration || 1) * clampedRatio;
-    setCurrentTime(target);
-    player.currentTime = target;
-  };
+  const progressRatio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
 
   const panResponder = useRef(
     PanResponder.create({
@@ -179,25 +200,40 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (evt: GestureResponderEvent) => {
         setIsDragging(true);
-        if (trackWidth > 0) {
-          seekToPosition(evt.nativeEvent.locationX / trackWidth);
-        }
+        player.pause();
+        dragStartX.current = evt.nativeEvent.pageX;
+        const targetRatio =
+          trackWidth > 0
+            ? Math.max(0, Math.min(1, evt.nativeEvent.locationX / trackWidth))
+            : progressRatio;
+        dragStartProgress.current = targetRatio;
+        const target = (duration || player.duration || 1) * targetRatio;
+        setCurrentTime(target);
+        try {
+          player.currentTime = target;
+        } catch {}
       },
       onPanResponderMove: (evt: GestureResponderEvent) => {
-        if (trackWidth > 0) {
-          seekToPosition(evt.nativeEvent.locationX / trackWidth);
-        }
+        const deltaX = evt.nativeEvent.pageX - dragStartX.current;
+        const deltaRatio = trackWidth > 0 ? deltaX / trackWidth : 0;
+        const newRatio = Math.max(0, Math.min(1, dragStartProgress.current + deltaRatio));
+        const target = (duration || player.duration || 1) * newRatio;
+        setCurrentTime(target);
+        try {
+          player.currentTime = target;
+        } catch {}
       },
-      onPanResponderRelease: (evt: GestureResponderEvent) => {
+      onPanResponderRelease: () => {
         setIsDragging(false);
-        if (trackWidth > 0) {
-          seekToPosition(evt.nativeEvent.locationX / trackWidth);
-        }
+        // Always resume playback on release, regardless of whether it was playing before
+        try {
+          player.play();
+        } catch {}
+        setIsPlaying(true);
+        setShowInitialPlay(false);
       },
     })
   ).current;
-
-  const progressRatio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -290,13 +326,13 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
         </View>
       )}
 
-      {/* Timeline dragger at the bottom */}
+      {/* Timeline dragger at the bottom - hidden through the whole video, visible only while dragging */}
       <View
         style={styles.timelineHitbox}
         onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
         {...panResponder.panHandlers}
       >
-        <View style={styles.timelineTrack}>
+        <View style={[styles.timelineTrack, { opacity: isDragging ? 1 : 0 }]}>
           <View style={[styles.timelineFill, { width: `${progressRatio * 100}%` }]} />
           <View style={[styles.timelineThumb, { left: `${progressRatio * 100}%` }]} />
         </View>
@@ -359,9 +395,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 24,
+    height: 38,
     justifyContent: "flex-end",
-    paddingBottom: 2,
+    paddingBottom: 4,
     zIndex: 50,
   },
   timelineTrack: {

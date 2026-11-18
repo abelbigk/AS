@@ -27,6 +27,7 @@ import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
 import { ContentDetailModal } from "../../src/components/ContentDetailModal";
+import { EditContentModal } from "../../src/components/EditContentModal";
 import { EditSubcategoryModal } from "../../src/components/EditSubcategoryModal";
 import { AddContentModal } from "../../src/components/AddContentModal";
 import { DropdownMenu } from "../../src/components/DropdownMenu";
@@ -101,6 +102,7 @@ export default function SubcategoryDetailScreen() {
 
   // Content detail viewer state
   const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
+  const [activeEditItem, setActiveEditItem] = useState<ContentItem | null>(null);
 
   // Queries
   const { data: subcategory, isLoading: subLoading } =
@@ -425,7 +427,7 @@ export default function SubcategoryDetailScreen() {
                                 updateStatus.mutate({ itemId: item.id, status: newStatus })
                               }
                               onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
-                              onEdit={() => setActiveItem(item as any)}
+                              onEdit={() => setActiveEditItem(item as any)}
                               onDelete={() => deleteItem.mutate({ itemId: item.id })}
                               onMoveUp={
                                 items.findIndex((it) => it.id === item.id) > 0
@@ -468,7 +470,7 @@ export default function SubcategoryDetailScreen() {
                                 updateStatus.mutate({ itemId: item.id, status: newStatus })
                               }
                               onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
-                              onEdit={() => setActiveItem(item as any)}
+                              onEdit={() => setActiveEditItem(item as any)}
                               onDelete={() => deleteItem.mutate({ itemId: item.id })}
                               onMoveUp={
                                 items.findIndex((it) => it.id === item.id) > 0
@@ -553,6 +555,17 @@ export default function SubcategoryDetailScreen() {
         onClose={() => setActiveItem(null)}
         onRemoveFromSubcategory={() => {
           if (activeItem) handleRemoveItemFromSubcategory(activeItem);
+        }}
+      />
+
+      {/* Edit Content Modal - opened from card 3-dot menu */}
+      <EditContentModal
+        item={activeEditItem}
+        visible={!!activeEditItem}
+        onClose={() => setActiveEditItem(null)}
+        onSaved={() => {
+          utils.content.listBySubcategory.invalidate({ subcategoryId });
+          utils.content.listByStatus.invalidate();
         }}
       />
 

@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { ImagePlus, Link, Trash2, Check } from "lucide-react-native";
+import { ImagePlus, Link, Trash2, Check, Camera } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
 
 export interface ImageValue {
@@ -33,7 +33,7 @@ export function ImagePickerToggle({
 }: ImagePickerToggleProps) {
   const { colors, theme } = useTheme();
 
-  const [tab, setTab] = useState<"file" | "url">("file");
+  const [tab, setTab] = useState<"file" | "camera" | "url">("file");
   const [urlInput, setUrlInput] = useState("");
   // Old/existing cover (displayed at top)
   const [existingCoverUrl, setExistingCoverUrl] = useState<string | null>(currentImageUrl ?? null);
@@ -71,6 +71,33 @@ export function ImagePickerToggle({
       }
     } catch (err) {
       console.error("Failed to pick image:", err);
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") return;
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        quality: 0.9,
+      });
+      if (!res.canceled && res.assets[0]) {
+        const asset = res.assets[0];
+        if (asset.width && asset.height) {
+          setNewAspectRatio(asset.width / asset.height);
+        }
+        const val: ImageValue = {
+          uri: asset.uri,
+          isUrl: false,
+          asset,
+        };
+        setNewCover(val);
+        onImageSelected(val);
+      }
+    } catch (err) {
+      console.error("Failed to take photo:", err);
     }
   };
 
@@ -172,7 +199,36 @@ export function ImagePickerToggle({
               },
             ]}
           >
-            {existingCoverUrl ? "Replace with file" : "Upload"}
+            {existingCoverUrl ? "File" : "Upload"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setTab("camera")}
+          style={[
+            styles.tabItem,
+            tab === "camera" && [
+              styles.tabItemActive,
+              {
+                backgroundColor:
+                  theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
+              },
+            ],
+          ]}
+        >
+          <Camera
+            size={14}
+            color={tab === "camera" ? "#FFFFFF" : colors.textMuted}
+          />
+          <Text
+            style={[
+              styles.tabText,
+              {
+                color: tab === "camera" ? "#FFFFFF" : colors.textMuted,
+              },
+            ]}
+          >
+            Camera
           </Text>
         </Pressable>
 
@@ -201,12 +257,12 @@ export function ImagePickerToggle({
               },
             ]}
           >
-            {existingCoverUrl ? "Replace with URL" : "URL"}
+            {existingCoverUrl ? "URL" : "URL"}
           </Text>
         </Pressable>
       </View>
 
-      {/* 3. Input controls for file / url */}
+      {/* 3. Input controls for file / camera / url */}
       {tab === "file" ? (
         <Pressable
           onPress={handlePickFile}
@@ -222,6 +278,23 @@ export function ImagePickerToggle({
           <ImagePlus size={24} color={colors.textSubtle} />
           <Text style={[styles.dropzoneText, { color: colors.textMuted }]}>
             {existingCoverUrl ? "Choose replacement image file" : label}
+          </Text>
+        </Pressable>
+      ) : tab === "camera" ? (
+        <Pressable
+          onPress={handleTakePhoto}
+          style={[
+            styles.dropzone,
+            {
+              borderColor: colors.border,
+              backgroundColor:
+                theme === "dark" ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)",
+            },
+          ]}
+        >
+          <Camera size={24} color="#3B82F6" />
+          <Text style={[styles.dropzoneText, { color: colors.textMuted }]}>
+            Take Photo with Camera
           </Text>
         </Pressable>
       ) : (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   Dimensions,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
@@ -27,6 +28,7 @@ import {
   Film,
   Music,
   Download,
+  MapPin,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { trpc } from "../lib/trpc";
@@ -74,6 +76,42 @@ export function ContentDetailModal({
   const [soundPickerOpen, setSoundPickerOpen] = useState(false);
   const [activeSound, setActiveSound] = useState<{ id: number; url: string; title: string; name?: string | null } | null>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [sliderWidth, setSliderWidth] = useState(Math.min(SCREEN_WIDTH - 32, 640));
+  const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
+  const [isScrolledPastMedia, setIsScrolledPastMedia] = useState(false);
+  const scrollViewRef = useRef<any>(null);
+
+  const handleLocationPress = () => {
+    if (!displayItem?.location) return;
+    showConfirm({
+      title: "Navigate to Location",
+      message: "Would you like to navigate to this location?",
+      confirmText: "Navigate",
+      destructive: false,
+      onConfirm: () => {
+        const rawLoc = displayItem.location as string;
+        let url: string;
+        try {
+          const parsed = JSON.parse(rawLoc);
+          if (parsed.lat !== undefined && parsed.lng !== undefined) {
+            url =
+              Platform.OS === "ios"
+                ? `maps:0,0?q=${parsed.lat},${parsed.lng}`
+                : Platform.OS === "android"
+                ? `geo:${parsed.lat},${parsed.lng}?q=${parsed.lat},${parsed.lng}`
+                : `https://www.google.com/maps/dir/?api=1&destination=${parsed.lat},${parsed.lng}`;
+          } else {
+            url = rawLoc;
+          }
+        } catch {
+          url = rawLoc;
+        }
+        Linking.openURL(url).catch((err) => {
+          console.error("Could not open navigation URL:", err);
+        });
+      },
+    });
+  };
 
   const handleVideoPlayingChange = useCallback((playing: boolean) => {
     setIsVideoPlaying(playing);
@@ -258,8 +296,6 @@ export function ContentDetailModal({
     },
   ];
 
-  const sliderWidth = Math.min(SCREEN_WIDTH - 32, 640);
-
   return (
     <>
       <Modal
@@ -331,8 +367,20 @@ export function ContentDetailModal({
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
+            scrollEventThrottle={50}
+            onScroll={(e) => {
+              setIsScrolledPastMedia(e.nativeEvent.contentOffset.y > 350);
+            }}
           >
-            <View style={styles.maxWidthWrapper}>
+            <View
+              style={styles.maxWidthWrapper}
+              onLayout={(e) => {
+                const w = e.nativeEvent.layout.width;
+                if (w > 0 && Math.abs(w - sliderWidth) > 2) {
+                  setSliderWidth(w);
+                }
+              }}
+            >
               {/* Heading */}
               <Text style={[styles.heading, { color: colors.text }]}>
                 {displayItem.heading}
@@ -383,59 +431,101 @@ export function ContentDetailModal({
                 <View style={styles.mediaSection}>
                   <View style={styles.mediaSliderContainer}>
                     <ScrollView
+                      ref={scrollViewRef}
                       horizontal
                       pagingEnabled
                       showsHorizontalScrollIndicator={false}
+                      scrollEventThrottle={16}
+                      onScroll={(e) => {
+                        if (sliderWidth > 0) {
+                          const page = Math.round(e.nativeEvent.contentOffset.x / sliderWidth);
+                          if (page >= 0 && page < mediaItems.length && page !== activeMediaIndex) {
+                            setActiveMediaIndex(page);
+                          }
+                        }
+                      }}
                       onMomentumScrollEnd={(e) => {
-                        const page = Math.round(
-                          e.nativeEvent.contentOffset.x / sliderWidth
-                        );
-                        setActiveMediaIndex(page);
+                        if (sliderWidth > 0) {
+                          const page = Math.round(e.nativeEvent.contentOffset.x / sliderWidth);
+                          if (page >= 0 && page < mediaItems.length) {
+                            setActiveMediaIndex(page);
+                          }
+                        }
                       }}
                       style={{ width: sliderWidth }}
                     >
-                      {mediaItems.map((m) => (
+                      {mediaItems.map((m, i) => (
                         <View
                           key={m.id}
                           style={[
                             styles.slideWrapper,
-                            { width: sliderWidth },
+                            {
+                              width: sliderWidth,
+                              aspectRatio:
+                                m.type === "video"
+                                  ? 16 / 9
+                                  : aspectRatios[m.id] ?? 1,
+                            },
                           ]}
                         >
                           {m.type === "video" ? (
                             <CustomVideoPlayer
                               uri={m.url}
+                              isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
                               onPlayingChange={handleVideoPlayingChange}
                             />
                           ) : (
                             <Image
                               source={{ uri: m.url }}
-                              style={styles.slideImage}
+                              style={StyleSheet.absoluteFill}
                               contentFit="contain"
+                              onLoad={(e) => {
+                                if (e.source.width && e.source.height) {
+                                  setAspectRatios((prev) => ({
+                                    ...prev,
+                                    [m.id]: e.source.width / e.source.height,
+                                  }));
+                                }
+                              }}
                             />
                           )}
                         </View>
                       ))}
                     </ScrollView>
 
-                    {/* Pagination indicator dots */}
-                    {mediaItems.length > 1 && (
-                      <View style={styles.paginationDots}>
-                        {mediaItems.map((_, i) => (
-                          <View
-                            key={`dot-${i}`}
-                            style={[
-                              styles.dot,
-                              {
-                                backgroundColor:
-                                  i === activeMediaIndex ? colors.text : colors.textSubtle,
-                                opacity: i === activeMediaIndex ? 1 : 0.4,
-                              },
-                            ]}
-                          />
-                        ))}
+                    {/* Pagination indicator dots and location button row */}
+                    <View style={styles.paginationRow}>
+                      {displayItem?.location ? (
+                        <Pressable
+                          onPress={handleLocationPress}
+                          hitSlop={8}
+                          style={styles.locationDotBtn}
+                        >
+                          <MapPin size={17} color={colors.text} />
+                        </Pressable>
+                      ) : (
+                        <View style={styles.locationDotPlaceholder} />
+                      )}
+
+                      <View style={styles.dotsCenter}>
+                        {mediaItems.length > 1 &&
+                          mediaItems.map((_, i) => (
+                            <View
+                              key={`dot-${i}`}
+                              style={[
+                                styles.dot,
+                                {
+                                  backgroundColor:
+                                    i === activeMediaIndex ? colors.text : colors.textSubtle,
+                                  opacity: i === activeMediaIndex ? 1 : 0.4,
+                                },
+                              ]}
+                            />
+                          ))}
                       </View>
-                    )}
+
+                      <View style={styles.locationDotPlaceholder} />
+                    </View>
                   </View>
                 </View>
               ) : null}
@@ -709,7 +799,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   slideWrapper: {
-    height: 320,
     borderRadius: 14,
     overflow: "hidden",
     backgroundColor: "rgba(0, 0, 0, 0.4)",
@@ -731,6 +820,33 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "600",
+  },
+  paginationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 10,
+    width: "100%",
+    paddingHorizontal: 4,
+  },
+  dotsCenter: {
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    alignItems: "center",
+    flex: 1,
+  },
+  locationDotBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  locationDotPlaceholder: {
+    width: 32,
+    height: 32,
   },
   paginationDots: {
     flexDirection: "row",

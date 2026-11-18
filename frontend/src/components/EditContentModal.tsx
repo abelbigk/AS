@@ -9,9 +9,11 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Linking,
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import {
   X,
   Pencil,
@@ -20,6 +22,10 @@ import {
   Plus,
   Check,
   Film,
+  Camera,
+  MapPin,
+  Navigation,
+  Link2,
 } from "lucide-react-native";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
@@ -69,6 +75,12 @@ export function EditContentModal({
   const [uploadStage, setUploadStage] = useState<"idle" | "cover" | "saving_entry" | "media" | "processing">("idle");
   const [currentUploadFileName, setCurrentUploadFileName] = useState("Media file");
 
+  // Location state
+  const [location, setLocation] = useState<string | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationLinkInput, setLocationLinkInput] = useState("");
+  const [showLocationLinkField, setShowLocationLinkField] = useState(false);
+
   // Categories & Subcategories data
   const { data: categories = [] } = trpc.categories.list.useQuery(undefined, {
     enabled: visible,
@@ -107,6 +119,10 @@ export function EditContentModal({
       setPendingMedia([]);
       setDeletedMediaIds([]);
       setSavingProgress("");
+      setLocation((item as any).location ?? null);
+      setIsLocating(false);
+      setLocationLinkInput("");
+      setShowLocationLinkField(false);
     }
   }, [item, visible]);
 
@@ -128,13 +144,26 @@ export function EditContentModal({
 
 
   // Add more media attachments
-  const handlePickMoreMedia = async () => {
+  const handlePickMoreMedia = async (source: "gallery" | "camera" = "gallery") => {
     try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images", "videos"],
-        allowsMultipleSelection: true,
-        quality: 0.85,
-      });
+      let res: ImagePicker.ImagePickerResult;
+      if (source === "camera") {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== "granted") {
+          showAlert("Permission Denied", "Camera permission is required.");
+          return;
+        }
+        res = await ImagePicker.launchCameraAsync({
+          mediaTypes: ["images"],
+          quality: 0.9,
+        });
+      } else {
+        res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["images", "videos"],
+          allowsMultipleSelection: true,
+          quality: 0.85,
+        });
+      }
       if (!res.canceled && res.assets.length > 0) {
         const newItems = res.assets.map((asset) => ({
           asset,
@@ -144,6 +173,24 @@ export function EditContentModal({
       }
     } catch (err) {
       console.error("Failed to pick media:", err);
+    }
+  };
+
+  const handleGetLocation = async () => {
+    setIsLocating(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        showAlert("Permission Denied", "Location permission is required.");
+        setIsLocating(false);
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setLocation(JSON.stringify({ lat: loc.coords.latitude, lng: loc.coords.longitude }));
+    } catch (e: any) {
+      showAlert("Error", "Could not get location. " + (e?.message || ""));
+    } finally {
+      setIsLocating(false);
     }
   };
 
@@ -219,6 +266,7 @@ export function EditContentModal({
         posterImageUrl: shouldRemovePoster ? undefined : finalPosterUrl,
         posterImageKey: shouldRemovePoster ? undefined : finalPosterKey,
         removePoster: shouldRemovePoster,
+        location: location ?? null,
       });
 
       // Upload and attach any pending media files
@@ -430,10 +478,16 @@ export function EditContentModal({
                   pendingMedia.length}
                 )
               </Text>
-              <Pressable onPress={handlePickMoreMedia} style={styles.addMediaSmallBtn}>
-                <Plus size={14} color="#3B82F6" />
-                <Text style={styles.addMediaSmallBtnText}>Add Media</Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+                <Pressable onPress={() => handlePickMoreMedia("camera")} style={styles.addMediaSmallBtn}>
+                  <Camera size={14} color="#3B82F6" />
+                  <Text style={styles.addMediaSmallBtnText}>Camera</Text>
+                </Pressable>
+                <Pressable onPress={() => handlePickMoreMedia("gallery")} style={styles.addMediaSmallBtn}>
+                  <Plus size={14} color="#3B82F6" />
+                  <Text style={styles.addMediaSmallBtnText}>Add Media</Text>
+                </Pressable>
+              </View>
             </View>
 
             {/* List of existing media (excluding those queued for deletion) */}
@@ -478,6 +532,75 @@ export function EditContentModal({
                 </View>
               ))}
             </View>
+          </View>
+
+          {/* Location Section */}
+          <View style={styles.fieldGroup}>
+            <Text style={[styles.label, { color: colors.textMuted }]}>Location</Text>
+            {location ? (
+              <View style={[styles.locationCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <MapPin size={16} color="#10B981" />
+                <Text style={[styles.locationCardText, { color: colors.text }]} numberOfLines={2}>
+                  {(() => {
+                    try {
+                      const parsed = JSON.parse(location);
+                      if (parsed.lat !== undefined) return `${parsed.lat.toFixed(5)}, ${parsed.lng.toFixed(5)}`;
+                    } catch {}
+                    return location;
+                  })()}
+                </Text>
+                <Pressable onPress={() => setLocation(null)} hitSlop={8}>
+                  <X size={16} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.locationBtnRow}>
+                <Pressable
+                  onPress={handleGetLocation}
+                  disabled={isLocating}
+                  style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                >
+                  {isLocating ? (
+                    <ActivityIndicator size="small" color={colors.text} />
+                  ) : (
+                    <Navigation size={14} color={colors.text} />
+                  )}
+                  <Text style={[styles.locationBtnText, { color: colors.text }]}>
+                    {isLocating ? "Getting location..." : "Use Current Location"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setShowLocationLinkField((v) => !v)}
+                  style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                >
+                  <Link2 size={14} color={colors.text} />
+                  <Text style={[styles.locationBtnText, { color: colors.text }]}>Paste Link</Text>
+                </Pressable>
+              </View>
+            )}
+            {showLocationLinkField && !location && (
+              <View style={[styles.locationLinkRow, { borderColor: colors.border }]}>
+                <TextInput
+                  style={[styles.input, { color: colors.text, borderColor: colors.border, flex: 1 }]}
+                  value={locationLinkInput}
+                  onChangeText={setLocationLinkInput}
+                  placeholder="Paste a maps link..."
+                  placeholderTextColor={colors.textSubtle}
+                  autoCapitalize="none"
+                />
+                <Pressable
+                  onPress={() => {
+                    if (locationLinkInput.trim()) {
+                      setLocation(locationLinkInput.trim());
+                      setShowLocationLinkField(false);
+                    }
+                  }}
+                  style={styles.locationLinkSaveBtn}
+                >
+                  <Text style={styles.locationLinkSaveBtnText}>Set</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
 
           {/* Real-time Upload Progress card with byte-by-byte metrics and speed */}
@@ -717,5 +840,53 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  locationCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  locationCardText: {
+    flex: 1,
+    fontSize: 13,
+  },
+  locationBtnRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  locationBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: "center",
+  },
+  locationBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  locationLinkRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+    alignItems: "center",
+  },
+  locationLinkSaveBtn: {
+    backgroundColor: "#3B82F6",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  locationLinkSaveBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

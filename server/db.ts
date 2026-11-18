@@ -369,13 +369,15 @@ export async function createContentItem(
   userId: number, heading: string,
   description?: string, posterImageUrl?: string, posterImageKey?: string,
   posterCropData?: string,
-  categoryIds: number[] = [], subcategoryIds: number[] = []
+  categoryIds: number[] = [], subcategoryIds: number[] = [],
+  location?: string
 ) {
   const db = getDb();
   const [result] = await db.insert(contentItems).values({
     userId, heading, description,
     posterImageUrl, posterImageKey, posterCropData,
     status: "default",
+    location,
   }).returning({ id: contentItems.id });
 
   const contentId = result.id;
@@ -412,6 +414,7 @@ export async function updateContentItem(
     posterImageKey?: string | null;
     posterCropData?: string | null;
     soundId?: number | null;
+    location?: string | null;
     categoryIds?: number[];
     subcategoryIds?: number[];
   }
@@ -424,6 +427,7 @@ export async function updateContentItem(
   if (data.posterImageKey !== undefined) updateSet.posterImageKey = data.posterImageKey;
   if ("posterCropData" in data) updateSet.posterCropData = data.posterCropData ?? null;
   if ("soundId" in data) updateSet.soundId = data.soundId;
+  if ("location" in data) updateSet.location = data.location ?? null;
   
   if (Object.keys(updateSet).length > 0) {
     await db.update(contentItems).set(updateSet).where(
