@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -52,6 +52,46 @@ export default function SubcategoryDetailScreen() {
   // Content selection mode state
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedContentIds, setSelectedContentIds] = useState<Set<number>>(new Set());
+
+  // Slide-to-select touch handling
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!isSelectMode) return;
+
+    let touchedInSession = new Set<number>();
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const card = el?.closest("[data-item-id]") as HTMLElement | null;
+      if (card) {
+        const itemId = parseInt(card.dataset.itemId || "0", 10);
+        if (!itemId || touchedInSession.has(itemId)) return;
+
+        touchedInSession.add(itemId);
+
+        setSelectedContentIds((curr) => {
+          const updated = new Set(curr);
+          if (updated.has(itemId)) updated.delete(itemId);
+          else updated.add(itemId);
+          return updated;
+        });
+      }
+    };
+
+    const handleTouchEnd = () => {
+      touchedInSession = new Set();
+    };
+
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    window.addEventListener("touchend", handleTouchEnd);
+
+    return () => {
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [isSelectMode]);
 
   // Edit subcategory modal state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -363,38 +403,42 @@ export default function SubcategoryDetailScreen() {
                       {displayedContent
                         .filter((_, i) => i % 2 === 0)
                         .map((item) => (
-                          <ContentCard
+                          <View
                             key={item.id}
-                            item={item as any}
-                            isSelectMode={isSelectMode}
-                            selected={selectedContentIds.has(item.id)}
-                            onPress={() => {
-                              if (isSelectMode) {
-                                const newSet = new Set(selectedContentIds);
-                                if (newSet.has(item.id)) newSet.delete(item.id);
-                                else newSet.add(item.id);
-                                setSelectedContentIds(newSet);
-                              } else {
-                                setActiveItem(item as any);
+                            {...({ "data-item-id": item.id } as any)}
+                          >
+                            <ContentCard
+                              item={item as any}
+                              isSelectMode={isSelectMode}
+                              selected={selectedContentIds.has(item.id)}
+                              onPress={() => {
+                                if (isSelectMode) {
+                                  const newSet = new Set(selectedContentIds);
+                                  if (newSet.has(item.id)) newSet.delete(item.id);
+                                  else newSet.add(item.id);
+                                  setSelectedContentIds(newSet);
+                                } else {
+                                  setActiveItem(item as any);
+                                }
+                              }}
+                              onUpdateStatus={(newStatus) =>
+                                updateStatus.mutate({ itemId: item.id, status: newStatus })
                               }
-                            }}
-                            onUpdateStatus={(newStatus) =>
-                              updateStatus.mutate({ itemId: item.id, status: newStatus })
-                            }
-                            onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
-                            onEdit={() => setActiveItem(item as any)}
-                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
-                            onMoveUp={
-                              items.findIndex((it) => it.id === item.id) > 0
-                                ? () => handleMoveContent(item.id, "up")
-                                : undefined
-                            }
-                            onMoveDown={
-                              items.findIndex((it) => it.id === item.id) < items.length - 1
-                                ? () => handleMoveContent(item.id, "down")
-                                : undefined
-                            }
-                          />
+                              onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
+                              onEdit={() => setActiveItem(item as any)}
+                              onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                              onMoveUp={
+                                items.findIndex((it) => it.id === item.id) > 0
+                                  ? () => handleMoveContent(item.id, "up")
+                                  : undefined
+                              }
+                              onMoveDown={
+                                items.findIndex((it) => it.id === item.id) < items.length - 1
+                                  ? () => handleMoveContent(item.id, "down")
+                                  : undefined
+                              }
+                            />
+                          </View>
                         ))}
                     </View>
                     {/* Right Column */}
@@ -402,38 +446,42 @@ export default function SubcategoryDetailScreen() {
                       {displayedContent
                         .filter((_, i) => i % 2 === 1)
                         .map((item) => (
-                          <ContentCard
+                          <View
                             key={item.id}
-                            item={item as any}
-                            isSelectMode={isSelectMode}
-                            selected={selectedContentIds.has(item.id)}
-                            onPress={() => {
-                              if (isSelectMode) {
-                                const newSet = new Set(selectedContentIds);
-                                if (newSet.has(item.id)) newSet.delete(item.id);
-                                else newSet.add(item.id);
-                                setSelectedContentIds(newSet);
-                              } else {
-                                setActiveItem(item as any);
+                            {...({ "data-item-id": item.id } as any)}
+                          >
+                            <ContentCard
+                              item={item as any}
+                              isSelectMode={isSelectMode}
+                              selected={selectedContentIds.has(item.id)}
+                              onPress={() => {
+                                if (isSelectMode) {
+                                  const newSet = new Set(selectedContentIds);
+                                  if (newSet.has(item.id)) newSet.delete(item.id);
+                                  else newSet.add(item.id);
+                                  setSelectedContentIds(newSet);
+                                } else {
+                                  setActiveItem(item as any);
+                                }
+                              }}
+                              onUpdateStatus={(newStatus) =>
+                                updateStatus.mutate({ itemId: item.id, status: newStatus })
                               }
-                            }}
-                            onUpdateStatus={(newStatus) =>
-                              updateStatus.mutate({ itemId: item.id, status: newStatus })
-                            }
-                            onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
-                            onEdit={() => setActiveItem(item as any)}
-                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
-                            onMoveUp={
-                              items.findIndex((it) => it.id === item.id) > 0
-                                ? () => handleMoveContent(item.id, "up")
-                                : undefined
-                            }
-                            onMoveDown={
-                              items.findIndex((it) => it.id === item.id) < items.length - 1
-                                ? () => handleMoveContent(item.id, "down")
-                                : undefined
-                            }
-                          />
+                              onRemoveFromSubcategory={() => handleRemoveItemFromSubcategory(item as any)}
+                              onEdit={() => setActiveItem(item as any)}
+                              onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                              onMoveUp={
+                                items.findIndex((it) => it.id === item.id) > 0
+                                  ? () => handleMoveContent(item.id, "up")
+                                  : undefined
+                              }
+                              onMoveDown={
+                                items.findIndex((it) => it.id === item.id) < items.length - 1
+                                  ? () => handleMoveContent(item.id, "down")
+                                  : undefined
+                              }
+                            />
+                          </View>
                         ))}
                     </View>
                   </View>

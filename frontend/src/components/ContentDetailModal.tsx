@@ -440,6 +440,24 @@ export function ContentDetailModal({
                 </View>
               ) : null}
 
+              {/* If NO media: Cover Poster Image comes FIRST (in place of media section) */}
+              {mediaItems.length === 0 && displayItem.posterImageUrl ? (
+                <View style={styles.posterContainer}>
+                  <View style={[styles.posterImageWrapper, coverAspectRatio ? { aspectRatio: coverAspectRatio } : { minHeight: 200 }]}>
+                    <Image
+                      source={{ uri: displayItem.posterImageUrl }}
+                      style={StyleSheet.absoluteFill}
+                      contentFit="contain"
+                      onLoad={(e) => {
+                        if (e.source.width && e.source.height) {
+                          setCoverAspectRatio(e.source.width / e.source.height);
+                        }
+                      }}
+                    />
+                  </View>
+                </View>
+              ) : null}
+
               {/* 3. Created Date */}
               {(displayItem as any).createdAt && (
                 <View style={styles.dateRow}>
@@ -457,8 +475,8 @@ export function ContentDetailModal({
                 </Text>
               ) : null}
 
-              {/* 5. Cover Poster Image in its ORIGINAL SIZE (comes after description, or first if no media) */}
-              {displayItem.posterImageUrl ? (
+              {/* 5. Cover Poster Image when media DOES exist (comes after description) */}
+              {mediaItems.length > 0 && displayItem.posterImageUrl ? (
                 <View style={styles.posterContainer}>
                   <View style={[styles.posterImageWrapper, coverAspectRatio ? { aspectRatio: coverAspectRatio } : { minHeight: 200 }]}>
                     <Image

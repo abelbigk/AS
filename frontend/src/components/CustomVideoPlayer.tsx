@@ -6,9 +6,11 @@ import {
   Text,
   PanResponder,
   GestureResponderEvent,
+  Platform,
 } from "react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
-import { Play } from "lucide-react-native";
+import { Play, MoreVertical, PictureInPicture2, Gauge } from "lucide-react-native";
+import { DropdownMenu, DropdownItem } from "./DropdownMenu";
 
 interface CustomVideoPlayerProps {
   uri: string;
@@ -23,6 +25,11 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
   const [duration, setDuration] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [trackWidth, setTrackWidth] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const containerRef = useRef<any>(null);
+  const videoViewRef = useRef<VideoView>(null);
+  const pinchStartDistance = useRef<number | null>(null);
 
   const player = useVideoPlayer({ uri }, (p) => {
     p.loop = true;
@@ -43,7 +50,7 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
       }
     });
 
-    const statusSub = player.addListener("statusChange", (e) => {
+    const statusSub = player.addListener("statusChange", (_e) => {
       if (player.duration) {
         setDuration(player.duration);
       }
@@ -55,6 +62,100 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
       statusSub.remove();
     };
   }, [player, isDragging, onPlayingChange]);
+
+  // Enter fullscreen helper across platforms
+  const enterFullscreen = () => {
+    if (Platform.OS === "web") {
+      const el = containerRef.current as any;
+      if (el?.requestFullscreen) {
+        el.requestFullscreen().catch(() => {});
+        setIsFullscreen(true);
+        return;
+      }
+    }
+    videoViewRef.current?.enterFullscreen();
+    setIsFullscreen(true);
+  };
+
+  // Exit fullscreen helper across platforms
+  const exitFullscreen = () => {
+    if (Platform.OS === "web") {
+      if (typeof document !== "undefined" && document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+        setIsFullscreen(false);
+        return;
+      }
+    }
+    videoViewRef.current?.exitFullscreen();
+    setIsFullscreen(false);
+  };
+
+  // Pinch-to-zoom → fullscreen (supports Web touch devices & Native)
+  useEffect(() => {
+    const container = containerRef.current as any;
+    if (!container) return;
+
+    const handleTouchStart = (e: any) => {
+      if (e.touches && e.touches.length === 2) {
+        try { e.preventDefault(); } catch {}
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        pinchStartDistance.current = Math.hypot(dx, dy);
+      }
+    };
+
+    const handleTouchMove = (e: any) => {
+      if (e.touches && e.touches.length === 2 && pinchStartDistance.current !== null) {
+        try { e.preventDefault(); } catch {}
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const distance = Math.hypot(dx, dy);
+        const delta = distance - pinchStartDistance.current;
+
+        if (Math.abs(delta) > 30) {
+          if (delta > 0 && !isFullscreen) {
+            enterFullscreen();
+            pinchStartDistance.current = distance;
+          } else if (delta < 0 && isFullscreen) {
+            exitFullscreen();
+            pinchStartDistance.current = distance;
+          }
+        }
+      }
+    };
+
+    const handleTouchEnd = () => {
+      pinchStartDistance.current = null;
+    };
+
+    if (Platform.OS === "web" && typeof container.addEventListener === "function") {
+      container.addEventListener("touchstart", handleTouchStart, { passive: false });
+      container.addEventListener("touchmove", handleTouchMove, { passive: false });
+      container.addEventListener("touchend", handleTouchEnd);
+
+      const onFullscreenChange = () => {
+        setIsFullscreen(!!document.fullscreenElement);
+      };
+      document.addEventListener("fullscreenchange", onFullscreenChange);
+
+      return () => {
+        container.removeEventListener("touchstart", handleTouchStart);
+        container.removeEventListener("touchmove", handleTouchMove);
+        container.removeEventListener("touchend", handleTouchEnd);
+        document.removeEventListener("fullscreenchange", onFullscreenChange);
+      };
+    } else if (container._nativeTag) {
+      container.addEventListener?.("touchstart", handleTouchStart, { passive: false });
+      container.addEventListener?.("touchmove", handleTouchMove, { passive: false });
+      container.addEventListener?.("touchend", handleTouchEnd);
+
+      return () => {
+        container.removeEventListener?.("touchstart", handleTouchStart);
+        container.removeEventListener?.("touchmove", handleTouchMove);
+        container.removeEventListener?.("touchend", handleTouchEnd);
+      };
+    }
+  }, [isFullscreen, player]);
 
   const togglePlay = () => {
     if (isPlaying) {
@@ -104,10 +205,51 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
+  const menuItems: DropdownItem[] = [
+    {
+      label: "Picture in Picture",
+      icon: PictureInPicture2,
+      onPress: () => {
+        try {
+          (videoViewRef.current as any)?.startPictureInPicture?.();
+        } catch {}
+      },
+    },
+    {
+      label: "Speed: 0.5x",
+      icon: Gauge,
+      onPress: () => {
+        player.playbackRate = 0.5;
+      },
+    },
+    {
+      label: "Speed: 1x",
+      icon: Gauge,
+      onPress: () => {
+        player.playbackRate = 1;
+      },
+    },
+    {
+      label: "Speed: 1.5x",
+      icon: Gauge,
+      onPress: () => {
+        player.playbackRate = 1.5;
+      },
+    },
+    {
+      label: "Speed: 2x",
+      icon: Gauge,
+      onPress: () => {
+        player.playbackRate = 2;
+      },
+    },
+  ];
+
   return (
-    <View style={[styles.container, style]}>
+    <View ref={containerRef} style={[styles.container, style]}>
       <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill}>
         <VideoView
+          ref={videoViewRef}
           player={player}
           style={StyleSheet.absoluteFill}
           nativeControls={false}
@@ -115,13 +257,28 @@ export function CustomVideoPlayer({ uri, onPlayingChange, style }: CustomVideoPl
         />
       </Pressable>
 
-      {/* Initial big play button overlay like old code */}
+      {/* Initial big play button overlay */}
       {showInitialPlay && (
         <Pressable onPress={togglePlay} style={styles.centerPlayBtn}>
           <View style={styles.playIconCircle}>
             <Play size={32} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 3 }} />
           </View>
         </Pressable>
+      )}
+
+      {/* 3-dot menu when paused and not dragging */}
+      {!isPlaying && !isDragging && (
+        <View style={styles.menuContainer}>
+          <DropdownMenu
+            trigger={(open) => (
+              <Pressable onPress={open} style={styles.menuButton}>
+                <MoreVertical size={20} color="#FFFFFF" />
+              </Pressable>
+            )}
+            items={menuItems}
+            align="right"
+          />
+        </View>
       )}
 
       {/* Time tooltip while dragging */}
@@ -167,6 +324,20 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 32,
     backgroundColor: "rgba(255, 255, 255, 0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuContainer: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    zIndex: 50,
+  },
+  menuButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
     alignItems: "center",
     justifyContent: "center",
   },

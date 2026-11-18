@@ -370,6 +370,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#0A0A0A",
+    overflow: "hidden",
+    width: "100%",
   },
   backdropOverlay: {
     ...Platform.select({
@@ -382,6 +384,12 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     alignItems: "center",
+    width: "100%",
+    ...Platform.select({
+      web: {
+        overflowX: "hidden",
+      } as any,
+    }),
   },
   maxWidthWrapper: {
     width: "100%",

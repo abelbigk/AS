@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -61,6 +61,56 @@ export default function CategoryDetailScreen() {
 
   const [isSubcategorySelectMode, setIsSubcategorySelectMode] = useState(false);
   const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<Set<number>>(new Set());
+
+  // Slide-to-select touch handling
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!isSelectMode && !isSubcategorySelectMode) return;
+
+    let touchedInSession = new Set<number>();
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const card = el?.closest("[data-item-id]") as HTMLElement | null;
+      if (card) {
+        const itemId = parseInt(card.dataset.itemId || "0", 10);
+        const itemType = card.dataset.itemType;
+        if (!itemId || touchedInSession.has(itemId)) return;
+
+        touchedInSession.add(itemId);
+
+        if (itemType === "content" && isSelectMode) {
+          setSelectedContentIds((curr) => {
+            const updated = new Set(curr);
+            if (updated.has(itemId)) updated.delete(itemId);
+            else updated.add(itemId);
+            return updated;
+          });
+        } else if (itemType === "subcategory" && isSubcategorySelectMode) {
+          setSelectedSubcategoryIds((curr) => {
+            const updated = new Set(curr);
+            if (updated.has(itemId)) updated.delete(itemId);
+            else updated.add(itemId);
+            return updated;
+          });
+        }
+      }
+    };
+
+    const handleTouchEnd = () => {
+      touchedInSession = new Set();
+    };
+
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    window.addEventListener("touchend", handleTouchEnd);
+
+    return () => {
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [isSelectMode, isSubcategorySelectMode]);
 
   // Modals state
   const [showEditCategoryModal, setShowEditCategoryModal] = useState(false);
@@ -483,35 +533,39 @@ export default function CategoryDetailScreen() {
                       {displayedSubcategories
                         .filter((_, i) => i % 2 === 0)
                         .map((sub) => (
-                          <SubcategoryCard
+                          <View
                             key={sub.id}
-                            subcategory={sub}
-                            count={subcategoryCounts?.[sub.id] || 0}
-                            isSelectMode={isSubcategorySelectMode}
-                            selected={selectedSubcategoryIds.has(sub.id)}
-                            onPress={() => {
-                              if (isSubcategorySelectMode) {
-                                const newSet = new Set(selectedSubcategoryIds);
-                                if (newSet.has(sub.id)) newSet.delete(sub.id);
-                                else newSet.add(sub.id);
-                                setSelectedSubcategoryIds(newSet);
-                              } else {
-                                router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                            {...({ "data-item-id": sub.id, "data-item-type": "subcategory" } as any)}
+                          >
+                            <SubcategoryCard
+                              subcategory={sub}
+                              count={subcategoryCounts?.[sub.id] || 0}
+                              isSelectMode={isSubcategorySelectMode}
+                              selected={selectedSubcategoryIds.has(sub.id)}
+                              onPress={() => {
+                                if (isSubcategorySelectMode) {
+                                  const newSet = new Set(selectedSubcategoryIds);
+                                  if (newSet.has(sub.id)) newSet.delete(sub.id);
+                                  else newSet.add(sub.id);
+                                  setSelectedSubcategoryIds(newSet);
+                                } else {
+                                  router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                                }
+                              }}
+                              onEdit={() => setActiveSubcategoryForEdit(sub)}
+                              onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
+                              onMoveUp={
+                                subcategories.findIndex((s) => s.id === sub.id) > 0
+                                  ? () => handleMoveSubcategory(sub.id, "up")
+                                  : undefined
                               }
-                            }}
-                            onEdit={() => setActiveSubcategoryForEdit(sub)}
-                            onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
-                            onMoveUp={
-                              subcategories.findIndex((s) => s.id === sub.id) > 0
-                                ? () => handleMoveSubcategory(sub.id, "up")
-                                : undefined
-                            }
-                            onMoveDown={
-                              subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
-                                ? () => handleMoveSubcategory(sub.id, "down")
-                                : undefined
-                            }
-                          />
+                              onMoveDown={
+                                subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
+                                  ? () => handleMoveSubcategory(sub.id, "down")
+                                  : undefined
+                              }
+                            />
+                          </View>
                         ))}
                     </View>
                     {/* Right Column */}
@@ -519,35 +573,39 @@ export default function CategoryDetailScreen() {
                       {displayedSubcategories
                         .filter((_, i) => i % 2 === 1)
                         .map((sub) => (
-                          <SubcategoryCard
+                          <View
                             key={sub.id}
-                            subcategory={sub}
-                            count={subcategoryCounts?.[sub.id] || 0}
-                            isSelectMode={isSubcategorySelectMode}
-                            selected={selectedSubcategoryIds.has(sub.id)}
-                            onPress={() => {
-                              if (isSubcategorySelectMode) {
-                                const newSet = new Set(selectedSubcategoryIds);
-                                if (newSet.has(sub.id)) newSet.delete(sub.id);
-                                else newSet.add(sub.id);
-                                setSelectedSubcategoryIds(newSet);
-                              } else {
-                                router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                            {...({ "data-item-id": sub.id, "data-item-type": "subcategory" } as any)}
+                          >
+                            <SubcategoryCard
+                              subcategory={sub}
+                              count={subcategoryCounts?.[sub.id] || 0}
+                              isSelectMode={isSubcategorySelectMode}
+                              selected={selectedSubcategoryIds.has(sub.id)}
+                              onPress={() => {
+                                if (isSubcategorySelectMode) {
+                                  const newSet = new Set(selectedSubcategoryIds);
+                                  if (newSet.has(sub.id)) newSet.delete(sub.id);
+                                  else newSet.add(sub.id);
+                                  setSelectedSubcategoryIds(newSet);
+                                } else {
+                                  router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                                }
+                              }}
+                              onEdit={() => setActiveSubcategoryForEdit(sub)}
+                              onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
+                              onMoveUp={
+                                subcategories.findIndex((s) => s.id === sub.id) > 0
+                                  ? () => handleMoveSubcategory(sub.id, "up")
+                                  : undefined
                               }
-                            }}
-                            onEdit={() => setActiveSubcategoryForEdit(sub)}
-                            onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
-                            onMoveUp={
-                              subcategories.findIndex((s) => s.id === sub.id) > 0
-                                ? () => handleMoveSubcategory(sub.id, "up")
-                                : undefined
-                            }
-                            onMoveDown={
-                              subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
-                                ? () => handleMoveSubcategory(sub.id, "down")
-                                : undefined
-                            }
-                          />
+                              onMoveDown={
+                                subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
+                                  ? () => handleMoveSubcategory(sub.id, "down")
+                                  : undefined
+                              }
+                            />
+                          </View>
                         ))}
                     </View>
                   </View>
@@ -580,38 +638,42 @@ export default function CategoryDetailScreen() {
                       {displayedContent
                         .filter((_, i) => i % 2 === 0)
                         .map((item) => (
-                          <ContentCard
+                          <View
                             key={item.id}
-                            item={item as any}
-                            isSelectMode={isSelectMode}
-                            selected={selectedContentIds.has(item.id)}
-                            onPress={() => {
-                              if (isSelectMode) {
-                                const newSet = new Set(selectedContentIds);
-                                if (newSet.has(item.id)) newSet.delete(item.id);
-                                else newSet.add(item.id);
-                                setSelectedContentIds(newSet);
-                              } else {
-                                setActiveItem(item as any);
+                            {...({ "data-item-id": item.id, "data-item-type": "content" } as any)}
+                          >
+                            <ContentCard
+                              item={item as any}
+                              isSelectMode={isSelectMode}
+                              selected={selectedContentIds.has(item.id)}
+                              onPress={() => {
+                                if (isSelectMode) {
+                                  const newSet = new Set(selectedContentIds);
+                                  if (newSet.has(item.id)) newSet.delete(item.id);
+                                  else newSet.add(item.id);
+                                  setSelectedContentIds(newSet);
+                                } else {
+                                  setActiveItem(item as any);
+                                }
+                              }}
+                              onUpdateStatus={(newStatus) =>
+                                updateStatus.mutate({ itemId: item.id, status: newStatus })
                               }
-                            }}
-                            onUpdateStatus={(newStatus) =>
-                              updateStatus.mutate({ itemId: item.id, status: newStatus })
-                            }
-                            onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
-                            onEdit={() => setActiveItem(item as any)}
-                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
-                            onMoveUp={
-                              items.findIndex((it) => it.id === item.id) > 0
-                                ? () => handleMoveContent(item.id, "up")
-                                : undefined
-                            }
-                            onMoveDown={
-                              items.findIndex((it) => it.id === item.id) < items.length - 1
-                                ? () => handleMoveContent(item.id, "down")
-                                : undefined
-                            }
-                          />
+                              onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
+                              onEdit={() => setActiveItem(item as any)}
+                              onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                              onMoveUp={
+                                items.findIndex((it) => it.id === item.id) > 0
+                                  ? () => handleMoveContent(item.id, "up")
+                                  : undefined
+                              }
+                              onMoveDown={
+                                items.findIndex((it) => it.id === item.id) < items.length - 1
+                                  ? () => handleMoveContent(item.id, "down")
+                                  : undefined
+                              }
+                            />
+                          </View>
                         ))}
                     </View>
                     {/* Right Column */}
@@ -619,38 +681,42 @@ export default function CategoryDetailScreen() {
                       {displayedContent
                         .filter((_, i) => i % 2 === 1)
                         .map((item) => (
-                          <ContentCard
+                          <View
                             key={item.id}
-                            item={item as any}
-                            isSelectMode={isSelectMode}
-                            selected={selectedContentIds.has(item.id)}
-                            onPress={() => {
-                              if (isSelectMode) {
-                                const newSet = new Set(selectedContentIds);
-                                if (newSet.has(item.id)) newSet.delete(item.id);
-                                else newSet.add(item.id);
-                                setSelectedContentIds(newSet);
-                              } else {
-                                setActiveItem(item as any);
+                            {...({ "data-item-id": item.id, "data-item-type": "content" } as any)}
+                          >
+                            <ContentCard
+                              item={item as any}
+                              isSelectMode={isSelectMode}
+                              selected={selectedContentIds.has(item.id)}
+                              onPress={() => {
+                                if (isSelectMode) {
+                                  const newSet = new Set(selectedContentIds);
+                                  if (newSet.has(item.id)) newSet.delete(item.id);
+                                  else newSet.add(item.id);
+                                  setSelectedContentIds(newSet);
+                                } else {
+                                  setActiveItem(item as any);
+                                }
+                              }}
+                              onUpdateStatus={(newStatus) =>
+                                updateStatus.mutate({ itemId: item.id, status: newStatus })
                               }
-                            }}
-                            onUpdateStatus={(newStatus) =>
-                              updateStatus.mutate({ itemId: item.id, status: newStatus })
-                            }
-                            onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
-                            onEdit={() => setActiveItem(item as any)}
-                            onDelete={() => deleteItem.mutate({ itemId: item.id })}
-                            onMoveUp={
-                              items.findIndex((it) => it.id === item.id) > 0
-                                ? () => handleMoveContent(item.id, "up")
-                                : undefined
-                            }
-                            onMoveDown={
-                              items.findIndex((it) => it.id === item.id) < items.length - 1
-                                ? () => handleMoveContent(item.id, "down")
-                                : undefined
-                            }
-                          />
+                              onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
+                              onEdit={() => setActiveItem(item as any)}
+                              onDelete={() => deleteItem.mutate({ itemId: item.id })}
+                              onMoveUp={
+                                items.findIndex((it) => it.id === item.id) > 0
+                                  ? () => handleMoveContent(item.id, "up")
+                                  : undefined
+                              }
+                              onMoveDown={
+                                items.findIndex((it) => it.id === item.id) < items.length - 1
+                                  ? () => handleMoveContent(item.id, "down")
+                                  : undefined
+                              }
+                            />
+                          </View>
                         ))}
                     </View>
                   </View>
