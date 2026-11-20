@@ -10,10 +10,11 @@ import {
   Dimensions,
   ActivityIndicator,
   Linking,
+  Image as RNImage,
 } from "react-native";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
+import * as MediaLibrary from "expo-media-library";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowLeft,
@@ -78,33 +79,104 @@ export function ContentDetailModal({
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(Math.min(SCREEN_WIDTH - 32, 640));
   const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
+  const [videoAspectRatios, setVideoAspectRatios] = useState<Record<number, number>>({});
+  const [isVideoTimelineDragging, setIsVideoTimelineDragging] = useState(false);
   const [isScrolledPastMedia, setIsScrolledPastMedia] = useState(false);
   const scrollViewRef = useRef<any>(null);
 
+  // Re-fetch item to keep it fresh
+  const { data: freshItem } = trpc.content.getById.useQuery(
+    { itemId: item?.id || 0 },
+    { enabled: !!item?.id && visible }
+  );
+  const displayItem = freshItem || item;
+
+  // Fetch attached media items
+  const { data: mediaItems = [], isLoading: mediaLoading } =
+    trpc.media.listByContent.useQuery(
+      { contentItemId: item?.id || 0 },
+      { enabled: !!item?.id && visible }
+    );
+
+  // Sync activeSound from freshItem
+  useEffect(() => {
+    if (freshItem) {
+      setActiveSound((freshItem as any).sound ?? null);
+    }
+  }, [freshItem]);
+
+  // Pre-measure all media aspect ratios so they render in their true natural size immediately
+  useEffect(() => {
+    mediaItems.forEach((m) => {
+      if (m.type === "image" && m.url && !aspectRatios[m.id]) {
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          const img = new (window as any).Image();
+          img.src = m.url;
+          img.onload = () => {
+            if (img.naturalWidth && img.naturalHeight) {
+              setAspectRatios((prev) => ({
+                ...prev,
+                [m.id]: img.naturalWidth / img.naturalHeight,
+              }));
+            }
+          };
+        } else {
+          RNImage.getSize(
+            m.url,
+            (w, h) => {
+              if (w > 0 && h > 0) {
+                setAspectRatios((prev) => ({
+                  ...prev,
+                  [m.id]: w / h,
+                }));
+              }
+            },
+            () => {}
+          );
+        }
+      } else if (m.type === "video" && m.url && !videoAspectRatios[m.id]) {
+        if (Platform.OS === "web" && typeof document !== "undefined") {
+          try {
+            const testVideo = document.createElement("video");
+            testVideo.src = m.url;
+            testVideo.onloadedmetadata = () => {
+              if (testVideo.videoWidth && testVideo.videoHeight) {
+                setVideoAspectRatios((prev) => ({
+                  ...prev,
+                  [m.id]: testVideo.videoWidth / testVideo.videoHeight,
+                }));
+              }
+            };
+          } catch {}
+        }
+      }
+    });
+  }, [mediaItems, aspectRatios, videoAspectRatios]);
+
+  const hasLocation =
+    !!(displayItem?.latitude && displayItem?.longitude) ||
+    !!displayItem?.locationLinkUrl;
+
   const handleLocationPress = () => {
-    if (!displayItem?.location) return;
+    if (!hasLocation) return;
     showConfirm({
       title: "Navigate to Location",
       message: "Would you like to navigate to this location?",
       confirmText: "Navigate",
       destructive: false,
       onConfirm: () => {
-        const rawLoc = displayItem.location as string;
         let url: string;
-        try {
-          const parsed = JSON.parse(rawLoc);
-          if (parsed.lat !== undefined && parsed.lng !== undefined) {
-            url =
-              Platform.OS === "ios"
-                ? `maps:0,0?q=${parsed.lat},${parsed.lng}`
-                : Platform.OS === "android"
-                ? `geo:${parsed.lat},${parsed.lng}?q=${parsed.lat},${parsed.lng}`
-                : `https://www.google.com/maps/dir/?api=1&destination=${parsed.lat},${parsed.lng}`;
-          } else {
-            url = rawLoc;
-          }
-        } catch {
-          url = rawLoc;
+        if (displayItem?.latitude && displayItem?.longitude) {
+          const lat = displayItem.latitude;
+          const lng = displayItem.longitude;
+          url =
+            Platform.OS === "ios"
+              ? `maps:0,0?q=${lat},${lng}`
+              : Platform.OS === "android"
+              ? `geo:${lat},${lng}?q=${lat},${lng}`
+              : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+        } else {
+          url = displayItem?.locationLinkUrl as string;
         }
         Linking.openURL(url).catch((err) => {
           console.error("Could not open navigation URL:", err);
@@ -131,37 +203,34 @@ export function ContentDetailModal({
         document.body.removeChild(a);
       } else {
         const fileExt = current.type === "video" ? "mp4" : "jpg";
-        const fileUri = `${FileSystem.documentDirectory}media_${Date.now()}.${fileExt}`;
+        const fileUri = `${FileSystem.cacheDirectory}media_${Date.now()}.${fileExt}`;
         const downloadRes = await FileSystem.downloadAsync(current.url, fileUri);
-        if (downloadRes.uri && (await Sharing.isAvailableAsync())) {
-          await Sharing.shareAsync(downloadRes.uri);
+        if (downloadRes.uri) {
+          const { status } = await MediaLibrary.requestPermissionsAsync();
+          if (status !== "granted") {
+            showConfirm({
+              title: "Permission Required",
+              message: "Please allow media library permissions to save photos to your gallery.",
+              confirmText: "OK",
+              destructive: false,
+              onConfirm: () => {},
+            });
+            return;
+          }
+          await MediaLibrary.saveToLibraryAsync(downloadRes.uri);
+          showConfirm({
+            title: "Saved",
+            message: "Media saved to your photos/gallery.",
+            confirmText: "OK",
+            destructive: false,
+            onConfirm: () => {},
+          });
         }
       }
     } catch (e) {
       console.error("Download failed", e);
     }
   };
-
-  // Re-fetch item to keep it fresh
-  const { data: freshItem } = trpc.content.getById.useQuery(
-    { itemId: item?.id || 0 },
-    { enabled: !!item?.id && visible }
-  );
-  const displayItem = freshItem || item;
-
-  // Sync activeSound from freshItem
-  useEffect(() => {
-    if (freshItem) {
-      setActiveSound((freshItem as any).sound ?? null);
-    }
-  }, [freshItem]);
-
-  // Fetch attached media items
-  const { data: mediaItems = [], isLoading: mediaLoading } =
-    trpc.media.listByContent.useQuery(
-      { contentItemId: item?.id || 0 },
-      { enabled: !!item?.id && visible }
-    );
 
   const updateStatus = trpc.content.updateStatus.useMutation({
     onSuccess: () => {
@@ -434,6 +503,8 @@ export function ContentDetailModal({
                       ref={scrollViewRef}
                       horizontal
                       pagingEnabled
+                      scrollEnabled={!isVideoTimelineDragging}
+                      contentContainerStyle={{ alignItems: "center" }}
                       showsHorizontalScrollIndicator={false}
                       scrollEventThrottle={16}
                       onScroll={(e) => {
@@ -454,48 +525,58 @@ export function ContentDetailModal({
                       }}
                       style={{ width: sliderWidth }}
                     >
-                      {mediaItems.map((m, i) => (
-                        <View
-                          key={m.id}
-                          style={[
-                            styles.slideWrapper,
-                            {
-                              width: sliderWidth,
-                              aspectRatio:
-                                m.type === "video"
-                                  ? 16 / 9
-                                  : aspectRatios[m.id] ?? 1,
-                            },
-                          ]}
-                        >
-                          {m.type === "video" ? (
-                            <CustomVideoPlayer
-                              uri={m.url}
-                              isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
-                              onPlayingChange={handleVideoPlayingChange}
-                            />
-                          ) : (
-                            <Image
-                              source={{ uri: m.url }}
-                              style={StyleSheet.absoluteFill}
-                              contentFit="contain"
-                              onLoad={(e) => {
-                                if (e.source.width && e.source.height) {
-                                  setAspectRatios((prev) => ({
-                                    ...prev,
-                                    [m.id]: e.source.width / e.source.height,
-                                  }));
-                                }
-                              }}
-                            />
-                          )}
-                        </View>
-                      ))}
+                      {mediaItems.map((m, i) => {
+                        const itemRatio =
+                          m.type === "video"
+                            ? (videoAspectRatios[m.id] ?? 16 / 9)
+                            : (aspectRatios[m.id] ?? 1);
+
+                        return (
+                          <View
+                            key={m.id}
+                            style={[
+                              styles.slideWrapper,
+                              {
+                                width: sliderWidth,
+                                aspectRatio: itemRatio,
+                              },
+                            ]}
+                          >
+                            {m.type === "video" ? (
+                              <CustomVideoPlayer
+                                uri={m.url}
+                                isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
+                                onPlayingChange={handleVideoPlayingChange}
+                                onAspectRatioKnown={(ratio) => {
+                                  setVideoAspectRatios((prev) => ({ ...prev, [m.id]: ratio }));
+                                }}
+                                onDraggingChange={setIsVideoTimelineDragging}
+                              />
+                            ) : (
+                              <Image
+                                source={{ uri: m.url }}
+                                style={StyleSheet.absoluteFill}
+                                contentFit="contain"
+                                onLoad={(e: any) => {
+                                  const w = e?.source?.width || e?.naturalWidth || e?.target?.naturalWidth;
+                                  const h = e?.source?.height || e?.naturalHeight || e?.target?.naturalHeight;
+                                  if (w && h) {
+                                    setAspectRatios((prev) => ({
+                                      ...prev,
+                                      [m.id]: w / h,
+                                    }));
+                                  }
+                                }}
+                              />
+                            )}
+                          </View>
+                        );
+                      })}
                     </ScrollView>
 
                     {/* Pagination indicator dots and location button row */}
                     <View style={styles.paginationRow}>
-                      {displayItem?.location ? (
+                      {hasLocation ? (
                         <Pressable
                           onPress={handleLocationPress}
                           hitSlop={8}
@@ -510,14 +591,20 @@ export function ContentDetailModal({
                       <View style={styles.dotsCenter}>
                         {mediaItems.length > 1 &&
                           mediaItems.map((_, i) => (
-                            <View
+                            <Pressable
                               key={`dot-${i}`}
+                              onPress={() => {
+                                scrollViewRef.current?.scrollTo({ x: i * sliderWidth, animated: true });
+                                setActiveMediaIndex(i);
+                              }}
+                              hitSlop={8}
                               style={[
                                 styles.dot,
                                 {
                                   backgroundColor:
                                     i === activeMediaIndex ? colors.text : colors.textSubtle,
                                   opacity: i === activeMediaIndex ? 1 : 0.4,
+                                  transform: [{ scale: i === activeMediaIndex ? 1.3 : 1 }],
                                 },
                               ]}
                             />
@@ -803,6 +890,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "rgba(0, 0, 0, 0.4)",
     position: "relative",
+    justifyContent: "center",
+    alignItems: "center",
+    alignSelf: "center",
   },
   slideImage: {
     width: "100%",

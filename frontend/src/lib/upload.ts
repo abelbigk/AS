@@ -42,7 +42,7 @@ export async function uploadFile(
 
     const { uploadUrl, publicUrl, key } = await prepareRes.json();
 
-    // 2. Upload file data directly to presigned URL
+    // 2. Upload file data
     if (Platform.OS === "web") {
       const blobRes = await fetch(fileUri);
       const blob = await blobRes.blob();
@@ -57,42 +57,82 @@ export async function uploadFile(
       });
 
       if (onProgress) onProgress(blob.size, blob.size);
+      return { url: publicUrl, key };
     } else {
-      // Native iOS / Android: Use expo-file-system uploadAsync for streaming binary uploads with progress
-      const uploadTask = FileSystem.createUploadTask(
-        uploadUrl,
-        fileUri,
-        {
-          headers: {
-            "Content-Type": mimeType || "application/octet-stream",
+      // Native iOS / Android:
+      // Try multipart upload to /api/upload first to avoid presigned PUT chunking issues on mobile
+      try {
+        const uploadTask = FileSystem.createUploadTask(
+          `${baseUrl}/api/upload`,
+          fileUri,
+          {
+            headers: {
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            httpMethod: "POST",
+            uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+            fieldName: "file",
+            parameters: {
+              key,
+            },
           },
-          httpMethod: "PUT",
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        },
-        (data) => {
-          if (onProgress && data.totalBytesExpectedToSend > 0) {
-            onProgress(data.totalBytesSent, data.totalBytesExpectedToSend);
-          }
-        }
-      );
-
-      const result = await uploadTask.uploadAsync();
-      if (!result || result.status < 200 || result.status >= 300) {
-        // Fallback: try reading as blob via fetch
-        const response = await fetch(fileUri);
-        const blob = await response.blob();
-        await axios.put(uploadUrl, blob, {
-          headers: { "Content-Type": mimeType || "application/octet-stream" },
-          onUploadProgress: (e) => {
-            if (onProgress && e.total) {
-              onProgress(e.loaded, e.total);
+          (data) => {
+            if (onProgress && data.totalBytesExpectedToSend > 0) {
+              onProgress(data.totalBytesSent, data.totalBytesExpectedToSend);
             }
-          },
-        });
-      }
-    }
+          }
+        );
 
-    return { url: publicUrl, key };
+        const result = await uploadTask.uploadAsync();
+        if (result && result.status >= 200 && result.status < 300) {
+          const resData = JSON.parse(result.body);
+          return { url: resData.url, key: resData.key };
+        }
+      } catch (nativeErr) {
+        console.warn("[Upload] Native multipart upload failed, attempting direct presigned PUT:", nativeErr);
+      }
+
+      // Fallback: try direct presigned PUT
+      try {
+        const uploadTask = FileSystem.createUploadTask(
+          uploadUrl,
+          fileUri,
+          {
+            headers: {
+              "Content-Type": mimeType || "application/octet-stream",
+            },
+            httpMethod: "PUT",
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          },
+          (data) => {
+            if (onProgress && data.totalBytesExpectedToSend > 0) {
+              onProgress(data.totalBytesSent, data.totalBytesExpectedToSend);
+            }
+          }
+        );
+
+        const result = await uploadTask.uploadAsync();
+        if (result && result.status >= 200 && result.status < 300) {
+          return { url: publicUrl, key };
+        }
+      } catch (putErr) {
+        console.warn("[Upload] Direct presigned PUT failed:", putErr);
+      }
+
+      // Final fallback: fetch blob and PUT via axios
+      const response = await fetch(fileUri);
+      const blob = await response.blob();
+      await axios.put(uploadUrl, blob, {
+        headers: { "Content-Type": mimeType || "application/octet-stream" },
+        onUploadProgress: (e) => {
+          if (onProgress && e.total) {
+            onProgress(e.loaded, e.total);
+          }
+        },
+      });
+
+      return { url: publicUrl, key };
+    }
   } catch (err) {
     console.error("[Upload] Error uploading file:", err);
     return null;

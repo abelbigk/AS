@@ -76,7 +76,9 @@ export function EditContentModal({
   const [currentUploadFileName, setCurrentUploadFileName] = useState("Media file");
 
   // Location state
-  const [location, setLocation] = useState<string | null>(null);
+  const [latitude, setLatitude] = useState<string | null>(null);
+  const [longitude, setLongitude] = useState<string | null>(null);
+  const [locationLinkUrl, setLocationLinkUrl] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(false);
   const [locationLinkInput, setLocationLinkInput] = useState("");
   const [showLocationLinkField, setShowLocationLinkField] = useState(false);
@@ -119,7 +121,9 @@ export function EditContentModal({
       setPendingMedia([]);
       setDeletedMediaIds([]);
       setSavingProgress("");
-      setLocation((item as any).location ?? null);
+      setLatitude(item.latitude ?? null);
+      setLongitude(item.longitude ?? null);
+      setLocationLinkUrl(item.locationLinkUrl ?? null);
       setIsLocating(false);
       setLocationLinkInput("");
       setShowLocationLinkField(false);
@@ -186,7 +190,9 @@ export function EditContentModal({
         return;
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      setLocation(JSON.stringify({ lat: loc.coords.latitude, lng: loc.coords.longitude }));
+      setLatitude(loc.coords.latitude.toFixed(6));
+      setLongitude(loc.coords.longitude.toFixed(6));
+      setLocationLinkUrl(null);
     } catch (e: any) {
       showAlert("Error", "Could not get location. " + (e?.message || ""));
     } finally {
@@ -266,7 +272,9 @@ export function EditContentModal({
         posterImageUrl: shouldRemovePoster ? undefined : finalPosterUrl,
         posterImageKey: shouldRemovePoster ? undefined : finalPosterKey,
         removePoster: shouldRemovePoster,
-        location: location ?? null,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        locationLinkUrl: locationLinkUrl ?? null,
       });
 
       // Upload and attach any pending media files
@@ -537,19 +545,20 @@ export function EditContentModal({
           {/* Location Section */}
           <View style={styles.fieldGroup}>
             <Text style={[styles.label, { color: colors.textMuted }]}>Location</Text>
-            {location ? (
+            {(latitude && longitude) || locationLinkUrl ? (
               <View style={[styles.locationCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <MapPin size={16} color="#10B981" />
                 <Text style={[styles.locationCardText, { color: colors.text }]} numberOfLines={2}>
-                  {(() => {
-                    try {
-                      const parsed = JSON.parse(location);
-                      if (parsed.lat !== undefined) return `${parsed.lat.toFixed(5)}, ${parsed.lng.toFixed(5)}`;
-                    } catch {}
-                    return location;
-                  })()}
+                  {latitude && longitude ? `📍 ${latitude}, ${longitude}` : `🔗 ${locationLinkUrl}`}
                 </Text>
-                <Pressable onPress={() => setLocation(null)} hitSlop={8}>
+                <Pressable
+                  onPress={() => {
+                    setLatitude(null);
+                    setLongitude(null);
+                    setLocationLinkUrl(null);
+                  }}
+                  hitSlop={8}
+                >
                   <X size={16} color={colors.textMuted} />
                 </Pressable>
               </View>
@@ -578,7 +587,7 @@ export function EditContentModal({
                 </Pressable>
               </View>
             )}
-            {showLocationLinkField && !location && (
+            {showLocationLinkField && !latitude && !locationLinkUrl && (
               <View style={[styles.locationLinkRow, { borderColor: colors.border }]}>
                 <TextInput
                   style={[styles.input, { color: colors.text, borderColor: colors.border, flex: 1 }]}
@@ -591,7 +600,9 @@ export function EditContentModal({
                 <Pressable
                   onPress={() => {
                     if (locationLinkInput.trim()) {
-                      setLocation(locationLinkInput.trim());
+                      setLocationLinkUrl(locationLinkInput.trim());
+                      setLatitude(null);
+                      setLongitude(null);
                       setShowLocationLinkField(false);
                     }
                   }}

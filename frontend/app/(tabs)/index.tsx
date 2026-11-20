@@ -22,6 +22,7 @@ import { SubcategoryCard } from "../../src/components/SubcategoryCard";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
 import { ContentDetailModal } from "../../src/components/ContentDetailModal";
 import { EditCategoryModal } from "../../src/components/EditCategoryModal";
+import { EditContentModal } from "../../src/components/EditContentModal";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export default function HomeScreen() {
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
+  const [activeEditItem, setActiveEditItem] = useState<ContentItem | null>(null);
   const [activeCategoryForEdit, setActiveCategoryForEdit] = useState<any | null>(null);
 
   const utils = trpc.useUtils();
@@ -256,6 +258,7 @@ export default function HomeScreen() {
                                 key={item.id}
                                 item={item as any}
                                 onPress={() => setActiveItem(item as any)}
+                                onEdit={() => setActiveEditItem(item as any)}
                               />
                             ))}
                         </View>
@@ -267,6 +270,7 @@ export default function HomeScreen() {
                                 key={item.id}
                                 item={item as any}
                                 onPress={() => setActiveItem(item as any)}
+                                onEdit={() => setActiveEditItem(item as any)}
                               />
                             ))}
                         </View>
@@ -354,6 +358,16 @@ export default function HomeScreen() {
         item={activeItem}
         visible={!!activeItem}
         onClose={() => setActiveItem(null)}
+      />
+
+      {/* Edit Content Modal */}
+      <EditContentModal
+        item={activeEditItem}
+        visible={!!activeEditItem}
+        onClose={() => setActiveEditItem(null)}
+        onSaved={() => {
+          utils.categories.list.invalidate();
+        }}
       />
 
       {/* Edit Category Modal */}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { Image } from "expo-image";
 import { useTheme } from "../contexts/ThemeContext";
@@ -25,7 +25,9 @@ export interface ContentItem {
   posterImageKey?: string | null;
   posterCropData?: string | null;
   soundId?: number | null;
-  location?: string | null;
+  latitude?: string | null;
+  longitude?: string | null;
+  locationLinkUrl?: string | null;
   status: "default" | "queued" | "done";
   categoryIds?: number[];
   subcategoryIds?: number[];
@@ -65,11 +67,13 @@ export function ContentCard({
   const { colors, theme } = useTheme();
   const [aspectRatio, setAspectRatio] = useState<number>(3 / 4);
   const { dialogState, hide, showConfirm } = useAppDialog();
+  const lastMenuActionTime = useRef(0);
 
   const isQueued = item.status === "queued";
   const isDone = item.status === "done";
 
   const handleConfirmDelete = () => {
+    lastMenuActionTime.current = Date.now();
     showConfirm({
       title: "Delete this item?",
       message: "This action cannot be undone. This will permanently delete the content.",
@@ -80,6 +84,7 @@ export function ContentCard({
   };
 
   const handleConfirmRemoveCategory = () => {
+    lastMenuActionTime.current = Date.now();
     showConfirm({
       title: "Remove from category?",
       message: "Are you sure you want to remove this item from this category? It will still be available in your other categories.",
@@ -90,6 +95,7 @@ export function ContentCard({
   };
 
   const handleConfirmRemoveSubcategory = () => {
+    lastMenuActionTime.current = Date.now();
     showConfirm({
       title: "Remove from subcategory?",
       message: "Are you sure you want to remove this item from this subcategory. It will still be available in your other categories.",
@@ -106,12 +112,18 @@ export function ContentCard({
           {
             label: isQueued ? "Unqueue" : "Queue",
             icon: Clock,
-            onPress: () => onUpdateStatus(isQueued ? "default" : "queued"),
+            onPress: () => {
+              lastMenuActionTime.current = Date.now();
+              onUpdateStatus(isQueued ? "default" : "queued");
+            },
           },
           {
             label: isDone ? "Undone" : "Done",
             icon: CheckCircle2,
-            onPress: () => onUpdateStatus(isDone ? "default" : "done"),
+            onPress: () => {
+              lastMenuActionTime.current = Date.now();
+              onUpdateStatus(isDone ? "default" : "done");
+            },
           },
         ]
       : []),
@@ -120,7 +132,10 @@ export function ContentCard({
           {
             label: "Edit Details",
             icon: Pencil,
-            onPress: onEdit,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now();
+              onEdit();
+            },
           },
         ]
       : []),
@@ -129,7 +144,10 @@ export function ContentCard({
           {
             label: "Move Up",
             icon: ArrowUp,
-            onPress: onMoveUp,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now();
+              onMoveUp();
+            },
           },
         ]
       : []),
@@ -138,7 +156,10 @@ export function ContentCard({
           {
             label: "Move Down",
             icon: ArrowDown,
-            onPress: onMoveDown,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now();
+              onMoveDown();
+            },
           },
         ]
       : []),
@@ -165,7 +186,10 @@ export function ContentCard({
           {
             label: "Categorize content",
             icon: FolderPlus,
-            onPress: onCategorize,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now();
+              onCategorize();
+            },
           },
         ]
       : []),
@@ -181,10 +205,17 @@ export function ContentCard({
       : []),
   ];
 
+  const handleCardPress = () => {
+    if (Date.now() - lastMenuActionTime.current < 450) {
+      return;
+    }
+    onPress?.();
+  };
+
   return (
     <>
       <Pressable
-      onPress={onPress}
+      onPress={handleCardPress}
       style={({ pressed }) => [
         styles.card,
         {
@@ -263,6 +294,7 @@ export function ContentCard({
                   <Pressable
                     onPress={(e) => {
                       e.stopPropagation?.();
+                      lastMenuActionTime.current = Date.now();
                       open();
                     }}
                     style={styles.moreBtn}
@@ -304,6 +336,7 @@ export function ContentCard({
                   <Pressable
                     onPress={(e) => {
                       e.stopPropagation?.();
+                      lastMenuActionTime.current = Date.now();
                       open();
                     }}
                     style={styles.moreBtn}

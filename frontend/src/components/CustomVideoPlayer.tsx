@@ -16,27 +16,81 @@ interface CustomVideoPlayerProps {
   uri: string;
   isActive?: boolean;
   onPlayingChange?: (isPlaying: boolean) => void;
+  onAspectRatioKnown?: (ratio: number) => void;
+  onDraggingChange?: (isDragging: boolean) => void;
   style?: any;
 }
 
-export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style }: CustomVideoPlayerProps) {
+export function CustomVideoPlayer({
+  uri,
+  isActive = true,
+  onPlayingChange,
+  onAspectRatioKnown,
+  onDraggingChange,
+  style,
+}: CustomVideoPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showInitialPlay, setShowInitialPlay] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [dragRatio, setDragRatio] = useState<number | null>(null);
   const [trackWidth, setTrackWidth] = useState(0);
+  const [trackPageX, setTrackPageX] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const containerRef = useRef<any>(null);
+  const timelineRef = useRef<any>(null);
   const videoViewRef = useRef<VideoView>(null);
   const pinchStartDistance = useRef<number | null>(null);
-  const dragStartX = useRef<number>(0);
-  const dragStartProgress = useRef<number>(0);
 
   const player = useVideoPlayer({ uri }, (p) => {
     p.loop = true;
   });
+
+  // Track video aspect ratio across native and web
+  useEffect(() => {
+    const checkAspectRatio = () => {
+      try {
+        const track = player.videoTrack;
+        if (track?.size && track.size.width > 0 && track.size.height > 0) {
+          onAspectRatioKnown?.(track.size.width / track.size.height);
+        }
+      } catch {}
+    };
+
+    checkAspectRatio();
+
+    const trackSub = (player as any).addListener?.("videoTrackChange", (e: any) => {
+      if (e?.videoTrack?.size?.width && e?.videoTrack?.size?.height) {
+        onAspectRatioKnown?.(e.videoTrack.size.width / e.videoTrack.size.height);
+      }
+    });
+
+    const srcSub = (player as any).addListener?.("sourceLoad", () => {
+      checkAspectRatio();
+    });
+
+    return () => {
+      trackSub?.remove?.();
+      srcSub?.remove?.();
+    };
+  }, [player, onAspectRatioKnown]);
+
+  // On Web, offscreen video metadata detection
+  useEffect(() => {
+    if (Platform.OS === "web" && typeof document !== "undefined") {
+      try {
+        const testVideo = document.createElement("video");
+        testVideo.src = uri;
+        testVideo.onloadedmetadata = () => {
+          if (testVideo.videoWidth && testVideo.videoHeight) {
+            onAspectRatioKnown?.(testVideo.videoWidth / testVideo.videoHeight);
+          }
+        };
+      } catch {}
+    }
+  }, [uri, onAspectRatioKnown]);
 
   // Pause video if it becomes inactive (e.g. user slides to another media item)
   useEffect(() => {
@@ -56,6 +110,10 @@ export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style
   }, [player]);
 
   useEffect(() => {
+    if (player.duration && duration === 0) {
+      setDuration(player.duration);
+    }
+
     const sub = player.addListener("playingChange", (e) => {
       setIsPlaying(e.isPlaying);
       onPlayingChange?.(e.isPlaying);
@@ -67,6 +125,9 @@ export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style
     const timeSub = player.addListener("timeUpdate", (e) => {
       if (!isDragging) {
         setCurrentTime(e.currentTime);
+      }
+      if (player.duration && duration === 0) {
+        setDuration(player.duration);
       }
     });
 
@@ -81,7 +142,7 @@ export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style
       timeSub.remove();
       statusSub.remove();
     };
-  }, [player, isDragging, onPlayingChange]);
+  }, [player, isDragging, duration, onPlayingChange]);
 
   // Enter fullscreen helper across platforms
   const enterFullscreen = () => {
@@ -193,44 +254,71 @@ export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style
   };
 
   const progressRatio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
+  const activeRatio = isDragging && dragRatio !== null ? dragRatio : progressRatio;
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
       onPanResponderGrant: (evt: GestureResponderEvent) => {
         setIsDragging(true);
+        onDraggingChange?.(true);
         player.pause();
-        dragStartX.current = evt.nativeEvent.pageX;
-        const targetRatio =
-          trackWidth > 0
-            ? Math.max(0, Math.min(1, evt.nativeEvent.locationX / trackWidth))
-            : progressRatio;
-        dragStartProgress.current = targetRatio;
-        const target = (duration || player.duration || 1) * targetRatio;
-        setCurrentTime(target);
-        try {
-          player.currentTime = target;
-        } catch {}
+        const currentX = evt.nativeEvent.pageX;
+        const width = trackWidth > 0 ? trackWidth : 1;
+        const offset = currentX - trackPageX;
+        const ratio = Math.max(0, Math.min(1, offset / width));
+        setDragRatio(ratio);
+        const totalDuration = duration || player.duration || 0;
+        if (totalDuration > 0) {
+          const target = totalDuration * ratio;
+          setCurrentTime(target);
+          try {
+            player.currentTime = target;
+          } catch {}
+        }
       },
       onPanResponderMove: (evt: GestureResponderEvent) => {
-        const deltaX = evt.nativeEvent.pageX - dragStartX.current;
-        const deltaRatio = trackWidth > 0 ? deltaX / trackWidth : 0;
-        const newRatio = Math.max(0, Math.min(1, dragStartProgress.current + deltaRatio));
-        const target = (duration || player.duration || 1) * newRatio;
-        setCurrentTime(target);
-        try {
-          player.currentTime = target;
-        } catch {}
+        const currentX = evt.nativeEvent.pageX;
+        const width = trackWidth > 0 ? trackWidth : 1;
+        const offset = currentX - trackPageX;
+        const ratio = Math.max(0, Math.min(1, offset / width));
+        setDragRatio(ratio);
+        const totalDuration = duration || player.duration || 0;
+        if (totalDuration > 0) {
+          const target = totalDuration * ratio;
+          setCurrentTime(target);
+          try {
+            player.currentTime = target;
+          } catch {}
+        }
       },
-      onPanResponderRelease: () => {
+      onPanResponderRelease: (evt: GestureResponderEvent) => {
+        const currentX = evt.nativeEvent.pageX;
+        const width = trackWidth > 0 ? trackWidth : 1;
+        const offset = currentX - trackPageX;
+        const ratio = Math.max(0, Math.min(1, offset / width));
+        const totalDuration = duration || player.duration || 0;
+        if (totalDuration > 0) {
+          try {
+            player.currentTime = totalDuration * ratio;
+          } catch {}
+        }
         setIsDragging(false);
-        // Always resume playback on release, regardless of whether it was playing before
+        setDragRatio(null);
+        onDraggingChange?.(false);
         try {
           player.play();
         } catch {}
         setIsPlaying(true);
         setShowInitialPlay(false);
+      },
+      onPanResponderTerminate: () => {
+        setIsDragging(false);
+        setDragRatio(null);
+        onDraggingChange?.(false);
       },
     })
   ).current;
@@ -321,20 +409,31 @@ export function CustomVideoPlayer({ uri, isActive = true, onPlayingChange, style
       {isDragging && (
         <View style={styles.timeTooltip}>
           <Text style={styles.timeTooltipText}>
-            {formatTime(currentTime)} / {formatTime(duration)}
+            {formatTime(
+              dragRatio !== null && (duration || player.duration)
+                ? (duration || player.duration) * dragRatio
+                : currentTime
+            )}{" "}
+            / {formatTime(duration || player.duration || 0)}
           </Text>
         </View>
       )}
 
       {/* Timeline dragger at the bottom - hidden through the whole video, visible only while dragging */}
       <View
+        ref={timelineRef}
         style={styles.timelineHitbox}
-        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+        onLayout={() => {
+          timelineRef.current?.measure((_x: number, _y: number, width: number, _height: number, pageX: number) => {
+            if (width > 0) setTrackWidth(width);
+            if (pageX !== undefined) setTrackPageX(pageX);
+          });
+        }}
         {...panResponder.panHandlers}
       >
         <View style={[styles.timelineTrack, { opacity: isDragging ? 1 : 0 }]}>
-          <View style={[styles.timelineFill, { width: `${progressRatio * 100}%` }]} />
-          <View style={[styles.timelineThumb, { left: `${progressRatio * 100}%` }]} />
+          <View style={[styles.timelineFill, { width: `${activeRatio * 100}%` }]} />
+          <View style={[styles.timelineThumb, { left: `${activeRatio * 100}%` }]} />
         </View>
       </View>
     </View>
@@ -395,10 +494,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 38,
+    height: 46,
     justifyContent: "flex-end",
-    paddingBottom: 4,
-    zIndex: 50,
+    paddingBottom: 6,
+    zIndex: 90,
   },
   timelineTrack: {
     height: 4,

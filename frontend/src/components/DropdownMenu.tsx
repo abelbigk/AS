@@ -118,11 +118,12 @@ export function DropdownMenu({
                 <Pressable
                   key={index}
                   disabled={item.disabled}
-                  onPress={() => {
+                  onPress={(e: any) => {
+                    e?.stopPropagation?.();
                     closeMenu();
                     setTimeout(() => {
                       item.onPress();
-                    }, 100);
+                    }, 50);
                   }}
                   style={({ pressed }) => [
                     styles.menuItem,

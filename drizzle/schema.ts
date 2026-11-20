@@ -82,7 +82,9 @@ export const contentItems = sqliteTable("contentItems", {
   posterCropData: text("posterCropData"),    // JSON crop params for URL images
   soundId: int("soundId"),                  // optional FK → sounds.id
   status: text("status", { enum: ["default", "queued", "done"] }).default("default").notNull(),
-  location: text("location"),               // location coordinates or maps URL
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  locationLinkUrl: text("location_link_url"),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
   updatedAt: text("updatedAt").default(sql`(current_timestamp)`).notNull(),
 });

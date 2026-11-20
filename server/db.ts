@@ -370,14 +370,16 @@ export async function createContentItem(
   description?: string, posterImageUrl?: string, posterImageKey?: string,
   posterCropData?: string,
   categoryIds: number[] = [], subcategoryIds: number[] = [],
-  location?: string
+  latitude?: string, longitude?: string, locationLinkUrl?: string
 ) {
   const db = getDb();
   const [result] = await db.insert(contentItems).values({
     userId, heading, description,
     posterImageUrl, posterImageKey, posterCropData,
     status: "default",
-    location,
+    latitude,
+    longitude,
+    locationLinkUrl,
   }).returning({ id: contentItems.id });
 
   const contentId = result.id;
@@ -414,7 +416,9 @@ export async function updateContentItem(
     posterImageKey?: string | null;
     posterCropData?: string | null;
     soundId?: number | null;
-    location?: string | null;
+    latitude?: string | null;
+    longitude?: string | null;
+    locationLinkUrl?: string | null;
     categoryIds?: number[];
     subcategoryIds?: number[];
   }
@@ -427,7 +431,9 @@ export async function updateContentItem(
   if (data.posterImageKey !== undefined) updateSet.posterImageKey = data.posterImageKey;
   if ("posterCropData" in data) updateSet.posterCropData = data.posterCropData ?? null;
   if ("soundId" in data) updateSet.soundId = data.soundId;
-  if ("location" in data) updateSet.location = data.location ?? null;
+  if ("latitude" in data) updateSet.latitude = data.latitude ?? null;
+  if ("longitude" in data) updateSet.longitude = data.longitude ?? null;
+  if ("locationLinkUrl" in data) updateSet.locationLinkUrl = data.locationLinkUrl ?? null;
   
   if (Object.keys(updateSet).length > 0) {
     await db.update(contentItems).set(updateSet).where(
