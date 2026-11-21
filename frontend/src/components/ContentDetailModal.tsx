@@ -54,7 +54,7 @@ interface ContentDetailModalProps {
   onRemoveFromSubcategory?: () => void;
 }
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export function ContentDetailModal({
   item,
@@ -78,7 +78,7 @@ export function ContentDetailModal({
   const [activeSound, setActiveSound] = useState<{ id: number; url: string; title: string; name?: string | null } | null>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(Math.min(SCREEN_WIDTH - 32, 640));
-  const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
+  const sliderHeight = Math.min(500, Math.round(SCREEN_HEIGHT * 0.62));
   const [isVideoTimelineDragging, setIsVideoTimelineDragging] = useState(false);
   const [isScrolledPastMedia, setIsScrolledPastMedia] = useState(false);
   const scrollViewRef = useRef<any>(null);
@@ -103,38 +103,6 @@ export function ContentDetailModal({
       setActiveSound((freshItem as any).sound ?? null);
     }
   }, [freshItem]);
-
-  const handleImageAspectRatio = useCallback((mediaId: number, ratio: number) => {
-    if (ratio > 0 && isFinite(ratio)) {
-      setAspectRatios((prev) => {
-        if (prev[mediaId] && Math.abs(prev[mediaId] - ratio) < 0.01) return prev;
-        return { ...prev, [mediaId]: ratio };
-      });
-    }
-  }, []);
-
-  // Pre-measure image aspect ratios (videos self-size via CustomVideoPlayer)
-  useEffect(() => {
-    mediaItems.forEach((m) => {
-      if (m.type === "image" && m.url) {
-        if (Platform.OS === "web" && typeof window !== "undefined") {
-          const img = new (window as any).Image();
-          img.src = m.url;
-          img.onload = () => {
-            if (img.naturalWidth && img.naturalHeight) {
-              handleImageAspectRatio(m.id, img.naturalWidth / img.naturalHeight);
-            }
-          };
-        } else {
-          RNImage.getSize(
-            m.url,
-            (w, h) => { if (w > 0 && h > 0) handleImageAspectRatio(m.id, w / h); },
-            () => {}
-          );
-        }
-      }
-    });
-  }, [mediaItems, handleImageAspectRatio]);
 
   const hasLocation =
     !!(displayItem?.latitude && displayItem?.longitude) ||
@@ -498,7 +466,7 @@ export function ContentDetailModal({
                       decelerationRate="fast"
                       disableIntervalMomentum={true}
                       scrollEnabled={!isVideoTimelineDragging}
-                      contentContainerStyle={{ alignItems: "flex-start" }}
+                      contentContainerStyle={{ alignItems: "center" }}
                       showsHorizontalScrollIndicator={false}
                       scrollEventThrottle={16}
                       onScroll={(e) => {
@@ -518,7 +486,7 @@ export function ContentDetailModal({
                         }
                       }}
                       style={[
-                        { width: sliderWidth },
+                        { width: sliderWidth, height: sliderHeight },
                         Platform.select({
                           web: {
                             scrollSnapType: "x mandatory",
@@ -527,49 +495,41 @@ export function ContentDetailModal({
                         }),
                       ]}
                     >
-                      {mediaItems.map((m, i) => {
-                        return (
-                          <View
-                            key={m.id}
-                            style={[
-                              {
-                                width: sliderWidth,
-                                // Images: fixed aspect ratio box. Videos: no fixed height — CustomVideoPlayer self-sizes.
-                                ...(m.type === "image"
-                                  ? { aspectRatio: aspectRatios[m.id] ?? 1 }
-                                  : {}),
-                              },
-                              Platform.select({
-                                web: {
-                                  scrollSnapAlign: "center",
-                                  scrollSnapStop: "always",
-                                } as any,
-                              }),
-                            ]}
-                          >
-                            {m.type === "video" ? (
-                              <CustomVideoPlayer
-                                uri={m.url}
-                                width={sliderWidth}
-                                isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
-                                onPlayingChange={handleVideoPlayingChange}
-                                onDraggingChange={setIsVideoTimelineDragging}
-                              />
-                            ) : (
-                              <Image
-                                source={{ uri: m.url }}
-                                style={StyleSheet.absoluteFill}
-                                contentFit="contain"
-                                onLoad={(e: any) => {
-                                  const w = e?.source?.width || e?.naturalWidth || e?.target?.naturalWidth || e?.width;
-                                  const h = e?.source?.height || e?.naturalHeight || e?.target?.naturalHeight || e?.height;
-                                  if (w && h) handleImageAspectRatio(m.id, w / h);
-                                }}
-                              />
-                            )}
-                          </View>
-                        );
-                      })}
+                      {mediaItems.map((m, i) => (
+                        <View
+                          key={m.id}
+                          style={[
+                            styles.slideWrapper,
+                            {
+                              width: sliderWidth,
+                              height: sliderHeight,
+                            },
+                            Platform.select({
+                              web: {
+                                scrollSnapAlign: "center",
+                                scrollSnapStop: "always",
+                              } as any,
+                            }),
+                          ]}
+                        >
+                          {m.type === "video" ? (
+                            <CustomVideoPlayer
+                              uri={m.url}
+                              isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
+                              onPlayingChange={handleVideoPlayingChange}
+                              onDraggingChange={setIsVideoTimelineDragging}
+                            />
+                          ) : (
+                            <Image
+                              source={{ uri: m.url }}
+                              style={StyleSheet.absoluteFill}
+                              contentFit="contain"
+                              cachePolicy="memory-disk"
+                              transition={200}
+                            />
+                          )}
+                        </View>
+                      ))}
                     </ScrollView>
 
                     {/* Pagination indicator dots and location button row */}
@@ -884,9 +844,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   slideWrapper: {
-    borderRadius: 14,
+    borderRadius: 18,
     overflow: "hidden",
-    backgroundColor: "transparent",
+    backgroundColor: "#000000",
     position: "relative",
     justifyContent: "center",
     alignItems: "center",
