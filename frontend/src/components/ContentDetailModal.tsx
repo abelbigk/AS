@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -74,11 +74,12 @@ export function ContentDetailModal({
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [coverAspectRatio, setCoverAspectRatio] = useState<number | undefined>(undefined);
+  const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<number, number>>({});
   const [soundPickerOpen, setSoundPickerOpen] = useState(false);
   const [activeSound, setActiveSound] = useState<{ id: number; url: string; title: string; name?: string | null } | null>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(Math.min(SCREEN_WIDTH - 32, 640));
-  const sliderHeight = Math.min(500, Math.round(SCREEN_HEIGHT * 0.62));
+  const sliderHeight = Math.min(540, Math.round(SCREEN_HEIGHT * 0.65));
   const [isVideoTimelineDragging, setIsVideoTimelineDragging] = useState(false);
   const [isScrolledPastMedia, setIsScrolledPastMedia] = useState(false);
   const scrollViewRef = useRef<any>(null);
@@ -88,21 +89,52 @@ export function ContentDetailModal({
     { itemId: item?.id || 0 },
     { enabled: !!item?.id && visible }
   );
-  const displayItem = freshItem || item;
+
+  // Guard freshItem against stale query cache from a previously opened item
+  const displayItem = (freshItem && freshItem.id === item?.id) ? freshItem : item;
 
   // Fetch attached media items
-  const { data: mediaItems = [], isLoading: mediaLoading } =
+  const { data: rawMediaItems = [], isLoading: mediaLoading } =
     trpc.media.listByContent.useQuery(
       { contentItemId: item?.id || 0 },
       { enabled: !!item?.id && visible }
     );
 
-  // Sync activeSound from freshItem
+  // Filter media items to ensure they strictly belong to the currently viewed item
+  const mediaItems = useMemo(() => {
+    if (!rawMediaItems || !item?.id) return [];
+    return rawMediaItems.filter((m: any) => m.contentItemId === item.id);
+  }, [rawMediaItems, item?.id]);
+
+  // Reset all item-specific state whenever a different item is opened or modal becomes visible
   useEffect(() => {
-    if (freshItem) {
+    if (visible && item?.id) {
+      setActiveMediaIndex(0);
+      setActiveSound((item as any)?.sound ?? null);
+      setIsVideoPlaying(false);
+      setIsVideoTimelineDragging(false);
+      setIsScrolledPastMedia(false);
+      setCoverAspectRatio(undefined);
+      setMediaAspectRatios({});
+      try {
+        scrollViewRef.current?.scrollTo({ x: 0, animated: false });
+      } catch {}
+    }
+  }, [item?.id, visible]);
+
+  // Sync activeSound if freshItem loads for THIS item
+  useEffect(() => {
+    if (freshItem && freshItem.id === item?.id) {
       setActiveSound((freshItem as any).sound ?? null);
     }
-  }, [freshItem]);
+  }, [freshItem, item?.id]);
+
+  const displaySound = activeSound !== null ? activeSound : ((item as any)?.sound ?? null);
+
+  // Safe clamped index to ensure counter and dots never display out-of-bounds (e.g. 4/2)
+  const displayMediaIndex = mediaItems.length > 0
+    ? Math.min(activeMediaIndex, mediaItems.length - 1)
+    : 0;
 
   const hasLocation =
     !!(displayItem?.latitude && displayItem?.longitude) ||
@@ -161,7 +193,7 @@ export function ContentDetailModal({
   }, []);
 
   const handleDownloadCurrentMedia = async () => {
-    const current = mediaItems[activeMediaIndex];
+    const current = mediaItems[displayMediaIndex];
     if (!current?.url) return;
     try {
       if (Platform.OS === "web") {
@@ -440,10 +472,10 @@ export function ContentDetailModal({
 
                 {/* Sound pill in middle */}
                 <View style={styles.soundControlWrapper}>
-                  {activeSound ? (
+                  {displaySound ? (
                     <SoundControl
-                      sound={activeSound}
-                      isParentVideoPlaying={isVideoPlaying}
+                      sound={displaySound}
+                      isParentVideoPlaying={isVideoPlaying || isVideoTimelineDragging}
                       onSoundClick={() => setSoundPickerOpen(true)}
                     />
                   ) : (
@@ -461,7 +493,7 @@ export function ContentDetailModal({
 
                 {/* Counter on right */}
                 <Text style={[styles.mediaCounterText, { color: colors.textMuted }]}>
-                  {activeMediaIndex + 1}/{mediaItems.length}
+                  {displayMediaIndex + 1}/{mediaItems.length}
                 </Text>
               </View>
               )}
@@ -508,41 +540,65 @@ export function ContentDetailModal({
                         }),
                       ]}
                     >
-                      {mediaItems.map((m, i) => (
-                        <View
-                          key={m.id}
-                          style={[
-                            styles.slideWrapper,
-                            {
-                              width: sliderWidth,
-                              height: sliderHeight,
-                            },
-                            Platform.select({
-                              web: {
-                                scrollSnapAlign: "center",
-                                scrollSnapStop: "always",
-                              } as any,
-                            }),
-                          ]}
-                        >
-                          {m.type === "video" ? (
-                            <CustomVideoPlayer
-                              uri={m.url}
-                              isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
-                              onPlayingChange={handleVideoPlayingChange}
-                              onDraggingChange={setIsVideoTimelineDragging}
-                            />
-                          ) : (
-                            <Image
-                              source={{ uri: m.url }}
-                              style={StyleSheet.absoluteFill}
-                              contentFit="contain"
-                              cachePolicy="memory-disk"
-                              transition={200}
-                            />
-                          )}
-                        </View>
-                      ))}
+                      {mediaItems.map((m, i) => {
+                        const aspect = mediaAspectRatios[m.id];
+                        const isLandscape = aspect ? aspect > (sliderWidth / sliderHeight) : false;
+                        return (
+                          <View
+                            key={m.id}
+                            style={[
+                              styles.slideWrapper,
+                              {
+                                width: sliderWidth,
+                                height: sliderHeight,
+                              },
+                              Platform.select({
+                                web: {
+                                  scrollSnapAlign: "center",
+                                  scrollSnapStop: "always",
+                                } as any,
+                              }),
+                            ]}
+                          >
+                            {m.type === "video" ? (
+                              <CustomVideoPlayer
+                                uri={m.url}
+                                isActive={i === displayMediaIndex && !isScrolledPastMedia && visible}
+                                onPlayingChange={handleVideoPlayingChange}
+                                onDraggingChange={setIsVideoTimelineDragging}
+                              />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.imageFramelessWrapper,
+                                  aspect
+                                    ? isLandscape
+                                      ? { width: "100%", aspectRatio: aspect }
+                                      : { height: "100%", aspectRatio: aspect }
+                                    : { width: "100%", height: "100%" },
+                                ]}
+                              >
+                                <Image
+                                  source={{ uri: m.url }}
+                                  style={styles.imageFrameless}
+                                  contentFit="cover"
+                                  cachePolicy="memory-disk"
+                                  transition={200}
+                                  onLoad={(e) => {
+                                    if (e.source.width && e.source.height) {
+                                      const ratio = e.source.width / e.source.height;
+                                      setMediaAspectRatios((prev) => ({
+                                        ...prev,
+                                        [m.id]: ratio,
+                                      }));
+                                    }
+                                  }}
+                                />
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
                     </ScrollView>
 
                     {/* Pagination indicator dots and location button row */}
@@ -573,9 +629,9 @@ export function ContentDetailModal({
                                 styles.dot,
                                 {
                                   backgroundColor:
-                                    i === activeMediaIndex ? colors.text : colors.textSubtle,
-                                  opacity: i === activeMediaIndex ? 1 : 0.4,
-                                  transform: [{ scale: i === activeMediaIndex ? 1.3 : 1 }],
+                                    i === displayMediaIndex ? colors.text : colors.textSubtle,
+                                  opacity: i === displayMediaIndex ? 1 : 0.4,
+                                  transform: [{ scale: i === displayMediaIndex ? 1.3 : 1 }],
                                 },
                               ]}
                             />
@@ -823,13 +879,16 @@ const styles = StyleSheet.create({
     width: "100%",
     borderRadius: 18,
     overflow: "hidden",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    backgroundColor: "transparent",
     marginBottom: 24,
+    alignItems: "center",
   },
   posterImageWrapper: {
     width: "100%",
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    backgroundColor: "transparent",
     position: "relative",
+    borderRadius: 18,
+    overflow: "hidden",
   },
   mediaSection: {
     marginBottom: 28,
@@ -855,15 +914,29 @@ const styles = StyleSheet.create({
   },
   mediaSliderContainer: {
     alignItems: "center",
+    backgroundColor: "transparent",
   },
   slideWrapper: {
-    borderRadius: 18,
-    overflow: "hidden",
-    backgroundColor: "#000000",
+    backgroundColor: "transparent",
     position: "relative",
     justifyContent: "center",
     alignItems: "center",
     alignSelf: "center",
+  },
+  imageFramelessWrapper: {
+    borderRadius: 16,
+    overflow: "hidden",
+    alignSelf: "center",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "transparent",
+    maxHeight: "100%",
+    maxWidth: "100%",
+  },
+  imageFrameless: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 16,
   },
   slideImage: {
     width: "100%",

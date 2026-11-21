@@ -53,6 +53,7 @@ export function CustomVideoPlayer({
   const [duration,        setDuration]        = useState(0);
   const [isDragging,      setIsDragging]      = useState(false);
   const [dragProgress,    setDragProgress]    = useState(0);  // 0–100 displayed during drag
+  const [videoAspect,     setVideoAspect]     = useState<number | null>(null);
 
   // ─── Refs (read in event handlers — no stale closures) ───────────────────
   const isDraggingRef        = useRef(false);
@@ -129,6 +130,17 @@ export function CustomVideoPlayer({
         setDuration(player.duration);
         durationRef.current = player.duration;
       }
+      const size = (player as any).videoTrack?.size;
+      if (size?.width && size?.height) {
+        setVideoAspect(size.width / size.height);
+      }
+    });
+
+    const trackSub = (player as any).addListener?.("videoTrackChange", (e: any) => {
+      const size = e?.videoTrack?.size || (player as any).videoTrack?.size;
+      if (size?.width && size?.height) {
+        setVideoAspect(size.width / size.height);
+      }
     });
 
     if (player.duration && durationRef.current === 0) {
@@ -136,8 +148,43 @@ export function CustomVideoPlayer({
       durationRef.current = player.duration;
     }
 
-    return () => { playSub.remove(); timeSub.remove(); statusSub.remove(); };
+    const initSize = (player as any).videoTrack?.size;
+    if (initSize?.width && initSize?.height) {
+      setVideoAspect(initSize.width / initSize.height);
+    }
+
+    return () => {
+      playSub.remove();
+      timeSub.remove();
+      statusSub.remove();
+      trackSub?.remove?.();
+    };
   }, [player, onPlayingChange]);
+
+  // Web metadata detection
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const getVideoEl = (): HTMLVideoElement | null => {
+      const raw = (videoViewRef.current as any)?.nativeRef;
+      return (raw?.current || raw) as HTMLVideoElement | null;
+    };
+
+    const el = getVideoEl();
+    if (!el || typeof el.addEventListener !== "function") return;
+
+    const checkSize = () => {
+      if (el.videoWidth && el.videoHeight) {
+        setVideoAspect(el.videoWidth / el.videoHeight);
+      }
+    };
+    checkSize();
+    el.addEventListener("loadedmetadata", checkSize);
+    return () => {
+      try {
+        el.removeEventListener("loadedmetadata", checkSize);
+      } catch {}
+    };
+  }, [uri]);
 
   // Continuously track playback time at 60 FPS while playing so the hidden bar always follows the video
   useEffect(() => {
@@ -382,14 +429,22 @@ export function CustomVideoPlayer({
     if (Platform.OS !== "web") return;
     const apply = () => {
       try {
-        const el = (videoViewRef.current as any)?.nativeRef as HTMLVideoElement | null;
-        if (el) { el.style.width = "100%"; el.style.height = "100%"; el.style.maxWidth = "100%"; el.style.maxHeight = "100%"; el.style.objectFit = "contain"; }
+        const raw = (videoViewRef.current as any)?.nativeRef;
+        const el = (raw?.current || raw) as HTMLVideoElement | null;
+        if (el && el.style) {
+          el.style.width = "100%";
+          el.style.height = "100%";
+          el.style.maxWidth = "100%";
+          el.style.maxHeight = "100%";
+          el.style.objectFit = "cover";
+          el.style.borderRadius = "16px";
+        }
       } catch {}
     };
     apply();
     const t = setTimeout(apply, 150);
     return () => clearTimeout(t);
-  }, [uri]);
+  }, [uri, videoAspect]);
 
   // ─── Display values ───────────────────────────────────────────────────────
   const currentDur     = duration || player.duration || 0;
@@ -418,87 +473,96 @@ export function CustomVideoPlayer({
   ];
 
   // ─── Render ───────────────────────────────────────────────────────────────
+  const isLandscape = videoAspect ? videoAspect > 1 : false;
+
   return (
     <View ref={containerRef} style={[styles.container, style]}>
-
-      {/* ── Video ── flex:1 (not absoluteFill) for correct Android contain */}
-      <Pressable onPress={togglePlay} style={styles.videoFlex}>
-        <VideoView
-          ref={videoViewRef}
-          player={player}
-          style={styles.videoFlex}
-          nativeControls={false}
-          contentFit="contain"
-        />
-      </Pressable>
-
-      {/* ── Big initial play button (shown before first play) ── */}
-      {showInitialPlay && (
-        <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill} pointerEvents="box-only">
-          <View style={styles.centerPlayOverlay}>
-            <View style={styles.playIconCircle}>
-              <Play size={32} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 3 }} />
-            </View>
-          </View>
-        </Pressable>
-      )}
-
-      {/* ── 3-dot menu (top-right, only when paused and NOT showing initial play) ── */}
-      {!isPlaying && !isDragging && !showInitialPlay && (
-        <View style={styles.menuContainer}>
-          <DropdownMenu
-            trigger={(open) => (
-              <Pressable onPress={open} style={styles.menuButton}>
-                <MoreVertical size={20} color="#FFFFFF" />
-              </Pressable>
-            )}
-            items={menuItems}
-            align="right"
-          />
-        </View>
-      )}
-
-      {/* ── Time tooltip (only while actively dragging) ── */}
-      {isDragging && (
-        <View style={styles.timeTooltip} pointerEvents="none">
-          <Text style={styles.timeTooltipText}>
-            {formatTime(displayTime)} / {formatTime(currentDur)}
-          </Text>
-        </View>
-      )}
-
-      {/* ── Progress bar (hidden while playing, visible when paused or dragging) ──
-            The hitbox is a tall, full-width View at the bottom that is always active.
-            Touch/mouse starts the delta-based drag — the video does NOT jump
-            to where the finger lands; it moves proportionally to finger travel. */}
+      {/* ── Frameless Video Card sized to real aspect ratio ── */}
       <View
-        ref={progressBarRef}
-        style={styles.progressHitbox}
-        onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
-        onTouchStart={Platform.OS !== "web" ? onNativeTouchStart : undefined}
-        onTouchMove={Platform.OS  !== "web" ? onNativeTouchMove  : undefined}
-        onTouchEnd={Platform.OS   !== "web" ? onNativeTouchEnd   : undefined}
+        style={[
+          styles.videoCard,
+          videoAspect
+            ? isLandscape
+              ? { width: "100%", aspectRatio: videoAspect }
+              : { height: "100%", aspectRatio: videoAspect }
+            : { width: "100%", height: "100%" },
+        ]}
       >
-        {/* Animated track: height expands 3px -> 7px on drag, fades in when paused/dragging */}
-        <RNAnimated.View style={[styles.track, { height: barHeight, opacity: barOpacity }]}>
-          {/* Elapsed fill — grows from left */}
-          <View
-            style={[
-              styles.elapsed,
-              { width: `${Math.max(0, Math.min(100, displayProgress))}%` as any },
-            ]}
-          >
-            {/* Thumb dot at right edge of elapsed fill, scales up while dragging */}
-            <RNAnimated.View
-              style={[
-                styles.thumb,
-                { transform: [{ scale: thumbScale }] },
-              ]}
+        {/* ── Video ── */}
+        <Pressable onPress={togglePlay} style={styles.videoFlex}>
+          <VideoView
+            ref={videoViewRef}
+            player={player}
+            style={styles.videoFlex}
+            nativeControls={false}
+            contentFit="cover"
+          />
+        </Pressable>
+
+        {/* ── Big initial play button (shown before first play) ── */}
+        {showInitialPlay && (
+          <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill} pointerEvents="box-only">
+            <View style={styles.centerPlayOverlay}>
+              <View style={styles.playIconCircle}>
+                <Play size={32} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 3 }} />
+              </View>
+            </View>
+          </Pressable>
+        )}
+
+        {/* ── 3-dot menu (top-right, only when paused and NOT showing initial play) ── */}
+        {!isPlaying && !isDragging && !showInitialPlay && (
+          <View style={styles.menuContainer}>
+            <DropdownMenu
+              trigger={(open) => (
+                <Pressable onPress={open} style={styles.menuButton}>
+                  <MoreVertical size={20} color="#FFFFFF" />
+                </Pressable>
+              )}
+              items={menuItems}
+              align="right"
             />
           </View>
-        </RNAnimated.View>
-      </View>
+        )}
 
+        {/* ── Time tooltip (only while actively dragging) ── */}
+        {isDragging && (
+          <View style={styles.timeTooltip} pointerEvents="none">
+            <Text style={styles.timeTooltipText}>
+              {formatTime(displayTime)} / {formatTime(currentDur)}
+            </Text>
+          </View>
+        )}
+
+        {/* ── Progress bar (hidden while playing, visible when paused or dragging) ── */}
+        <View
+          ref={progressBarRef}
+          style={styles.progressHitbox}
+          onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
+          onTouchStart={Platform.OS !== "web" ? onNativeTouchStart : undefined}
+          onTouchMove={Platform.OS  !== "web" ? onNativeTouchMove  : undefined}
+          onTouchEnd={Platform.OS   !== "web" ? onNativeTouchEnd   : undefined}
+        >
+          {/* Animated track: height expands 3px -> 7px on drag, fades in when paused/dragging */}
+          <RNAnimated.View style={[styles.track, { height: barHeight, opacity: barOpacity }]}>
+            {/* Elapsed fill — grows from left */}
+            <View
+              style={[
+                styles.elapsed,
+                { width: `${Math.max(0, Math.min(100, displayProgress))}%` as any },
+              ]}
+            >
+              {/* Thumb dot at right edge of elapsed fill, scales up while dragging */}
+              <RNAnimated.View
+                style={[
+                  styles.thumb,
+                  { transform: [{ scale: thumbScale }] },
+                ]}
+              />
+            </View>
+          </RNAnimated.View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -508,13 +572,24 @@ const styles = StyleSheet.create({
   container: {
     width: "100%",
     height: "100%",
-    backgroundColor: "#000",
+    backgroundColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
     overflow: "hidden",
   },
 
-  // flex:1 is the key — absoluteFill causes Android to zoom the video
+  videoCard: {
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#000000",
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+    maxHeight: "100%",
+    maxWidth: "100%",
+  },
+
   videoFlex: {
-    flex: 1,
     width: "100%",
     height: "100%",
   },

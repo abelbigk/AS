@@ -27,6 +27,7 @@ import { format, subDays, addDays, isToday, parseISO } from "date-fns";
 import { trpc } from "../src/lib/trpc";
 import { useTheme } from "../src/contexts/ThemeContext";
 import { TrackingMap, type LocationPoint } from "../src/components/TrackingMap";
+import { DatePickerModal } from "../src/components/DatePickerModal";
 
 const DEFAULT_BG =
   "https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=80";
@@ -42,6 +43,7 @@ export default function LocationScreen() {
   // Date state (defaults to today)
   const todayStr = useMemo(() => format(new Date(), "yyyy-MM-dd"), []);
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
+  const [calendarModalOpen, setCalendarModalOpen] = useState(false);
 
   const selectedDate = useMemo(() => {
     try {
@@ -206,14 +208,18 @@ export default function LocationScreen() {
                 <ChevronLeft size={20} color={colors.text} />
               </Pressable>
 
-              <View style={styles.dateCenterInfo}>
+              <Pressable
+                onPress={() => setCalendarModalOpen(true)}
+                style={styles.dateCenterInfo}
+                hitSlop={8}
+              >
                 <Calendar size={15} color={colors.accent} style={{ marginRight: 6 }} />
                 <Text style={[styles.dateText, { color: colors.text }]}>
                   {isCurrentDayToday
                     ? `Today (${format(selectedDate, "MMM d, yyyy")})`
                     : format(selectedDate, "EEE, MMM d, yyyy")}
                 </Text>
-              </View>
+              </Pressable>
 
               <Pressable
                 onPress={handleNextDay}
@@ -390,6 +396,16 @@ export default function LocationScreen() {
           )}
         </View>
       </ScrollView>
+
+      <DatePickerModal
+        visible={calendarModalOpen}
+        selectedDate={selectedDate}
+        maxDate={new Date()}
+        onClose={() => setCalendarModalOpen(false)}
+        onSelectDate={(dateStr) => {
+          setSelectedDateStr(dateStr);
+        }}
+      />
     </View>
   );
 }
