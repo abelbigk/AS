@@ -121,9 +121,7 @@ export function DropdownMenu({
                   onPress={(e: any) => {
                     e?.stopPropagation?.();
                     closeMenu();
-                    setTimeout(() => {
-                      item.onPress();
-                    }, 50);
+                    item.onPress();
                   }}
                   style={({ pressed }) => [
                     styles.menuItem,

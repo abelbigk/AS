@@ -43,6 +43,22 @@ export function CustomVideoPlayer({
   const timelineRef = useRef<any>(null);
   const videoViewRef = useRef<VideoView>(null);
   const pinchStartDistance = useRef<number | null>(null);
+  const onAspectRatioKnownRef = useRef(onAspectRatioKnown);
+  const lastReportedRatioRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onAspectRatioKnownRef.current = onAspectRatioKnown;
+  });
+
+  const reportAspectRatio = (ratio: number) => {
+    if (ratio > 0 && isFinite(ratio)) {
+      if (lastReportedRatioRef.current !== null && Math.abs(lastReportedRatioRef.current - ratio) < 0.01) {
+        return;
+      }
+      lastReportedRatioRef.current = ratio;
+      onAspectRatioKnownRef.current?.(ratio);
+    }
+  };
 
   const player = useVideoPlayer({ uri }, (p) => {
     p.loop = true;
@@ -54,7 +70,7 @@ export function CustomVideoPlayer({
       try {
         const track = player.videoTrack;
         if (track?.size && track.size.width > 0 && track.size.height > 0) {
-          onAspectRatioKnown?.(track.size.width / track.size.height);
+          reportAspectRatio(track.size.width / track.size.height);
         }
       } catch {}
     };
@@ -63,7 +79,7 @@ export function CustomVideoPlayer({
 
     const trackSub = (player as any).addListener?.("videoTrackChange", (e: any) => {
       if (e?.videoTrack?.size?.width && e?.videoTrack?.size?.height) {
-        onAspectRatioKnown?.(e.videoTrack.size.width / e.videoTrack.size.height);
+        reportAspectRatio(e.videoTrack.size.width / e.videoTrack.size.height);
       }
     });
 
@@ -75,7 +91,7 @@ export function CustomVideoPlayer({
       trackSub?.remove?.();
       srcSub?.remove?.();
     };
-  }, [player, onAspectRatioKnown]);
+  }, [player]);
 
   // On Web, offscreen video metadata detection
   useEffect(() => {
@@ -85,12 +101,12 @@ export function CustomVideoPlayer({
         testVideo.src = uri;
         testVideo.onloadedmetadata = () => {
           if (testVideo.videoWidth && testVideo.videoHeight) {
-            onAspectRatioKnown?.(testVideo.videoWidth / testVideo.videoHeight);
+            reportAspectRatio(testVideo.videoWidth / testVideo.videoHeight);
           }
         };
       } catch {}
     }
-  }, [uri, onAspectRatioKnown]);
+  }, [uri]);
 
   // Pause video if it becomes inactive (e.g. user slides to another media item)
   useEffect(() => {
@@ -256,20 +272,36 @@ export function CustomVideoPlayer({
   const progressRatio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
   const activeRatio = isDragging && dragRatio !== null ? dragRatio : progressRatio;
 
+  const calculateRatio = (evt: GestureResponderEvent) => {
+    if (Platform.OS === "web") {
+      const el = timelineRef.current as any;
+      const rect = el?.getBoundingClientRect?.();
+      if (rect && rect.width > 0) {
+        return Math.max(0, Math.min(1, (evt.nativeEvent.pageX - rect.left) / rect.width));
+      }
+    }
+    const locX = evt.nativeEvent.locationX;
+    if (trackWidth > 0 && locX !== undefined) {
+      return Math.max(0, Math.min(1, locX / trackWidth));
+    }
+    if (trackWidth > 0 && trackPageX > 0) {
+      return Math.max(0, Math.min(1, (evt.nativeEvent.pageX - trackPageX) / trackWidth));
+    }
+    return 0;
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (evt: GestureResponderEvent) => {
         setIsDragging(true);
         onDraggingChange?.(true);
         player.pause();
-        const currentX = evt.nativeEvent.pageX;
-        const width = trackWidth > 0 ? trackWidth : 1;
-        const offset = currentX - trackPageX;
-        const ratio = Math.max(0, Math.min(1, offset / width));
+        const ratio = calculateRatio(evt);
         setDragRatio(ratio);
         const totalDuration = duration || player.duration || 0;
         if (totalDuration > 0) {
@@ -281,10 +313,7 @@ export function CustomVideoPlayer({
         }
       },
       onPanResponderMove: (evt: GestureResponderEvent) => {
-        const currentX = evt.nativeEvent.pageX;
-        const width = trackWidth > 0 ? trackWidth : 1;
-        const offset = currentX - trackPageX;
-        const ratio = Math.max(0, Math.min(1, offset / width));
+        const ratio = calculateRatio(evt);
         setDragRatio(ratio);
         const totalDuration = duration || player.duration || 0;
         if (totalDuration > 0) {
@@ -296,10 +325,7 @@ export function CustomVideoPlayer({
         }
       },
       onPanResponderRelease: (evt: GestureResponderEvent) => {
-        const currentX = evt.nativeEvent.pageX;
-        const width = trackWidth > 0 ? trackWidth : 1;
-        const offset = currentX - trackPageX;
-        const ratio = Math.max(0, Math.min(1, offset / width));
+        const ratio = calculateRatio(evt);
         const totalDuration = duration || player.duration || 0;
         if (totalDuration > 0) {
           try {
@@ -423,15 +449,24 @@ export function CustomVideoPlayer({
       <View
         ref={timelineRef}
         style={styles.timelineHitbox}
-        onLayout={() => {
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          if (w > 0) setTrackWidth(w);
           timelineRef.current?.measure((_x: number, _y: number, width: number, _height: number, pageX: number) => {
             if (width > 0) setTrackWidth(width);
             if (pageX !== undefined) setTrackPageX(pageX);
           });
         }}
+        {...(Platform.OS === "web"
+          ? ({
+              onMouseDown: (e: any) => e.stopPropagation(),
+              onTouchStart: (e: any) => e.stopPropagation(),
+              onTouchMove: (e: any) => e.stopPropagation(),
+            } as any)
+          : {})}
         {...panResponder.panHandlers}
       >
-        <View style={[styles.timelineTrack, { opacity: isDragging ? 1 : 0 }]}>
+        <View style={[styles.timelineTrack, { opacity: isDragging ? 1 : 0 }]} pointerEvents="none">
           <View style={[styles.timelineFill, { width: `${activeRatio * 100}%` }]} />
           <View style={[styles.timelineThumb, { left: `${activeRatio * 100}%` }]} />
         </View>
@@ -494,14 +529,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 46,
+    height: 48,
     justifyContent: "flex-end",
     paddingBottom: 6,
     zIndex: 90,
   },
   timelineTrack: {
-    height: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    height: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.35)",
     width: "100%",
     position: "relative",
   },
@@ -511,11 +546,11 @@ const styles = StyleSheet.create({
   },
   timelineThumb: {
     position: "absolute",
-    top: -4,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    top: -5,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: "#FFFFFF",
-    marginLeft: -6,
+    marginLeft: -8,
   },
 });

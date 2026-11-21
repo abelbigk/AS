@@ -72,6 +72,7 @@ export async function uploadFile(
             httpMethod: "POST",
             uploadType: FileSystem.FileSystemUploadType.MULTIPART,
             fieldName: "file",
+            mimeType: mimeType || "image/jpeg",
             parameters: {
               key,
             },

@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
-import * as MediaLibrary from "expo-media-library";
+import * as MediaLibrary from "expo-media-library/legacy";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowLeft,
@@ -105,19 +105,34 @@ export function ContentDetailModal({
     }
   }, [freshItem]);
 
+  const handleVideoAspectRatio = useCallback((mediaId: number, ratio: number) => {
+    if (ratio > 0 && isFinite(ratio)) {
+      setVideoAspectRatios((prev) => {
+        if (prev[mediaId] && Math.abs(prev[mediaId] - ratio) < 0.01) return prev;
+        return { ...prev, [mediaId]: ratio };
+      });
+    }
+  }, []);
+
+  const handleImageAspectRatio = useCallback((mediaId: number, ratio: number) => {
+    if (ratio > 0 && isFinite(ratio)) {
+      setAspectRatios((prev) => {
+        if (prev[mediaId] && Math.abs(prev[mediaId] - ratio) < 0.01) return prev;
+        return { ...prev, [mediaId]: ratio };
+      });
+    }
+  }, []);
+
   // Pre-measure all media aspect ratios so they render in their true natural size immediately
   useEffect(() => {
     mediaItems.forEach((m) => {
-      if (m.type === "image" && m.url && !aspectRatios[m.id]) {
+      if (m.type === "image" && m.url) {
         if (Platform.OS === "web" && typeof window !== "undefined") {
           const img = new (window as any).Image();
           img.src = m.url;
           img.onload = () => {
             if (img.naturalWidth && img.naturalHeight) {
-              setAspectRatios((prev) => ({
-                ...prev,
-                [m.id]: img.naturalWidth / img.naturalHeight,
-              }));
+              handleImageAspectRatio(m.id, img.naturalWidth / img.naturalHeight);
             }
           };
         } else {
@@ -125,33 +140,27 @@ export function ContentDetailModal({
             m.url,
             (w, h) => {
               if (w > 0 && h > 0) {
-                setAspectRatios((prev) => ({
-                  ...prev,
-                  [m.id]: w / h,
-                }));
+                handleImageAspectRatio(m.id, w / h);
               }
             },
             () => {}
           );
         }
-      } else if (m.type === "video" && m.url && !videoAspectRatios[m.id]) {
+      } else if (m.type === "video" && m.url) {
         if (Platform.OS === "web" && typeof document !== "undefined") {
           try {
             const testVideo = document.createElement("video");
             testVideo.src = m.url;
             testVideo.onloadedmetadata = () => {
               if (testVideo.videoWidth && testVideo.videoHeight) {
-                setVideoAspectRatios((prev) => ({
-                  ...prev,
-                  [m.id]: testVideo.videoWidth / testVideo.videoHeight,
-                }));
+                handleVideoAspectRatio(m.id, testVideo.videoWidth / testVideo.videoHeight);
               }
             };
           } catch {}
         }
       }
     });
-  }, [mediaItems, aspectRatios, videoAspectRatios]);
+  }, [mediaItems, handleImageAspectRatio, handleVideoAspectRatio]);
 
   const hasLocation =
     !!(displayItem?.latitude && displayItem?.longitude) ||
@@ -502,7 +511,11 @@ export function ContentDetailModal({
                     <ScrollView
                       ref={scrollViewRef}
                       horizontal
-                      pagingEnabled
+                      pagingEnabled={Platform.OS !== "web"}
+                      snapToInterval={sliderWidth}
+                      snapToAlignment="center"
+                      decelerationRate="fast"
+                      disableIntervalMomentum={true}
                       scrollEnabled={!isVideoTimelineDragging}
                       contentContainerStyle={{ alignItems: "center" }}
                       showsHorizontalScrollIndicator={false}
@@ -523,7 +536,15 @@ export function ContentDetailModal({
                           }
                         }
                       }}
-                      style={{ width: sliderWidth }}
+                      style={[
+                        { width: sliderWidth },
+                        Platform.select({
+                          web: {
+                            scrollSnapType: "x mandatory",
+                            overflowX: "auto",
+                          } as any,
+                        }),
+                      ]}
                     >
                       {mediaItems.map((m, i) => {
                         const itemRatio =
@@ -540,6 +561,12 @@ export function ContentDetailModal({
                                 width: sliderWidth,
                                 aspectRatio: itemRatio,
                               },
+                              Platform.select({
+                                web: {
+                                  scrollSnapAlign: "center",
+                                  scrollSnapStop: "always",
+                                } as any,
+                              }),
                             ]}
                           >
                             {m.type === "video" ? (
@@ -547,9 +574,7 @@ export function ContentDetailModal({
                                 uri={m.url}
                                 isActive={i === activeMediaIndex && !isScrolledPastMedia && visible}
                                 onPlayingChange={handleVideoPlayingChange}
-                                onAspectRatioKnown={(ratio) => {
-                                  setVideoAspectRatios((prev) => ({ ...prev, [m.id]: ratio }));
-                                }}
+                                onAspectRatioKnown={(ratio) => handleVideoAspectRatio(m.id, ratio)}
                                 onDraggingChange={setIsVideoTimelineDragging}
                               />
                             ) : (
@@ -558,13 +583,10 @@ export function ContentDetailModal({
                                 style={StyleSheet.absoluteFill}
                                 contentFit="contain"
                                 onLoad={(e: any) => {
-                                  const w = e?.source?.width || e?.naturalWidth || e?.target?.naturalWidth;
-                                  const h = e?.source?.height || e?.naturalHeight || e?.target?.naturalHeight;
+                                  const w = e?.source?.width || e?.naturalWidth || e?.target?.naturalWidth || e?.width;
+                                  const h = e?.source?.height || e?.naturalHeight || e?.target?.naturalHeight || e?.height;
                                   if (w && h) {
-                                    setAspectRatios((prev) => ({
-                                      ...prev,
-                                      [m.id]: w / h,
-                                    }));
+                                    handleImageAspectRatio(m.id, w / h);
                                   }
                                 }}
                               />
@@ -888,7 +910,7 @@ const styles = StyleSheet.create({
   slideWrapper: {
     borderRadius: 14,
     overflow: "hidden",
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    backgroundColor: "transparent",
     position: "relative",
     justifyContent: "center",
     alignItems: "center",

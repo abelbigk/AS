@@ -62,9 +62,28 @@ async function resolveUserId(req: Request): Promise<number | null> {
   } catch { return null; }
 }
 
-function makeKey(userId: number, originalname: string, prefix = "content"): string {
-  const ext = originalname.includes(".") ? originalname.split(".").pop() : "";
-  return `${prefix}/${userId}/${Date.now()}-${nanoid(8)}${ext ? `.${ext}` : ""}`;
+function inferMimeType(keyOrName: string, fallback: string): string {
+  const ext = keyOrName.split(".").pop()?.toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "mp4") return "video/mp4";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "webm") return "video/webm";
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "m4a") return "audio/mp4";
+  return fallback && fallback !== "application/octet-stream" ? fallback : "image/jpeg";
+}
+
+function makeKey(userId: number, originalname: string, prefix = "content", mimetype?: string): string {
+  let ext = originalname.includes(".") ? originalname.split(".").pop()?.toLowerCase() : "";
+  if (!ext) {
+    if (mimetype?.includes("video")) ext = "mp4";
+    else if (mimetype?.includes("png")) ext = "png";
+    else ext = "jpg";
+  }
+  return `${prefix}/${userId}/${Date.now()}-${nanoid(8)}.${ext}`;
 }
 
 function sendProgress(key: string, pct: number) {
@@ -102,8 +121,9 @@ export function registerUploadRoutes(app: express.Application) {
       if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
       const { filename, contentType, prefix } = req.body as { filename: string; contentType?: string; prefix?: string };
       if (!filename) { res.status(400).json({ error: "filename required" }); return; }
-      const key = makeKey(userId, filename, prefix || "content");
-      const presigned = await storagePresign(key, contentType || "application/octet-stream");
+      const finalMime = inferMimeType(filename, contentType || "application/octet-stream");
+      const key = makeKey(userId, filename, prefix || "content", finalMime);
+      const presigned = await storagePresign(key, finalMime);
       res.json({ key, ...presigned });
     } catch (error: any) {
       console.error("[Upload Prepare Error]", error.message, error.stack);
@@ -132,7 +152,8 @@ export function registerUploadRoutes(app: express.Application) {
       if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
 
       const { buffer, mimetype, originalname } = req.file;
-      const fileKey = (req.body?.key as string) || makeKey(userId, originalname);
+      const finalMime = inferMimeType(originalname || (req.body?.key as string) || "", mimetype);
+      const fileKey = (req.body?.key as string) || makeKey(userId, originalname, "content", finalMime);
 
       if (res.destroyed) return;
 
@@ -143,7 +164,7 @@ export function registerUploadRoutes(app: express.Application) {
         abortController.abort();
       });
 
-      const { key, url } = await storagePut(fileKey, buffer, mimetype, (loaded, total) => {
+      const { key, url } = await storagePut(fileKey, buffer, finalMime, (loaded, total) => {
         const pct = Math.min(Math.round((loaded / total) * 100), 99);
         sendProgress(fileKey, pct);
       }, abortController.signal);
@@ -188,8 +209,9 @@ export function registerUploadRoutes(app: express.Application) {
 
       const results = await Promise.all(
         files.map(async (file, i) => {
-          const fileKey = preKeys[i] || makeKey(userId, file.originalname);
-          return await storagePut(fileKey, file.buffer, file.mimetype, (loaded, total) => {
+          const finalMime = inferMimeType(file.originalname, file.mimetype);
+          const fileKey = preKeys[i] || makeKey(userId, file.originalname, "content", finalMime);
+          return await storagePut(fileKey, file.buffer, finalMime, (loaded, total) => {
             progressPerFile[i] = loaded;
             const sumLoaded = progressPerFile.reduce((a, b) => a + b, 0);
             const pct = Math.min(Math.round((sumLoaded / totalBytes) * 100), 99);

@@ -53,7 +53,7 @@ export function ImagePickerToggle({
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: false, // keep original size and aspect ratio
-        quality: 0.9,
+        quality: 1,
       });
 
       if (!res.canceled && res.assets[0]) {
@@ -81,7 +81,7 @@ export function ImagePickerToggle({
       const res = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
         allowsEditing: false,
-        quality: 0.9,
+        quality: 1,
       });
       if (!res.canceled && res.assets[0]) {
         const asset = res.assets[0];

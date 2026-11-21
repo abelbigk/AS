@@ -46,17 +46,18 @@ export function LocationTracker() {
   isAuthRef.current = isAuthenticated;
 
   useEffect(() => {
+    // Stop and unregister any leftover background location tasks/notifications
+    if (Platform.OS !== "web") {
+      Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
+        .then((started) => {
+          if (started) {
+            return Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+          }
+        })
+        .catch(() => {});
+    }
+
     if (!isAuthenticated) {
-      // User is logged out: stop background updates and clean state
-      if (Platform.OS !== "web") {
-        Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
-          .then((started) => {
-            if (started) {
-              return Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-            }
-          })
-          .catch(() => {});
-      }
       clearTrackingState();
       return;
     }
@@ -89,62 +90,18 @@ export function LocationTracker() {
               );
             };
 
-            // Trigger immediately and then poll every 10 seconds
             sendWebLocation();
-            foregroundTimer = setInterval(sendWebLocation, 10000);
+            foregroundTimer = setInterval(sendWebLocation, 15000);
           }
         } else {
-          // --- NATIVE ANDROID / IOS BACKGROUND TRACKING ---
-          // 1. Request Foreground Permissions
+          // --- NATIVE ANDROID / IOS FOREGROUND ONLY (NO NOTIFICATION) ---
           const { status: fgStatus } =
             await Location.requestForegroundPermissionsAsync();
           if (fgStatus !== "granted") {
-            console.log("[LocationTracker] Foreground location permission not granted");
             return;
           }
 
-          // 2. Request Background Permissions ("Always Allow")
-          try {
-            await Location.requestBackgroundPermissionsAsync();
-          } catch (bgErr) {
-            console.log("[LocationTracker] Background permission request:", bgErr);
-          }
-
-          // 3. Start Background Location Service (Survives app close / background)
-          try {
-            const hasStarted =
-              await Location.hasStartedLocationUpdatesAsync(
-                BACKGROUND_LOCATION_TASK
-              );
-
-            if (!hasStarted) {
-              await Location.startLocationUpdatesAsync(
-                BACKGROUND_LOCATION_TASK,
-                {
-                  accuracy: Location.Accuracy.High,
-                  timeInterval: 10000, // 10 seconds
-                  distanceInterval: 0, // capture all 10s intervals for stationary detection
-                  deferredUpdatesInterval: 10000,
-                  foregroundService: {
-                    notificationTitle: "Delivery Route Active",
-                    notificationBody: "Broadcasting live coordinates...",
-                    notificationColor: "#3B82F6",
-                  },
-                  pausesUpdatesAutomatically: false,
-                  showsBackgroundLocationIndicator: true,
-                  activityType: Location.ActivityType.AutomotiveNavigation,
-                }
-              );
-              console.log("[LocationTracker] Background location task started");
-            }
-          } catch (taskErr) {
-            console.warn(
-              "[LocationTracker] Could not start background task (Expo Go fallback):",
-              taskErr
-            );
-          }
-
-          // 4. Foreground watchdog: polls every 10 seconds while app is in foreground
+          // Foreground watchdog: polls only while app is active, completely silent without notification
           const sendForegroundLocation = async () => {
             if (!isMounted || !isAuthRef.current) return;
             try {
@@ -167,7 +124,7 @@ export function LocationTracker() {
           };
 
           sendForegroundLocation();
-          foregroundTimer = setInterval(sendForegroundLocation, 10000);
+          foregroundTimer = setInterval(sendForegroundLocation, 15000);
         }
       } catch (err) {
         console.error("[LocationTracker] Init error:", err);
@@ -179,6 +136,9 @@ export function LocationTracker() {
     return () => {
       isMounted = false;
       if (foregroundTimer) clearInterval(foregroundTimer);
+      if (Platform.OS !== "web") {
+        Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
+      }
     };
   }, [isAuthenticated]);
 

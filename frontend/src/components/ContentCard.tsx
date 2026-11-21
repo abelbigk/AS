@@ -133,7 +133,7 @@ export function ContentCard({
             label: "Edit Details",
             icon: Pencil,
             onPress: () => {
-              lastMenuActionTime.current = Date.now();
+              lastMenuActionTime.current = Date.now() + 1000;
               onEdit();
             },
           },
@@ -145,7 +145,7 @@ export function ContentCard({
             label: "Move Up",
             icon: ArrowUp,
             onPress: () => {
-              lastMenuActionTime.current = Date.now();
+              lastMenuActionTime.current = Date.now() + 1000;
               onMoveUp();
             },
           },
@@ -157,7 +157,7 @@ export function ContentCard({
             label: "Move Down",
             icon: ArrowDown,
             onPress: () => {
-              lastMenuActionTime.current = Date.now();
+              lastMenuActionTime.current = Date.now() + 1000;
               onMoveDown();
             },
           },
@@ -168,7 +168,10 @@ export function ContentCard({
           {
             label: "Remove from Category",
             icon: FolderMinus,
-            onPress: handleConfirmRemoveCategory,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now() + 1000;
+              handleConfirmRemoveCategory();
+            },
           },
         ]
       : []),
@@ -177,7 +180,10 @@ export function ContentCard({
           {
             label: "Remove from Subcategory",
             icon: FolderMinus,
-            onPress: handleConfirmRemoveSubcategory,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now() + 1000;
+              handleConfirmRemoveSubcategory();
+            },
           },
         ]
       : []),
@@ -187,7 +193,7 @@ export function ContentCard({
             label: "Categorize content",
             icon: FolderPlus,
             onPress: () => {
-              lastMenuActionTime.current = Date.now();
+              lastMenuActionTime.current = Date.now() + 1000;
               onCategorize();
             },
           },
@@ -199,14 +205,18 @@ export function ContentCard({
             label: "Delete",
             icon: Trash2,
             destructive: true,
-            onPress: handleConfirmDelete,
+            onPress: () => {
+              lastMenuActionTime.current = Date.now() + 1000;
+              handleConfirmDelete();
+            },
           },
         ]
       : []),
   ];
 
-  const handleCardPress = () => {
-    if (Date.now() - lastMenuActionTime.current < 450) {
+  const handleCardPress = (e?: any) => {
+    if (Date.now() < lastMenuActionTime.current) {
+      e?.stopPropagation?.();
       return;
     }
     onPress?.();
@@ -294,7 +304,7 @@ export function ContentCard({
                   <Pressable
                     onPress={(e) => {
                       e.stopPropagation?.();
-                      lastMenuActionTime.current = Date.now();
+                      lastMenuActionTime.current = Date.now() + 1000;
                       open();
                     }}
                     style={styles.moreBtn}
@@ -336,7 +346,7 @@ export function ContentCard({
                   <Pressable
                     onPress={(e) => {
                       e.stopPropagation?.();
-                      lastMenuActionTime.current = Date.now();
+                      lastMenuActionTime.current = Date.now() + 1000;
                       open();
                     }}
                     style={styles.moreBtn}

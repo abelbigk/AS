@@ -245,6 +245,9 @@ export default function AddContentForm({ initialCategoryId, initialSubcategoryId
           posterImageKey,
           posterCropData: imageResult?.cropData ? JSON.stringify(imageResult.cropData) : undefined,
         });
+        if (!newItem) {
+          throw new Error("Failed to create content item");
+        }
         createdItemRef.current = newItem;
 
         if (abort.aborted) {

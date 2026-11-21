@@ -148,13 +148,13 @@ export function AddContentModal({
         }
         res = await ImagePicker.launchCameraAsync({
           mediaTypes: ["images"],
-          quality: 0.9,
+          quality: 1,
         });
       } else {
         res = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["images", "videos"],
           allowsMultipleSelection: true,
-          quality: 0.85,
+          quality: 1,
         });
       }
       if (!res.canceled && res.assets.length > 0) {
@@ -234,6 +234,7 @@ export function AddContentModal({
 
       setUploadStage("saving_entry");
       setUploadStatus("Saving details...");
+      const finalLocationLink = locationLinkUrl || (locationLinkInput.trim() || undefined);
       const newItem = await createMutation.mutateAsync({
         heading: heading.trim(),
         description: description.trim() || undefined,
@@ -243,14 +244,16 @@ export function AddContentModal({
         posterImageKey: posterKey,
         latitude: latitude ?? undefined,
         longitude: longitude ?? undefined,
-        locationLinkUrl: locationLinkUrl ?? undefined,
+        locationLinkUrl: finalLocationLink,
       });
 
       if (newItem && mediaAssets.length > 0) {
         setUploadStage("media");
         for (let i = 0; i < mediaAssets.length; i++) {
           const itemMedia = mediaAssets[i];
-          const mName = itemMedia.asset.fileName || `media_${Date.now()}_${i}.${itemMedia.type === "video" ? "mp4" : "jpg"}`;
+          const ext = itemMedia.type === "video" ? "mp4" : "jpg";
+          let mName = itemMedia.asset.fileName || `media_${Date.now()}_${i}.${ext}`;
+          if (!mName.includes(".")) mName = `${mName}.${ext}`;
           setCurrentUploadFileName(mName);
           setUploadPct(0);
           setUploadStatus(`Uploading media ${i + 1} of ${mediaAssets.length}...`);

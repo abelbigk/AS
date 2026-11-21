@@ -381,12 +381,21 @@ export const appRouter = router({
         // Look for existing content with same heading
         const existing = await getContentByHeading(ctx.user.id, input.heading);
         if (existing) {
-          // Just add links
+          // Update location and details if provided
+          await updateContentItem(existing.id, ctx.user.id, {
+            description: input.description,
+            latitude: input.latitude,
+            longitude: input.longitude,
+            locationLinkUrl: input.locationLinkUrl,
+            posterImageUrl: input.posterImageUrl,
+            posterImageKey: input.posterImageKey,
+            posterCropData: input.posterCropData,
+          });
           for (const catId of input.categoryIds || []) await addContentCategoryLink(existing.id, catId);
           if (input.subcategoryIds) {
             for (const subId of input.subcategoryIds) await addContentSubcategoryLink(existing.id, subId);
           }
-          return existing;
+          return await getContentItemById(existing.id, ctx.user.id);
         }
 
         return await createContentItem(
