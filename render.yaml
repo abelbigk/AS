@@ -3,7 +3,7 @@ services:
     name: content-organizer
     runtime: node
     plan: free
-    buildCommand: npm install --include=dev --legacy-peer-deps && npm run build
+    buildCommand: npm install --include=dev --legacy-peer-deps && npm run build && cp -r dist/public server/_core/public
     startCommand: npm start
     envVars:
       - key: NODE_ENV

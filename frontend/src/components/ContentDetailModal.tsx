@@ -183,9 +183,16 @@ export function ContentDetailModal({
               ? `maps:0,0?q=${lat},${lng}`
               : Platform.OS === "android"
               ? `geo:${lat},${lng}?q=${lat},${lng}`
-              : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+              : `https://www.google.com/maps/?q=${lat},${lng}`;
         } else {
-          url = displayItem?.locationLinkUrl as string;
+          // Only locationLinkUrl available — open Google Maps search
+          const query = encodeURIComponent(displayItem?.locationLinkUrl || "");
+          url =
+            Platform.OS === "ios"
+              ? `maps:0,0?q=${query}`
+              : Platform.OS === "android"
+              ? `geo:0,0?q=${query}`
+              : `https://www.google.com/maps/search/?q=${query}`;
         }
         Linking.openURL(url).catch((err) => {
           console.error("Could not open navigation URL:", err);
@@ -549,7 +556,7 @@ export function ContentDetailModal({
                       {mediaItems.map((m, i) => {
                         const itemRatio =
                           m.type === "video"
-                            ? videoAspectRatios[m.id]
+                            ? (videoAspectRatios[m.id] ?? 9 / 16)
                             : (aspectRatios[m.id] ?? 1);
 
                         return (
@@ -559,11 +566,7 @@ export function ContentDetailModal({
                               styles.slideWrapper,
                               {
                                 width: sliderWidth,
-                                ...(itemRatio !== undefined
-                                  ? { aspectRatio: itemRatio }
-                                  : m.type === "video"
-                                    ? { minHeight: 240, maxHeight: Math.round(sliderWidth * 1.78) }
-                                    : { aspectRatio: 1 }),
+                                aspectRatio: itemRatio,
                               },
                               Platform.select({
                                 web: {

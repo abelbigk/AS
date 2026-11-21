@@ -94,7 +94,12 @@ export function CustomVideoPlayer({
 
     const statusSub2 = (player as any).addListener?.("statusChange", (e: any) => {
       if (e?.status === "readyToPlay") {
+        // Retry several times with increasing delays — videoTrack may still be null initially
         checkAspectRatio();
+        setTimeout(() => checkAspectRatio(), 100);
+        setTimeout(() => checkAspectRatio(), 300);
+        setTimeout(() => checkAspectRatio(), 700);
+        setTimeout(() => checkAspectRatio(), 1500);
       }
     });
 
