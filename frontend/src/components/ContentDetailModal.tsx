@@ -549,7 +549,7 @@ export function ContentDetailModal({
                       {mediaItems.map((m, i) => {
                         const itemRatio =
                           m.type === "video"
-                            ? (videoAspectRatios[m.id] ?? 16 / 9)
+                            ? videoAspectRatios[m.id]
                             : (aspectRatios[m.id] ?? 1);
 
                         return (
@@ -559,7 +559,11 @@ export function ContentDetailModal({
                               styles.slideWrapper,
                               {
                                 width: sliderWidth,
-                                aspectRatio: itemRatio,
+                                ...(itemRatio !== undefined
+                                  ? { aspectRatio: itemRatio }
+                                  : m.type === "video"
+                                    ? { minHeight: 240, maxHeight: Math.round(sliderWidth * 1.78) }
+                                    : { aspectRatio: 1 }),
                               },
                               Platform.select({
                                 web: {

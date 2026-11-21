@@ -843,6 +843,7 @@ export default function CategoryDetailScreen() {
         onSaved={() => {
           utils.content.listByCategory.invalidate({ categoryId });
           utils.content.listByStatus.invalidate();
+          if (activeEditItem?.id) utils.content.getById.invalidate({ itemId: activeEditItem.id });
         }}
       />
 

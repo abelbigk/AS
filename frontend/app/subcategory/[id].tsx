@@ -566,6 +566,7 @@ export default function SubcategoryDetailScreen() {
         onSaved={() => {
           utils.content.listBySubcategory.invalidate({ subcategoryId });
           utils.content.listByStatus.invalidate();
+          if (activeEditItem?.id) utils.content.getById.invalidate({ itemId: activeEditItem.id });
         }}
       />
 

@@ -367,6 +367,8 @@ export default function HomeScreen() {
         onClose={() => setActiveEditItem(null)}
         onSaved={() => {
           utils.categories.list.invalidate();
+          utils.content.listByStatus.invalidate();
+          if (activeEditItem?.id) utils.content.getById.invalidate({ itemId: activeEditItem.id });
         }}
       />
 

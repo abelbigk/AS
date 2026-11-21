@@ -83,13 +83,25 @@ export function CustomVideoPlayer({
       }
     });
 
-    const srcSub = (player as any).addListener?.("sourceLoad", () => {
-      checkAspectRatio();
+    const srcSub = (player as any).addListener?.("sourceLoad", (e: any) => {
+      const track = e?.availableVideoTracks?.[0];
+      if (track?.size?.width && track?.size?.height) {
+        reportAspectRatio(track.size.width / track.size.height);
+      } else {
+        checkAspectRatio();
+      }
+    });
+
+    const statusSub2 = (player as any).addListener?.("statusChange", (e: any) => {
+      if (e?.status === "readyToPlay") {
+        checkAspectRatio();
+      }
     });
 
     return () => {
       trackSub?.remove?.();
       srcSub?.remove?.();
+      statusSub2?.remove?.();
     };
   }, [player]);
 
@@ -106,6 +118,28 @@ export function CustomVideoPlayer({
         };
       } catch {}
     }
+  }, [uri]);
+
+  // Also try via the rendered VideoView's nativeRef (web only)
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    const timer = setTimeout(() => {
+      try {
+        const nativeVideo = (videoViewRef.current as any)?.nativeRef;
+        if (!nativeVideo) return;
+        if (nativeVideo.videoWidth && nativeVideo.videoHeight) {
+          reportAspectRatio(nativeVideo.videoWidth / nativeVideo.videoHeight);
+          return;
+        }
+        const onMeta = () => {
+          if (nativeVideo.videoWidth && nativeVideo.videoHeight) {
+            reportAspectRatio(nativeVideo.videoWidth / nativeVideo.videoHeight);
+          }
+        };
+        nativeVideo.addEventListener("loadedmetadata", onMeta, { once: true });
+      } catch {}
+    }, 400);
+    return () => clearTimeout(timer);
   }, [uri]);
 
   // Pause video if it becomes inactive (e.g. user slides to another media item)
