@@ -230,12 +230,12 @@ export function ContentCard({
         styles.card,
         {
           backgroundColor:
-            theme === "dark" ? "rgba(255, 255, 255, 0.07)" : "rgba(255, 255, 255, 0.8)",
+            theme === "dark" ? "rgba(255, 255, 255, 0.07)" : "#FFFFFF",
           borderColor: selected
             ? "#3B82F6"
             : theme === "dark"
             ? "rgba(255, 255, 255, 0.12)"
-            : "rgba(0, 0, 0, 0.08)",
+            : colors.border,
           borderWidth: selected ? 2 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
           opacity: pressed ? 0.9 : 1,

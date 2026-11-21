@@ -56,8 +56,61 @@ import {
   getAllUsers,
 } from "./db";
 
-
 import { storageDelete } from "./storage";
+
+async function resolveLocationCoordinates(urlOrText?: string | null): Promise<{ latitude: string | null; longitude: string | null; resolvedUrl: string | null }> {
+  if (!urlOrText || typeof urlOrText !== "string") {
+    return { latitude: null, longitude: null, resolvedUrl: null };
+  }
+  const trimmed = urlOrText.trim();
+
+  // If it's a URL, check if it already contains coordinates or follow redirect
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const directMatch = trimmed.match(/(?:search\/|@|q=|\?q=|destination=)([+-]?\d+(?:\.\d+)?)[,\s+]+([+-]?\d+(?:\.\d+)?)/);
+      if (directMatch && directMatch[1] && directMatch[2]) {
+        return {
+          latitude: directMatch[1],
+          longitude: directMatch[2],
+          resolvedUrl: trimmed,
+        };
+      }
+
+      // If short link or needs redirect resolution
+      const res = await fetch(trimmed, {
+        method: "GET",
+        redirect: "follow",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      });
+      const finalUrl = res.url || trimmed;
+      const redirectMatch = finalUrl.match(/(?:search\/|@|q=|\?q=|destination=)([+-]?\d+(?:\.\d+)?)[,\s+]+([+-]?\d+(?:\.\d+)?)/);
+      if (redirectMatch && redirectMatch[1] && redirectMatch[2]) {
+        return {
+          latitude: redirectMatch[1],
+          longitude: redirectMatch[2],
+          resolvedUrl: finalUrl,
+        };
+      }
+      return { latitude: null, longitude: null, resolvedUrl: finalUrl };
+    } catch {
+      return { latitude: null, longitude: null, resolvedUrl: trimmed };
+    }
+  }
+
+  // Raw coordinates string e.g. "9.001485, 38.677341"
+  const rawMatch = trimmed.match(/^([+-]?\d+(?:\.\d+)?)[,\s]+([+-]?\d+(?:\.\d+)?)$/);
+  if (rawMatch && rawMatch[1] && rawMatch[2]) {
+    return {
+      latitude: rawMatch[1],
+      longitude: rawMatch[2],
+      resolvedUrl: null,
+    };
+  }
+
+  return { latitude: null, longitude: null, resolvedUrl: null };
+}
 
 // Helper — delete a file from R2 storage if a key exists
 async function tryDeleteImage(key?: string | null) {
@@ -378,15 +431,26 @@ export const appRouter = router({
         locationLinkUrl: z.string().nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        let lat = input.latitude ?? null;
+        let lng = input.longitude ?? null;
+        let locUrl = input.locationLinkUrl ?? null;
+        if ((!lat || !lng) && locUrl) {
+          const resolved = await resolveLocationCoordinates(locUrl);
+          if (resolved.latitude && resolved.longitude) {
+            lat = resolved.latitude;
+            lng = resolved.longitude;
+          }
+        }
+
         // Look for existing content with same heading
         const existing = await getContentByHeading(ctx.user.id, input.heading);
         if (existing) {
           // Update location and details if provided
           await updateContentItem(existing.id, ctx.user.id, {
             description: input.description,
-            latitude: input.latitude,
-            longitude: input.longitude,
-            locationLinkUrl: input.locationLinkUrl,
+            latitude: lat,
+            longitude: lng,
+            locationLinkUrl: locUrl,
             posterImageUrl: input.posterImageUrl,
             posterImageKey: input.posterImageKey,
             posterCropData: input.posterCropData,
@@ -407,10 +471,16 @@ export const appRouter = router({
           input.posterCropData,
           input.categoryIds || [],
           input.subcategoryIds || [],
-          input.latitude ?? undefined,
-          input.longitude ?? undefined,
-          input.locationLinkUrl ?? undefined
+          lat ?? undefined,
+          lng ?? undefined,
+          locUrl ?? undefined
         );
+      }),
+
+    resolveLocation: publicProcedure
+      .input(z.object({ url: z.string() }))
+      .mutation(async ({ input }) => {
+        return await resolveLocationCoordinates(input.url);
       }),
 
     searchExisting: protectedProcedure
@@ -441,6 +511,17 @@ export const appRouter = router({
         locationLinkUrl: z.string().nullable().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        let lat = input.latitude;
+        let lng = input.longitude;
+        let locUrl = input.locationLinkUrl;
+        if ((!lat || !lng) && locUrl) {
+          const resolved = await resolveLocationCoordinates(locUrl);
+          if (resolved.latitude && resolved.longitude) {
+            lat = resolved.latitude;
+            lng = resolved.longitude;
+          }
+        }
+
         const existing = await getContentItemById(input.itemId, ctx.user.id);
         const oldSoundId = existing?.soundId;
         if (existing?.posterImageKey && (input.posterImageKey || input.removePoster)) {
@@ -455,9 +536,9 @@ export const appRouter = router({
           posterImageKey: input.removePoster ? null : input.posterImageKey,
           posterCropData: input.removePoster ? null : input.posterCropData,
           soundId: input.soundId,
-          latitude: input.latitude,
-          longitude: input.longitude,
-          locationLinkUrl: input.locationLinkUrl,
+          latitude: lat,
+          longitude: lng,
+          locationLinkUrl: locUrl,
         });
         if (input.soundId !== undefined && oldSoundId && oldSoundId !== input.soundId) {
           await cleanupUnusedSound(oldSoundId);

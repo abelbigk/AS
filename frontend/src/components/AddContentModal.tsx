@@ -387,7 +387,14 @@ export function AddContentModal({
             <View style={styles.fieldGroup}>
               <Text style={[styles.label, { color: colors.textMuted }]}>Heading *</Text>
               <TextInput
-                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                style={[
+                  styles.input,
+                  {
+                    color: colors.text,
+                    borderColor: colors.border,
+                    backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
+                  },
+                ]}
                 value={heading}
                 onChangeText={setHeading}
                 placeholder="Content heading"
@@ -399,7 +406,15 @@ export function AddContentModal({
             <View style={styles.fieldGroup}>
               <Text style={[styles.label, { color: colors.textMuted }]}>Description</Text>
               <TextInput
-                style={[styles.input, styles.multilineInput, { color: colors.text, borderColor: colors.border }]}
+                style={[
+                  styles.input,
+                  styles.multilineInput,
+                  {
+                    color: colors.text,
+                    borderColor: colors.border,
+                    backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
+                  },
+                ]}
                 value={description}
                 onChangeText={setDescription}
                 placeholder="Description (optional)"
@@ -547,7 +562,7 @@ export function AddContentModal({
             <View style={styles.fieldGroup}>
               <Text style={[styles.label, { color: colors.textMuted }]}>Location</Text>
               {(latitude && longitude) || locationLinkUrl ? (
-                <View style={[styles.locationCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={[styles.locationCard, { backgroundColor: theme === "dark" ? colors.surface : "#F1F5F9", borderColor: colors.border }]}>
                   <MapPin size={16} color="#10B981" />
                   <Text style={[styles.locationCardText, { color: colors.text }]} numberOfLines={2}>
                     {latitude && longitude ? `📍 Coordinates: ${latitude}, ${longitude}` : `🔗 ${locationLinkUrl}`}
@@ -569,7 +584,7 @@ export function AddContentModal({
                   <Pressable
                     onPress={handleGetLocation}
                     disabled={isLocating}
-                    style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                    style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: theme === "dark" ? colors.surface : "#FFFFFF" }]}
                   >
                     {isLocating ? (
                       <ActivityIndicator size="small" color={colors.text} />
@@ -582,7 +597,7 @@ export function AddContentModal({
                   </Pressable>
                   <Pressable
                     onPress={() => setShowLocationLinkField((v) => !v)}
-                    style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                    style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: theme === "dark" ? colors.surface : "#FFFFFF" }]}
                   >
                     <Link2 size={14} color={colors.text} />
                     <Text style={[styles.locationBtnText, { color: colors.text }]}>Paste Link</Text>
@@ -592,7 +607,15 @@ export function AddContentModal({
               {showLocationLinkField && !latitude && !locationLinkUrl && (
                 <View style={[styles.locationLinkRow, { borderColor: colors.border }]}>
                   <TextInput
-                    style={[styles.input, { color: colors.text, borderColor: colors.border, flex: 1 }]}
+                    style={[
+                      styles.input,
+                      {
+                        color: colors.text,
+                        borderColor: colors.border,
+                        backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
+                        flex: 1,
+                      },
+                    ]}
                     value={locationLinkInput}
                     onChangeText={setLocationLinkInput}
                     placeholder="Paste a maps link..."
@@ -601,10 +624,18 @@ export function AddContentModal({
                   />
                   <Pressable
                     onPress={() => {
-                      if (locationLinkInput.trim()) {
-                        setLocationLinkUrl(locationLinkInput.trim());
-                        setLatitude(null);
-                        setLongitude(null);
+                      const link = locationLinkInput.trim();
+                      if (link) {
+                        setLocationLinkUrl(link);
+                        // Auto-extract coordinates if in URL
+                        const m = link.match(/(?:search\/|@|q=|\?q=|destination=)([+-]?\d+(?:\.\d+)?)[,\s+]+([+-]?\d+(?:\.\d+)?)/);
+                        if (m && m[1] && m[2]) {
+                          setLatitude(m[1]);
+                          setLongitude(m[2]);
+                        } else {
+                          setLatitude(null);
+                          setLongitude(null);
+                        }
                         setShowLocationLinkField(false);
                       }
                     }}
@@ -780,7 +811,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     fontSize: 15,
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
   },
   multilineInput: {
     height: 80,
@@ -816,7 +846,6 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.03)",
     gap: 6,
   },
   uploadDropzoneText: {
@@ -930,7 +959,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
     marginBottom: 16,
   },
   searchInput: {

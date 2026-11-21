@@ -116,27 +116,40 @@ export function ContentDetailModal({
       confirmText: "Navigate",
       destructive: false,
       onConfirm: () => {
-        let url: string;
-        if (displayItem?.latitude && displayItem?.longitude) {
-          const lat = displayItem.latitude;
-          const lng = displayItem.longitude;
-          url =
+        let lat = displayItem?.latitude;
+        let lng = displayItem?.longitude;
+        const link = displayItem?.locationLinkUrl;
+
+        // If coordinates aren't stored, but link contains them, extract immediately
+        if ((!lat || !lng) && link) {
+          const m = link.match(/(?:search\/|@|q=|\?q=|destination=)([+-]?\d+(?:\.\d+)?)[,\s+]+([+-]?\d+(?:\.\d+)?)/);
+          if (m && m[1] && m[2]) {
+            lat = m[1];
+            lng = m[2];
+          }
+        }
+
+        let navUrl: string;
+        if (lat && lng) {
+          navUrl =
             Platform.OS === "ios"
               ? `maps:0,0?q=${lat},${lng}`
               : Platform.OS === "android"
               ? `geo:${lat},${lng}?q=${lat},${lng}`
-              : `https://www.google.com/maps/?q=${lat},${lng}`;
+              : `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+        } else if (link && /^https?:\/\//i.test(link)) {
+          // Open web map link directly (e.g. https://maps.app.goo.gl/...)
+          navUrl = link;
         } else {
-          // Only locationLinkUrl available — open Google Maps search
-          const query = encodeURIComponent(displayItem?.locationLinkUrl || "");
-          url =
+          const query = encodeURIComponent(link || "");
+          navUrl =
             Platform.OS === "ios"
               ? `maps:0,0?q=${query}`
               : Platform.OS === "android"
               ? `geo:0,0?q=${query}`
-              : `https://www.google.com/maps/search/?q=${query}`;
+              : `https://www.google.com/maps/search/?api=1&query=${query}`;
         }
-        Linking.openURL(url).catch((err) => {
+        Linking.openURL(navUrl).catch((err) => {
           console.error("Could not open navigation URL:", err);
         });
       },

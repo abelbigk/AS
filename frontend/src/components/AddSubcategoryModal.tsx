@@ -117,7 +117,14 @@ export function AddSubcategoryModal({
             <View style={styles.fieldGroup}>
               <Text style={[styles.label, { color: colors.textMuted }]}>Name *</Text>
               <TextInput
-                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                style={[
+                  styles.input,
+                  {
+                    color: colors.text,
+                    borderColor: colors.border,
+                    backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
+                  },
+                ]}
                 value={name}
                 onChangeText={setName}
                 placeholder="Subcategory name"
@@ -221,7 +228,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     fontSize: 15,
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
   },
   multilineInput: {
     height: 75,
@@ -257,7 +263,6 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.03)",
     gap: 4,
   },
   uploadDropzoneText: {

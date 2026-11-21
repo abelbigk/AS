@@ -1,18 +1,21 @@
 /**
- * CustomVideoPlayer
+ * CustomVideoPlayer — TikTok-style scrubber
  *
- * Timeline scrubber rebuilt from scratch using the same pattern as the working
- * old-code TikTokVideoPlayer (raw touch / mouse events on the DOM / RN views,
- * NOT PanResponder which fights with the parent ScrollView).
+ * Scrubber behaviour (matches TikTok exactly):
+ *  • Bar is HIDDEN while playing, SHOWN when paused or dragging.
+ *  • DELTA-BASED drag: touching the bar at any X does NOT jump the video there.
+ *    Instead the drag delta (finger movement in px) is applied to the video's
+ *    progress at the moment the finger was placed. So if the video is at 20%
+ *    and you touch at 60%, the video stays at 20%; dragging left by 10% of the
+ *    bar width moves the video to 10% — your finger ends up at 50%.
+ *  • Bar height animates from 3 → 7px while dragging (Animated.spring).
+ *  • Thumb dot scales up while dragging.
+ *  • Time tooltip shown while dragging.
+ *  • Video pauses during drag, resumes on release.
+ *  • Seeking on every move event (no debounce) → smooth frame-by-frame preview.
  *
- * Key design decisions
- * ─────────────────────
- * • VideoView uses flex:1 (never absoluteFill) → Android contentFit="contain"
- *   is respected without zooming.
- * • Progress bar: onTouchStart / onTouchMove / onTouchEnd on mobile;
- *   onMouseDown + document mousemove/mouseup on web — same as TikTok web player.
- * • Pause while dragging, always resume + seek on release.
- * • Time tooltip shown while dragging (TikTok style).
+ * Video layout:
+ *  • VideoView uses flex:1 (never absoluteFill) → Android honours contentFit="contain".
  */
 
 import React, { useRef, useState, useEffect, useCallback } from "react";
@@ -22,6 +25,7 @@ import {
   Pressable,
   Text,
   Platform,
+  Animated as RNAnimated,
 } from "react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { Play, MoreVertical, PictureInPicture2, Gauge } from "lucide-react-native";
@@ -42,149 +46,277 @@ export function CustomVideoPlayer({
   onDraggingChange,
   style,
 }: CustomVideoPlayerProps) {
-  const [isPlaying, setIsPlaying]       = useState(false);
+  // ─── React state (triggers re-render for display) ─────────────────────────
+  const [isPlaying,       setIsPlaying]       = useState(false);
   const [showInitialPlay, setShowInitialPlay] = useState(true);
-  const [currentTime, setCurrentTime]   = useState(0);
-  const [duration, setDuration]         = useState(0);
-  const [isDragging, setIsDragging]     = useState(false);
-  const [progress, setProgress]         = useState(0);       // 0–100 (%)
-  const [wasPlayingBeforeDrag, setWasPlayingBeforeDrag] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [currentTime,     setCurrentTime]     = useState(0);
+  const [duration,        setDuration]        = useState(0);
+  const [isDragging,      setIsDragging]      = useState(false);
+  const [dragProgress,    setDragProgress]    = useState(0);  // 0–100 displayed during drag
 
-  const containerRef      = useRef<any>(null);
-  const progressBarRef    = useRef<any>(null);  // the thin bar element
-  const videoViewRef      = useRef<VideoView>(null);
-  const pinchStartDist    = useRef<number | null>(null);
-  const isDraggingRef     = useRef(false);       // shadow for event handlers (no stale closure)
-  const progressRef       = useRef(0);           // shadow for smooth drag without re-renders
-  const dragStartX        = useRef<number | null>(null);
-  const dragStartProgress = useRef(0);
+  // ─── Refs (read in event handlers — no stale closures) ───────────────────
+  const isDraggingRef        = useRef(false);
+  const isPlayingRef         = useRef(false);
+  const currentProgressRef   = useRef(0);     // video progress 0–100, updated each timeUpdate
+  const dragStartPageXRef    = useRef(0);     // absolute X where drag started
+  const dragStartProgressRef = useRef(0);     // video progress at drag start
+  const barWidthRef          = useRef(0);     // progress bar width in px
+  const durationRef          = useRef(0);     // mirrors duration state for handlers
+
+  const containerRef   = useRef<any>(null);
+  const progressBarRef = useRef<any>(null);
+  const videoViewRef   = useRef<VideoView>(null);
+  const pinchDistRef   = useRef<number | null>(null);
+
+  // ─── Animated values for bar expansion while dragging ────────────────────
+  const barHeight  = useRef(new RNAnimated.Value(3)).current;
+  const thumbScale = useRef(new RNAnimated.Value(1)).current;
+  const barOpacity = useRef(new RNAnimated.Value(1)).current; // visible while paused, fades out when playing
+
+  const expandBar = (expand: boolean) => {
+    RNAnimated.spring(barHeight,  { toValue: expand ? 7  : 3, useNativeDriver: false, tension: 200, friction: 12 }).start();
+    RNAnimated.spring(thumbScale, { toValue: expand ? 1.9 : 1, useNativeDriver: true,  tension: 200, friction: 12 }).start();
+  };
+
+  // Animate bar visibility: hidden while playing, visible when paused or dragging
+  useEffect(() => {
+    const shouldShow = !isPlaying || isDragging;
+    RNAnimated.timing(barOpacity, {
+      toValue: shouldShow ? 1 : 0,
+      duration: 180,
+      useNativeDriver: false,
+    }).start();
+  }, [isPlaying, isDragging]);
 
   // ─── Player ───────────────────────────────────────────────────────────────
-  const player = useVideoPlayer({ uri }, (p) => {
-    p.loop = true;
-  });
+  const player = useVideoPlayer({ uri }, (p) => { p.loop = true; });
 
-  // Sync duration & playback state from player events
   useEffect(() => {
     const playSub = player.addListener("playingChange", (e) => {
       setIsPlaying(e.isPlaying);
+      isPlayingRef.current = e.isPlaying;
       onPlayingChange?.(e.isPlaying);
       if (e.isPlaying) setShowInitialPlay(false);
     });
 
     const timeSub = player.addListener("timeUpdate", (e) => {
       if (!isDraggingRef.current) {
-        const dur = player.duration || 0;
-        const t   = e.currentTime;
-        setCurrentTime(t);
-        if (dur > 0) {
-          const pct = (t / dur) * 100;
-          setProgress(pct);
-          progressRef.current = pct;
-        }
+        const dur = durationRef.current || player.duration || 0;
+        setCurrentTime(e.currentTime);
+        if (dur > 0) currentProgressRef.current = (e.currentTime / dur) * 100;
       }
-      if (player.duration && duration === 0) setDuration(player.duration);
+      if (player.duration && durationRef.current === 0) {
+        setDuration(player.duration);
+        durationRef.current = player.duration;
+      }
     });
 
     const statusSub = player.addListener("statusChange", () => {
-      if (player.duration) setDuration(player.duration);
+      if (player.duration) {
+        setDuration(player.duration);
+        durationRef.current = player.duration;
+      }
     });
 
-    if (player.duration && duration === 0) setDuration(player.duration);
+    if (player.duration && durationRef.current === 0) {
+      setDuration(player.duration);
+      durationRef.current = player.duration;
+    }
 
     return () => { playSub.remove(); timeSub.remove(); statusSub.remove(); };
-  }, [player, duration, onPlayingChange]);
+  }, [player, onPlayingChange]);
+
+  // Keep durationRef in sync with state
+  useEffect(() => { durationRef.current = duration; }, [duration]);
 
   // Pause when slide becomes inactive
   useEffect(() => {
-    if (!isActive && isPlaying) { player.pause(); setIsPlaying(false); }
-  }, [isActive, isPlaying, player]);
+    if (!isActive && isPlayingRef.current) { player.pause(); setIsPlaying(false); }
+  }, [isActive, player]);
 
   // Pause on unmount
   useEffect(() => () => { try { player.pause(); } catch {} }, [player]);
 
-  // ─── Play / Pause toggle ──────────────────────────────────────────────────
+  // ─── Toggle play / pause ──────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
-    if (isDraggingRef.current) return; // ignore taps while scrubbing
-    if (isPlaying) {
+    if (isDraggingRef.current) return;   // ignore taps during scrub
+    if (isPlayingRef.current) {
       player.pause();
     } else {
       player.play();
       setShowInitialPlay(false);
     }
-  }, [isPlaying, player]);
+  }, [player]);
 
-  // ─── Fullscreen ───────────────────────────────────────────────────────────
+  // ─── Seek helper ──────────────────────────────────────────────────────────
+  const seekTo = (pct: number) => {
+    const dur = durationRef.current || player.duration || 0;
+    if (dur <= 0) return;
+    const target = (pct / 100) * dur;
+    setCurrentTime(target);
+    try { player.currentTime = target; } catch {}
+  };
+
+  // ─── Drag lifecycle helpers (called from both native + web handlers) ──────
+  const beginDrag = (pageX: number) => {
+    dragStartPageXRef.current    = pageX;
+    dragStartProgressRef.current = currentProgressRef.current;
+    isDraggingRef.current        = true;
+    setIsDragging(true);
+    setDragProgress(currentProgressRef.current);  // show current pos, no jump
+    onDraggingChange?.(true);
+    if (isPlayingRef.current) player.pause();
+    expandBar(true);
+  };
+
+  const updateDrag = (pageX: number) => {
+    if (!isDraggingRef.current || barWidthRef.current <= 0) return;
+    // Delta from finger-down point, applied to progress at that moment
+    const deltaPx  = pageX - dragStartPageXRef.current;
+    const deltaPct = (deltaPx / barWidthRef.current) * 100;
+    const newPct   = Math.max(0, Math.min(100, dragStartProgressRef.current + deltaPct));
+    setDragProgress(newPct);
+    seekTo(newPct);  // immediate — no rAF — for frame-accurate preview
+  };
+
+  const commitDrag = (pageX: number) => {
+    if (!isDraggingRef.current) return;
+    updateDrag(pageX);             // ensure final position is committed
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    onDraggingChange?.(false);
+    expandBar(false);
+    try { player.play(); } catch {}
+    setIsPlaying(true);
+    setShowInitialPlay(false);
+  };
+
+  // ─── Native (Android / iOS) touch handlers ───────────────────────────────
+  // Attached via React Native props — no PanResponder (which fights ScrollView).
+  const onNativeTouchStart = (e: any) => {
+    e.stopPropagation?.();
+    beginDrag(e.nativeEvent.pageX);
+  };
+  const onNativeTouchMove = (e: any) => {
+    e.stopPropagation?.();
+    updateDrag(e.nativeEvent.pageX);
+  };
+  const onNativeTouchEnd = (e: any) => {
+    e.stopPropagation?.();
+    commitDrag(e.nativeEvent.pageX);
+  };
+
+  // ─── Web mouse & touch handlers ──────────────────────────────────────────
+  // Attached imperatively so document-level move/up work (dragging outside
+  // the bar continues the scrub — exactly like TikTok web player).
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const bar = progressBarRef.current as HTMLElement | null;
+    if (!bar) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      beginDrag(e.clientX);
+
+      const onMouseMove = (ev: MouseEvent) => updateDrag(ev.clientX);
+      const onMouseUp   = (ev: MouseEvent) => {
+        commitDrag(ev.clientX);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup",   onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup",   onMouseUp);
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      e.stopPropagation();
+      beginDrag(e.touches[0].clientX);
+
+      const onTouchMove = (ev: TouchEvent) => {
+        if (ev.touches.length !== 1) return;
+        updateDrag(ev.touches[0].clientX);
+      };
+      const onTouchEnd = (ev: TouchEvent) => {
+        const touch = ev.changedTouches[0];
+        commitDrag(touch ? touch.clientX : dragStartPageXRef.current);
+        document.removeEventListener("touchmove", onTouchMove);
+        document.removeEventListener("touchend", onTouchEnd);
+      };
+      document.addEventListener("touchmove", onTouchMove, { passive: false });
+      document.addEventListener("touchend", onTouchEnd);
+    };
+
+    bar.addEventListener("mousedown", onMouseDown);
+    bar.addEventListener("touchstart", onTouchStart, { passive: false });
+    return () => {
+      bar.removeEventListener("mousedown", onMouseDown);
+      bar.removeEventListener("touchstart", onTouchStart);
+    };
+  // Re-run only if the bar DOM element changes (practically never).
+  // beginDrag/updateDrag/commitDrag read everything via refs — no stale closures.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progressBarRef.current]);
+
+  // ─── Web: pinch-to-fullscreen ─────────────────────────────────────────────
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const enterFullscreen = () => {
     try {
       if (Platform.OS === "web") {
         const el = containerRef.current as any;
-        if (el?.requestFullscreen && typeof document !== "undefined" && !document.fullscreenElement) {
+        if (el?.requestFullscreen && !document.fullscreenElement) {
           el.requestFullscreen().catch(() => {});
-          setIsFullscreen(true);
-          return;
+          setIsFullscreen(true); return;
         }
       }
       videoViewRef.current?.enterFullscreen().catch(() => {});
       setIsFullscreen(true);
     } catch {}
   };
-
   const exitFullscreen = () => {
     try {
       if (Platform.OS === "web") {
-        if (typeof document !== "undefined" && document.fullscreenElement) {
-          document.exitFullscreen().catch(() => {});
-        }
-        setIsFullscreen(false);
-        return;
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        setIsFullscreen(false); return;
       }
       videoViewRef.current?.exitFullscreen().catch(() => {});
       setIsFullscreen(false);
     } catch { setIsFullscreen(false); }
   };
 
-  // Pinch-to-fullscreen (web only — touch events on DOM)
   useEffect(() => {
     if (Platform.OS !== "web") return;
-    const container = containerRef.current as any;
-    if (!container || typeof container.addEventListener !== "function") return;
-
+    const el = containerRef.current as HTMLElement | null;
+    if (!el) return;
     const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        try { e.preventDefault(); } catch {}
-        pinchStartDist.current = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-      }
+      if (e.touches.length !== 2) return;
+      try { e.preventDefault(); } catch {}
+      pinchDistRef.current = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
     };
     const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2 && pinchStartDist.current !== null) {
-        try { e.preventDefault(); } catch {}
-        const d = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-        const delta = d - pinchStartDist.current;
-        if (Math.abs(delta) > 30) {
-          if (delta > 0 && !isFullscreen) { enterFullscreen(); pinchStartDist.current = d; }
-          else if (delta < 0 && isFullscreen) { exitFullscreen(); pinchStartDist.current = d; }
-        }
+      if (e.touches.length !== 2 || pinchDistRef.current === null) return;
+      try { e.preventDefault(); } catch {}
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      const delta = d - pinchDistRef.current;
+      if (Math.abs(delta) > 30) {
+        if (delta > 0 && !isFullscreen) { enterFullscreen(); pinchDistRef.current = d; }
+        else if (delta < 0 && isFullscreen) { exitFullscreen(); pinchDistRef.current = d; }
       }
     };
-    const onTouchEnd = () => { pinchStartDist.current = null; };
-    const onFsChange = () => { setIsFullscreen(!!document.fullscreenElement); };
-
-    container.addEventListener("touchstart", onTouchStart, { passive: false });
-    container.addEventListener("touchmove",  onTouchMove,  { passive: false });
-    container.addEventListener("touchend",   onTouchEnd);
+    const onTouchEnd = () => { pinchDistRef.current = null; };
+    const onFsChange  = () => { setIsFullscreen(!!document.fullscreenElement); };
+    el.addEventListener("touchstart",       onTouchStart, { passive: false });
+    el.addEventListener("touchmove",        onTouchMove,  { passive: false });
+    el.addEventListener("touchend",         onTouchEnd);
     document.addEventListener("fullscreenchange", onFsChange);
     return () => {
-      container.removeEventListener("touchstart", onTouchStart);
-      container.removeEventListener("touchmove",  onTouchMove);
-      container.removeEventListener("touchend",   onTouchEnd);
+      el.removeEventListener("touchstart",  onTouchStart);
+      el.removeEventListener("touchmove",   onTouchMove);
+      el.removeEventListener("touchend",    onTouchEnd);
       document.removeEventListener("fullscreenchange", onFsChange);
     };
   }, [isFullscreen]);
@@ -195,182 +327,28 @@ export function CustomVideoPlayer({
     const apply = () => {
       try {
         const el = (videoViewRef.current as any)?.nativeRef as HTMLVideoElement | null;
-        if (el) {
-          el.style.width     = "100%";
-          el.style.height    = "100%";
-          el.style.maxWidth  = "100%";
-          el.style.maxHeight = "100%";
-          el.style.objectFit = "contain";
-        }
+        if (el) { el.style.width = "100%"; el.style.height = "100%"; el.style.maxWidth = "100%"; el.style.maxHeight = "100%"; el.style.objectFit = "contain"; }
       } catch {}
     };
     apply();
-    const t = setTimeout(apply, 100);
+    const t = setTimeout(apply, 150);
     return () => clearTimeout(t);
   }, [uri]);
 
-  // ─── Timeline helpers ─────────────────────────────────────────────────────
-  /**
-   * Given a clientX (pixels from left of viewport), compute 0–100 progress
-   * by measuring the progress bar's bounding rect on web, or using native
-   * locationX on mobile.
-   */
-  const clientXToProgress = (clientX: number): number => {
-    const bar = progressBarRef.current as any;
-    if (!bar) return progressRef.current;
-    if (Platform.OS === "web" && typeof bar.getBoundingClientRect === "function") {
-      const rect = bar.getBoundingClientRect();
-      if (rect.width <= 0) return progressRef.current;
-      return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
-    }
-    // Native: use stored layout width
-    const { width } = bar._nativeLayout || { width: 0 };
-    if (width <= 0) return progressRef.current;
-    return Math.max(0, Math.min(100, (clientX / width) * 100));
-  };
+  // ─── Display values ───────────────────────────────────────────────────────
+  const currentDur     = duration || player.duration || 0;
+  const displayProgress = isDragging
+    ? dragProgress
+    : (currentDur > 0 ? Math.min(100, Math.max(0, (currentTime / currentDur) * 100)) : 0);
+  const displayTime = isDragging ? (currentDur * dragProgress) / 100 : currentTime;
 
-  const seekToProgress = (pct: number) => {
-    const dur = duration || player.duration || 0;
-    if (dur <= 0) return;
-    const t = (pct / 100) * dur;
-    setCurrentTime(t);
-    try { player.currentTime = t; } catch {}
-  };
-
-  // ─── NATIVE (Android/iOS) touch handlers ─────────────────────────────────
-  // These are React Native synthetic events on the View — no PanResponder,
-  // exactly the same approach as TikTokVideoPlayer.tsx in the old code.
-
-  const onProgressTouchStart = (e: any) => {
-    e.stopPropagation?.();
-    setWasPlayingBeforeDrag(isPlaying);
-    if (isPlaying) player.pause();
-
-    isDraggingRef.current = true;
-    setIsDragging(true);
-    onDraggingChange?.(true);
-
-    const bar = progressBarRef.current as any;
-    const barWidth = bar?._nativeLayout?.width ?? 0;
-    const touchX   = e.nativeEvent?.locationX ?? 0;
-    const pct = barWidth > 0 ? Math.max(0, Math.min(100, (touchX / barWidth) * 100)) : progressRef.current;
-
-    dragStartX.current        = e.nativeEvent?.pageX ?? 0;
-    dragStartProgress.current = pct;
-    progressRef.current       = pct;
-    setProgress(pct);
-    seekToProgress(pct);
-  };
-
-  const onProgressTouchMove = (e: any) => {
-    e.stopPropagation?.();
-    if (!isDraggingRef.current || dragStartX.current === null) return;
-
-    const bar = progressBarRef.current as any;
-    const barWidth = bar?._nativeLayout?.width ?? 0;
-    if (barWidth <= 0) return;
-
-    const delta   = (e.nativeEvent?.pageX ?? 0) - dragStartX.current;
-    const deltaPct = (delta / barWidth) * 100;
-    const pct     = Math.max(0, Math.min(100, dragStartProgress.current + deltaPct));
-
-    progressRef.current = pct;
-    setProgress(pct);
-    seekToProgress(pct);
-  };
-
-  const onProgressTouchEnd = (e: any) => {
-    e.stopPropagation?.();
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    onDraggingChange?.(false);
-    dragStartX.current = null;
-    // Always resume + dismiss initial play button
-    try { player.play(); } catch {}
-    setIsPlaying(true);
-    setShowInitialPlay(false);
-  };
-
-  // ─── WEB mouse handlers (attached imperatively to avoid passive issues) ───
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-    const bar = progressBarRef.current as any;
-    if (!bar || typeof bar.addEventListener !== "function") return;
-
-    const onMouseDown = (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      setWasPlayingBeforeDrag(isPlaying);
-      if (isPlaying) player.pause();
-
-      isDraggingRef.current = true;
-      setIsDragging(true);
-      onDraggingChange?.(true);
-
-      const rect = bar.getBoundingClientRect();
-      const pct  = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-      dragStartX.current        = e.clientX;
-      dragStartProgress.current = pct;
-      progressRef.current       = pct;
-      setProgress(pct);
-      seekToProgress(pct);
-
-      const onMouseMove = (ev: MouseEvent) => {
-        if (!isDraggingRef.current) return;
-        const r    = bar.getBoundingClientRect();
-        const p    = Math.max(0, Math.min(100, ((ev.clientX - r.left) / r.width) * 100));
-        progressRef.current = p;
-        setProgress(p);
-        seekToProgress(p);
-      };
-
-      const onMouseUp = (ev: MouseEvent) => {
-        if (!isDraggingRef.current) return;
-        const r   = bar.getBoundingClientRect();
-        const p   = Math.max(0, Math.min(100, ((ev.clientX - r.left) / r.width) * 100));
-        progressRef.current = p;
-        setProgress(p);
-        seekToProgress(p);
-
-        isDraggingRef.current = false;
-        setIsDragging(false);
-        onDraggingChange?.(false);
-        dragStartX.current = null;
-        try { player.play(); } catch {}
-        setIsPlaying(true);
-        setShowInitialPlay(false);
-
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup",   onMouseUp);
-      };
-
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup",   onMouseUp);
-    };
-
-    bar.addEventListener("mousedown", onMouseDown);
-    return () => bar.removeEventListener("mousedown", onMouseDown);
-  // isPlaying intentionally not in deps — we capture it via closure at mousedown time
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player, duration, onDraggingChange, progressBarRef.current]);
-
-  // ─── Computed display values ──────────────────────────────────────────────
-  const currentDuration = duration || player.duration || 0;
-  const displayProgress = isDragging ? progress : (
-    currentDuration > 0 ? Math.min(100, Math.max(0, (currentTime / currentDuration) * 100)) : 0
-  );
-  const displayTime = isDragging
-    ? (currentDuration * displayProgress) / 100
-    : currentTime;
-
-  const formatTime = (secs: number) => {
+  const formatTime = (secs: number): string => {
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
-  // ─── Menu items ───────────────────────────────────────────────────────────
+  // ─── Menu ─────────────────────────────────────────────────────────────────
   const menuItems: DropdownItem[] = [
     {
       label: "Picture in Picture",
@@ -387,7 +365,7 @@ export function CustomVideoPlayer({
   return (
     <View ref={containerRef} style={[styles.container, style]}>
 
-      {/* ── Video ── flex:1 (NOT absoluteFill) keeps contentFit on Android */}
+      {/* ── Video ── flex:1 (not absoluteFill) for correct Android contain */}
       <Pressable onPress={togglePlay} style={styles.videoFlex}>
         <VideoView
           ref={videoViewRef}
@@ -398,17 +376,19 @@ export function CustomVideoPlayer({
         />
       </Pressable>
 
-      {/* ── Big initial play button ── */}
+      {/* ── Big initial play button (shown before first play) ── */}
       {showInitialPlay && (
-        <Pressable onPress={togglePlay} style={styles.centerPlayBtn}>
-          <View style={styles.playIconCircle}>
-            <Play size={32} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 3 }} />
+        <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill} pointerEvents="box-only">
+          <View style={styles.centerPlayOverlay}>
+            <View style={styles.playIconCircle}>
+              <Play size={32} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 3 }} />
+            </View>
           </View>
         </Pressable>
       )}
 
-      {/* ── 3-dot menu (top-right, only when paused) ── */}
-      {!isPlaying && !isDragging && (
+      {/* ── 3-dot menu (top-right, only when paused and NOT showing initial play) ── */}
+      {!isPlaying && !isDragging && !showInitialPlay && (
         <View style={styles.menuContainer}>
           <DropdownMenu
             trigger={(open) => (
@@ -422,48 +402,45 @@ export function CustomVideoPlayer({
         </View>
       )}
 
-      {/* ── Time tooltip while dragging (TikTok style) ── */}
+      {/* ── Time tooltip (only while actively dragging) ── */}
       {isDragging && (
         <View style={styles.timeTooltip} pointerEvents="none">
           <Text style={styles.timeTooltipText}>
-            {formatTime(displayTime)} / {formatTime(currentDuration)}
+            {formatTime(displayTime)} / {formatTime(currentDur)}
           </Text>
         </View>
       )}
 
-      {/* ── Progress bar ── */}
-      {/*
-        Native: onTouchStart/Move/End directly on this View — same as old
-        TikTokVideoPlayer.tsx. We store the layout width in _nativeLayout via onLayout.
-
-        Web: mousedown is attached imperatively in a useEffect above so we
-        can add document-level mousemove/mouseup (the same pattern TikTok uses).
-      */}
+      {/* ── Progress bar (hidden while playing, visible when paused or dragging) ──
+            The hitbox is a tall, full-width View at the bottom that is always active.
+            Touch/mouse starts the delta-based drag — the video does NOT jump
+            to where the finger lands; it moves proportionally to finger travel. */}
       <View
         ref={progressBarRef}
         style={styles.progressHitbox}
-        onLayout={(e) => {
-          // Store layout so native touch handlers can read bar width
-          const bar = progressBarRef.current as any;
-          if (bar) bar._nativeLayout = e.nativeEvent.layout;
-        }}
-        onTouchStart={Platform.OS !== "web" ? onProgressTouchStart : undefined}
-        onTouchMove={Platform.OS  !== "web" ? onProgressTouchMove  : undefined}
-        onTouchEnd={Platform.OS   !== "web" ? onProgressTouchEnd   : undefined}
+        onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
+        onTouchStart={Platform.OS !== "web" ? onNativeTouchStart : undefined}
+        onTouchMove={Platform.OS  !== "web" ? onNativeTouchMove  : undefined}
+        onTouchEnd={Platform.OS   !== "web" ? onNativeTouchEnd   : undefined}
       >
-        {/* Visual track (thin line + filled portion + thumb dot) */}
-        <View style={styles.track} pointerEvents="none">
-          {/* Elapsed fill */}
+        {/* Animated track: height expands 3px -> 7px on drag, fades in when paused/dragging */}
+        <RNAnimated.View style={[styles.track, { height: barHeight, opacity: barOpacity }]}>
+          {/* Elapsed fill — grows from left */}
           <View
             style={[
               styles.elapsed,
               { width: `${Math.max(0, Math.min(100, displayProgress))}%` as any },
             ]}
           >
-            {/* Thumb dot at the right edge of the fill */}
-            <View style={[styles.thumb, isDragging && styles.thumbLarge]} />
+            {/* Thumb dot at right edge of elapsed fill, scales up while dragging */}
+            <RNAnimated.View
+              style={[
+                styles.thumb,
+                { transform: [{ scale: thumbScale }] },
+              ]}
+            />
           </View>
-        </View>
+        </RNAnimated.View>
       </View>
 
     </View>
@@ -475,29 +452,27 @@ const styles = StyleSheet.create({
   container: {
     width: "100%",
     height: "100%",
-    backgroundColor: "#000000",
+    backgroundColor: "#000",
     overflow: "hidden",
   },
 
-  // flex:1 — the only layout that makes VideoView respect contentFit on Android
+  // flex:1 is the key — absoluteFill causes Android to zoom the video
   videoFlex: {
     flex: 1,
     width: "100%",
     height: "100%",
   },
 
-  centerPlayBtn: {
-    position: "absolute",
-    top: 0, left: 0, right: 0, bottom: 0,
+  centerPlayOverlay: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 20,
   },
   playIconCircle: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: "rgba(255, 255, 255, 0.35)",
+    backgroundColor: "rgba(255,255,255,0.35)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -512,76 +487,72 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    backgroundColor: "rgba(0,0,0,0.45)",
     alignItems: "center",
     justifyContent: "center",
   },
 
   timeTooltip: {
     position: "absolute",
-    bottom: 28,
+    bottom: 32,
     alignSelf: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.75)",
-    paddingHorizontal: 12,
+    backgroundColor: "rgba(0,0,0,0.78)",
+    paddingHorizontal: 14,
     paddingVertical: 5,
     borderRadius: 14,
     zIndex: 40,
   },
   timeTooltipText: {
-    color: "#FFFFFF",
+    color: "#FFF",
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0.3,
   },
 
-  // Tall invisible hitbox at bottom so the finger can tap anywhere in this zone
+  // Tall invisible hitbox — easy for a finger to land on
   progressHitbox: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    height: 32,          // tall finger target
+    height: 36,
     justifyContent: "flex-end",
-    paddingBottom: 4,
+    paddingBottom: 5,
     zIndex: 90,
-    cursor: "pointer" as any,
+    // Web only cursor
+    ...Platform.select({ web: { cursor: "pointer" } as any }),
   },
-  // Thin visual track (background)
+
+  // The thin line. Height is driven by Animated.Value (3px → 7px).
   track: {
-    height: 3,
-    backgroundColor: "rgba(255,255,255,0.30)",
     width: "100%",
-    borderRadius: 2,
-    overflow: "visible",
+    backgroundColor: "rgba(255,255,255,0.28)",
+    borderRadius: 4,
+    overflow: "visible",   // let the thumb overflow the thin bar
   },
-  // Elapsed (white filled) portion — grows from left
+
+  // White fill that grows from left
   elapsed: {
     height: "100%",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 2,
-    // needed so the thumb (child) can overflow the 3px height
+    backgroundColor: "#FFF",
+    borderRadius: 4,
     overflow: "visible",
   },
-  // Thumb dot — sits at the right edge of the elapsed fill
+
+  // Thumb circle at the right edge of the elapsed fill
   thumb: {
     position: "absolute",
-    right: -5,
-    top: -4,
-    width: 11,
-    height: 11,
+    right: -6,
+    top: "50%" as any,
+    marginTop: -6,
+    width: 12,
+    height: 12,
     borderRadius: 6,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#FFF",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 2,
-    elevation: 4,
-  },
-  thumbLarge: {
-    right: -8,
-    top: -7,
-    width: 17,
-    height: 17,
-    borderRadius: 9,
+    shadowOpacity: 0.45,
+    shadowRadius: 3,
+    elevation: 5,
   },
 });
