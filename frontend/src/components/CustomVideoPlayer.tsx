@@ -331,14 +331,37 @@ export function CustomVideoPlayer({
     },
   ];
 
+  // Ensure HTML video element on Web is constrained to container with contain fit
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      const applyWebStyles = () => {
+        try {
+          const el = (videoViewRef.current as any)?.nativeRef as HTMLVideoElement | null;
+          if (el) {
+            el.style.width = "100%";
+            el.style.height = "100%";
+            el.style.maxWidth = "100%";
+            el.style.maxHeight = "100%";
+            el.style.objectFit = "contain";
+          }
+        } catch {}
+      };
+      applyWebStyles();
+      const timer = setTimeout(applyWebStyles, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [uri]);
+
   return (
     <View ref={containerRef} style={[styles.container, style]}>
-      {/* Video element - fills the frame with clean contain fit */}
-      <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill}>
+      {/* Pressable fills the container; VideoView uses flex:1 (NOT absoluteFill)
+          so Android/iOS contentFit="contain" is respected without zooming. */}
+      <Pressable onPress={togglePlay} style={styles.videoFlex}>
+        {/* VideoView must use flex:1 (NOT absoluteFill) so Android respects contain */}
         <VideoView
           ref={videoViewRef}
           player={player}
-          style={StyleSheet.absoluteFill}
+          style={styles.videoFlex}
           nativeControls={false}
           contentFit="contain"
         />
@@ -417,6 +440,13 @@ export function CustomVideoPlayer({
 }
 
 const styles = StyleSheet.create({
+  // flex:1 on VideoView (NOT absoluteFill) is the only approach that correctly
+  // honours contentFit="contain" on both Android and iOS without zooming.
+  videoFlex: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+  },
   container: {
     width: "100%",
     height: "100%",
