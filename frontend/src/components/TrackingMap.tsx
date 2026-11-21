@@ -19,9 +19,17 @@ interface TrackingMapProps {
   locations: LocationPoint[];
   username?: string;
   selectedPointId?: number | null;
+  isFullScreen?: boolean;
+  style?: any;
 }
 
-export function TrackingMap({ locations, username, selectedPointId }: TrackingMapProps) {
+export function TrackingMap({
+  locations,
+  username,
+  selectedPointId,
+  isFullScreen = false,
+  style,
+}: TrackingMapProps) {
   const { theme, colors } = useTheme();
 
   const htmlContent = useMemo(() => {
@@ -220,10 +228,21 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
 
   if (Platform.OS === "web") {
     return (
-      <View style={styles.mapContainer}>
+      <View
+        style={[
+          styles.mapContainer,
+          isFullScreen && styles.mapContainerFullscreen,
+          style,
+        ]}
+      >
         <iframe
           srcDoc={htmlContent}
-          style={{ width: "100%", height: "100%", border: "none", borderRadius: 16 }}
+          style={{
+            width: "100%",
+            height: "100%",
+            border: "none",
+            borderRadius: isFullScreen ? 0 : 16,
+          }}
           title="Leaflet Tracking Map"
         />
       </View>
@@ -231,7 +250,13 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
   }
 
   return (
-    <View style={styles.mapContainer}>
+    <View
+      style={[
+        styles.mapContainer,
+        isFullScreen && styles.mapContainerFullscreen,
+        style,
+      ]}
+    >
       <WebView
         originWhitelist={["*"]}
         source={{ html: htmlContent }}
@@ -253,6 +278,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.12)",
     marginBottom: 16,
+  },
+  mapContainerFullscreen: {
+    height: "100%",
+    flex: 1,
+    borderRadius: 0,
+    borderWidth: 0,
+    marginBottom: 0,
   },
   webView: {
     flex: 1,

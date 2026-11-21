@@ -8,6 +8,7 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
+  Modal,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Image } from "expo-image";
@@ -22,6 +23,8 @@ import {
   MapPin,
   RefreshCw,
   Navigation,
+  Maximize2,
+  Minimize2,
 } from "lucide-react-native";
 import { format, subDays, addDays, isToday, parseISO, startOfDay, endOfDay } from "date-fns";
 import { trpc } from "../src/lib/trpc";
@@ -45,6 +48,7 @@ export default function LocationScreen() {
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
   const [calendarModalOpen, setCalendarModalOpen] = useState(false);
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
+  const [isMapFullscreen, setIsMapFullscreen] = useState(false);
 
   const selectedDate = useMemo(() => {
     try {
@@ -350,6 +354,26 @@ export default function LocationScreen() {
             />
           )}
 
+          {/* Full Screen Map Button */}
+          {!isLoading && locations.length > 0 && (
+            <Pressable
+              onPress={() => setIsMapFullscreen(true)}
+              style={({ pressed }) => [
+                styles.fullscreenBtn,
+                {
+                  backgroundColor: colors.glassBg,
+                  borderColor: colors.border,
+                  opacity: pressed ? 0.75 : 1,
+                },
+              ]}
+            >
+              <Maximize2 size={16} color={colors.accent} />
+              <Text style={[styles.fullscreenBtnText, { color: colors.text }]}>
+                Full Screen Map
+              </Text>
+            </Pressable>
+          )}
+
           {/* Chronological Coordinates Timeline */}
           {locations.length > 0 && (
             <View style={styles.timelineSection}>
@@ -416,6 +440,83 @@ export default function LocationScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Fullscreen Map Modal */}
+      <Modal
+        visible={isMapFullscreen}
+        animationType="fade"
+        onRequestClose={() => setIsMapFullscreen(false)}
+      >
+        <View style={styles.fullscreenModalContainer}>
+          <TrackingMap
+            locations={locations as LocationPoint[]}
+            username={username}
+            selectedPointId={selectedPointId}
+            isFullScreen={true}
+          />
+
+          {/* Floating Controls Overlay */}
+          <View
+            style={[
+              styles.fullscreenHeader,
+              { paddingTop: Math.max(insets.top, 16) + 8 },
+            ]}
+          >
+            <Pressable
+              onPress={() => setIsMapFullscreen(false)}
+              hitSlop={8}
+              style={[
+                styles.floatingActionBtn,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Minimize2 size={18} color={colors.text} />
+            </Pressable>
+
+            <View
+              style={[
+                styles.fullscreenPill,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Text
+                style={[styles.fullscreenPillTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {username} · {format(selectedDate, "MMM d, yyyy")}
+              </Text>
+              <View style={styles.fullscreenCountBadge}>
+                <Text style={styles.fullscreenCountText}>
+                  {locations.length} pts
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                setSelectedPointId(null);
+                refetch();
+              }}
+              hitSlop={8}
+              style={[
+                styles.floatingActionBtn,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <RefreshCw size={17} color={colors.text} />
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       <DatePickerModal
         visible={calendarModalOpen}
@@ -615,5 +716,78 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
     fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+  },
+  fullscreenBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  fullscreenBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  fullscreenModalContainer: {
+    flex: 1,
+    backgroundColor: "#0A0A0A",
+    position: "relative",
+  },
+  fullscreenHeader: {
+    position: "absolute",
+    top: 0,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    zIndex: 100,
+  },
+  floatingActionBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    ...Platform.select({
+      web: { backdropFilter: "blur(16px)" } as any,
+      default: {},
+    }),
+  },
+  fullscreenPill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 42,
+    paddingHorizontal: 14,
+    borderRadius: 21,
+    borderWidth: 1,
+    ...Platform.select({
+      web: { backdropFilter: "blur(16px)" } as any,
+      default: {},
+    }),
+  },
+  fullscreenPillTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  fullscreenCountBadge: {
+    backgroundColor: "#3B82F6",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  fullscreenCountText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
 });
