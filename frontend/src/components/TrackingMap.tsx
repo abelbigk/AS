@@ -81,6 +81,8 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
         <div id="map"></div>
         <script>
           const points = ${safeLocations};
+          const targetId = ${selectedPointId != null ? selectedPointId : "null"};
+          const markerMap = {};
           const map = L.map('map', { zoomControl: false });
           L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -90,72 +92,110 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
           }).addTo(map);
 
           if (points && points.length > 0) {
-            const latlngs = points.map(p => [p.latitude, p.longitude]);
-
-            // Draw connecting route line
-            const polyline = L.polyline(latlngs, {
-              color: '#3B82F6',
-              weight: 4,
-              opacity: 0.85,
-              lineJoin: 'round',
-              dashArray: null
-            }).addTo(map);
-
-            // Add starting marker
-            const startPoint = points[0];
-            const startIcon = L.divIcon({
-              className: 'start-pin-wrapper',
-              html: '<div class="start-pin"></div>',
-              iconSize: [12, 12],
-              iconAnchor: [6, 6]
-            });
-            const startTimeStr = new Date(startPoint.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            L.marker([startPoint.latitude, startPoint.longitude], { icon: startIcon })
-              .addTo(map)
-              .bindPopup('<b>Trip Start</b><br>' + startTimeStr, { className: 'custom-popup' });
-
-            // Add intermediate dots
-            for (let i = 1; i < points.length - 1; i++) {
-              const pt = points[i];
+            if (points.length === 1) {
+              const pt = points[0];
+              const singleIcon = L.divIcon({
+                className: 'end-pin-wrapper',
+                html: '<div class="pulsing-pin"></div>',
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+              });
               const timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-              const speedStr = pt.speed != null ? Math.round(pt.speed * 3.6) + ' km/h' : 'N/A';
+              const marker = L.marker([pt.latitude, pt.longitude], { icon: singleIcon })
+                .addTo(map)
+                .bindPopup('<b>Current Position: ${username || "User"}</b><br>' + timeStr, { className: 'custom-popup' })
+                .openPopup();
+              markerMap[pt.id] = marker;
+              map.setView([pt.latitude, pt.longitude], 16);
+            } else {
+              const latlngs = points.map(p => [p.latitude, p.longitude]);
 
-              const circle = L.circleMarker([pt.latitude, pt.longitude], {
-                radius: 4,
+              // Draw connecting route line
+              const polyline = L.polyline(latlngs, {
                 color: '#3B82F6',
-                fillColor: '#60A5FA',
-                fillOpacity: 0.7,
-                weight: 1
+                weight: 4,
+                opacity: 0.85,
+                lineJoin: 'round',
+                dashArray: null
               }).addTo(map);
 
-              circle.bindPopup(
-                '<b>Timestamp:</b> ' + timeStr + '<br>' +
-                '<b>Speed:</b> ' + speedStr + '<br>' +
-                '<b>Coords:</b> ' + pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5),
-                { className: 'custom-popup' }
-              );
+              // Add starting marker
+              const startPoint = points[0];
+              const startIcon = L.divIcon({
+                className: 'start-pin-wrapper',
+                html: '<div class="start-pin"></div>',
+                iconSize: [12, 12],
+                iconAnchor: [6, 6]
+              });
+              const startTimeStr = new Date(startPoint.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              const startMarker = L.marker([startPoint.latitude, startPoint.longitude], { icon: startIcon })
+                .addTo(map)
+                .bindPopup('<b>Trip Start</b><br>' + startTimeStr, { className: 'custom-popup' });
+              markerMap[startPoint.id] = startMarker;
+
+              // Add intermediate dots
+              for (let i = 1; i < points.length - 1; i++) {
+                const pt = points[i];
+                const timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const speedStr = pt.speed != null ? Math.round(pt.speed * 3.6) + ' km/h' : 'N/A';
+
+                const circle = L.circleMarker([pt.latitude, pt.longitude], {
+                  radius: 5,
+                  color: '#3B82F6',
+                  fillColor: '#60A5FA',
+                  fillOpacity: 0.8,
+                  weight: 2
+                }).addTo(map);
+
+                circle.bindPopup(
+                  '<b>Timestamp:</b> ' + timeStr + '<br>' +
+                  '<b>Speed:</b> ' + speedStr + '<br>' +
+                  '<b>Coords:</b> ' + pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5),
+                  { className: 'custom-popup' }
+                );
+                markerMap[pt.id] = circle;
+              }
+
+              // Add latest/current marker
+              const lastPoint = points[points.length - 1];
+              const endIcon = L.divIcon({
+                className: 'end-pin-wrapper',
+                html: '<div class="pulsing-pin"></div>',
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+              });
+              const lastTimeStr = new Date(lastPoint.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              const lastSpeedStr = lastPoint.speed != null ? Math.round(lastPoint.speed * 3.6) + ' km/h' : 'N/A';
+              const lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: endIcon })
+                .addTo(map)
+                .bindPopup(
+                  '<b>Latest Position: ${username || "User"}</b><br>' +
+                  '<b>Time:</b> ' + lastTimeStr + '<br>' +
+                  '<b>Speed:</b> ' + lastSpeedStr,
+                  { className: 'custom-popup' }
+                );
+              markerMap[lastPoint.id] = lastMarker;
+
+              if (targetId && markerMap[targetId]) {
+                const m = markerMap[targetId];
+                map.setView(m.getLatLng(), 17);
+                m.openPopup();
+              } else {
+                lastMarker.openPopup();
+                map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 16 });
+              }
             }
 
-            // Add latest/current marker
-            const lastPoint = points[points.length - 1];
-            const endIcon = L.divIcon({
-              className: 'end-pin-wrapper',
-              html: '<div class="pulsing-pin"></div>',
-              iconSize: [14, 14],
-              iconAnchor: [7, 7]
+            window.addEventListener('message', function(e) {
+              try {
+                const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+                if (data && data.focusPointId && markerMap[data.focusPointId]) {
+                  const m = markerMap[data.focusPointId];
+                  map.flyTo(m.getLatLng(), 17, { duration: 0.8 });
+                  m.openPopup();
+                }
+              } catch(err) {}
             });
-            const lastTimeStr = new Date(lastPoint.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            const lastSpeedStr = lastPoint.speed != null ? Math.round(lastPoint.speed * 3.6) + ' km/h' : 'N/A';
-            L.marker([lastPoint.latitude, lastPoint.longitude], { icon: endIcon })
-              .addTo(map)
-              .bindPopup(
-                '<b>Latest Position: ${username || "User"}</b><br>' +
-                '<b>Time:</b> ' + lastTimeStr + '<br>' +
-                '<b>Speed:</b> ' + lastSpeedStr,
-                { className: 'custom-popup' }
-              ).openPopup();
-
-            map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 16 });
           } else {
             // Default center if no coordinates
             map.setView([9.02, 38.74], 12);
@@ -164,7 +204,7 @@ export function TrackingMap({ locations, username, selectedPointId }: TrackingMa
       </body>
       </html>
     `;
-  }, [locations, theme, username]);
+  }, [locations, theme, username, selectedPointId]);
 
   if (locations.length === 0) {
     return (

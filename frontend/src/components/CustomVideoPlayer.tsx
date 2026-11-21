@@ -161,28 +161,35 @@ export function CustomVideoPlayer({
     };
   }, [player, onPlayingChange]);
 
-  // Web metadata detection
+  // Web metadata detection: immediate offscreen probe + interval fallback
   useEffect(() => {
-    if (Platform.OS !== "web") return;
-    const getVideoEl = (): HTMLVideoElement | null => {
+    if (Platform.OS !== "web" || !uri) return;
+    let active = true;
+
+    try {
+      const probe = document.createElement("video");
+      probe.preload = "metadata";
+      probe.src = uri;
+      probe.onloadedmetadata = () => {
+        if (active && probe.videoWidth && probe.videoHeight) {
+          setVideoAspect(probe.videoWidth / probe.videoHeight);
+        }
+      };
+    } catch {}
+
+    const interval = setInterval(() => {
+      if (!active) return;
       const raw = (videoViewRef.current as any)?.nativeRef;
-      return (raw?.current || raw) as HTMLVideoElement | null;
-    };
-
-    const el = getVideoEl();
-    if (!el || typeof el.addEventListener !== "function") return;
-
-    const checkSize = () => {
-      if (el.videoWidth && el.videoHeight) {
+      const el = (raw?.current || raw) as HTMLVideoElement | null;
+      if (el && el.videoWidth && el.videoHeight) {
         setVideoAspect(el.videoWidth / el.videoHeight);
+        clearInterval(interval);
       }
-    };
-    checkSize();
-    el.addEventListener("loadedmetadata", checkSize);
+    }, 200);
+
     return () => {
-      try {
-        el.removeEventListener("loadedmetadata", checkSize);
-      } catch {}
+      active = false;
+      clearInterval(interval);
     };
   }, [uri]);
 
@@ -581,7 +588,7 @@ const styles = StyleSheet.create({
   videoCard: {
     borderRadius: 16,
     overflow: "hidden",
-    backgroundColor: "#000000",
+    backgroundColor: "transparent",
     position: "relative",
     alignItems: "center",
     justifyContent: "center",

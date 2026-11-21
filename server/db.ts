@@ -1,4 +1,4 @@
-import { eq, and, like, desc, asc, isNull, or, ne, inArray } from "drizzle-orm";
+import { eq, and, like, desc, asc, isNull, or, ne, inArray, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import {
@@ -709,8 +709,26 @@ export async function recordUserLocation(data: {
   });
 }
 
-export async function getUserLocationsByDate(userId: number, dateStr: string) {
+export async function getUserLocationsByDate(
+  userId: number,
+  dateStr: string,
+  startIso?: string,
+  endIso?: string
+) {
   const db = getDb();
+  if (startIso && endIso) {
+    return await db
+      .select()
+      .from(userLocations)
+      .where(
+        and(
+          eq(userLocations.userId, userId),
+          gte(userLocations.timestamp, startIso),
+          lte(userLocations.timestamp, endIso)
+        )
+      )
+      .orderBy(asc(userLocations.timestamp));
+  }
   return await db
     .select()
     .from(userLocations)

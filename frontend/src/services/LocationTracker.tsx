@@ -46,19 +46,17 @@ export function LocationTracker() {
   isAuthRef.current = isAuthenticated;
 
   useEffect(() => {
-    // Stop and unregister any leftover background location tasks/notifications
-    if (Platform.OS !== "web") {
-      Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
-        .then((started) => {
-          if (started) {
-            return Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-          }
-        })
-        .catch(() => {});
-    }
-
     if (!isAuthenticated) {
       clearTrackingState();
+      if (Platform.OS !== "web") {
+        Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
+          .then((started) => {
+            if (started) {
+              return Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+            }
+          })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -68,7 +66,7 @@ export function LocationTracker() {
     async function initTracking() {
       try {
         if (Platform.OS === "web") {
-          // --- WEB GEOLOCATION TRACKING ---
+          // --- WEB GEOLOCATION TRACKING (10s interval) ---
           if ("geolocation" in navigator) {
             const sendWebLocation = () => {
               if (!isMounted || !isAuthRef.current) return;
@@ -91,22 +89,47 @@ export function LocationTracker() {
             };
 
             sendWebLocation();
-            foregroundTimer = setInterval(sendWebLocation, 15000);
+            foregroundTimer = setInterval(sendWebLocation, 10000);
           }
         } else {
-          // --- NATIVE ANDROID / IOS FOREGROUND ONLY (NO NOTIFICATION) ---
+          // --- NATIVE ANDROID / IOS TRACKING ---
           const { status: fgStatus } =
             await Location.requestForegroundPermissionsAsync();
           if (fgStatus !== "granted") {
             return;
           }
 
-          // Foreground watchdog: polls only while app is active, completely silent without notification
+          // Request background permission for continuous tracking (keeps transmitting on phone restart/background)
+          try {
+            const { status: bgStatus } =
+              await Location.requestBackgroundPermissionsAsync();
+            if (bgStatus === "granted") {
+              const hasStarted =
+                await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+              if (!hasStarted) {
+                await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+                  accuracy: Location.Accuracy.High,
+                  timeInterval: 10000,
+                  distanceInterval: 10,
+                  foregroundService: {
+                    notificationTitle: "Live Location Tracking",
+                    notificationBody: "Transmitting route coordinates every 10s",
+                    notificationColor: "#3B82F6",
+                  },
+                  pausesUpdatesAutomatically: false,
+                });
+              }
+            }
+          } catch (bgErr) {
+            console.warn("[LocationTracker] Background service setup:", bgErr);
+          }
+
+          // Foreground watchdog timer (every 10s)
           const sendForegroundLocation = async () => {
             if (!isMounted || !isAuthRef.current) return;
             try {
               const loc = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.Balanced,
+                accuracy: Location.Accuracy.High,
               });
               if (!isMounted || !isAuthRef.current) return;
               await processAndSendCoordinate({
@@ -124,7 +147,7 @@ export function LocationTracker() {
           };
 
           sendForegroundLocation();
-          foregroundTimer = setInterval(sendForegroundLocation, 15000);
+          foregroundTimer = setInterval(sendForegroundLocation, 10000);
         }
       } catch (err) {
         console.error("[LocationTracker] Init error:", err);
@@ -136,9 +159,6 @@ export function LocationTracker() {
     return () => {
       isMounted = false;
       if (foregroundTimer) clearInterval(foregroundTimer);
-      if (Platform.OS !== "web") {
-        Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
-      }
     };
   }, [isAuthenticated]);
 

@@ -129,6 +129,42 @@ export function ContentDetailModal({
     }
   }, [freshItem, item?.id]);
 
+  // Prefetch natural aspect ratios for images immediately
+  useEffect(() => {
+    if (!mediaItems || mediaItems.length === 0) return;
+    mediaItems.forEach((m) => {
+      if (m.type !== "video" && m.url) {
+        if (Platform.OS === "web") {
+          try {
+            const img = new (window as any).Image();
+            img.src = m.url;
+            img.onload = () => {
+              if (img.naturalWidth && img.naturalHeight) {
+                setMediaAspectRatios((prev) => ({
+                  ...prev,
+                  [m.id]: img.naturalWidth / img.naturalHeight,
+                }));
+              }
+            };
+          } catch {}
+        } else {
+          RNImage.getSize(
+            m.url,
+            (w, h) => {
+              if (w && h) {
+                setMediaAspectRatios((prev) => ({
+                  ...prev,
+                  [m.id]: w / h,
+                }));
+              }
+            },
+            () => {}
+          );
+        }
+      }
+    });
+  }, [mediaItems]);
+
   const displaySound = activeSound !== null ? activeSound : ((item as any)?.sound ?? null);
 
   // Safe clamped index to ensure counter and dots never display out-of-bounds (e.g. 4/2)

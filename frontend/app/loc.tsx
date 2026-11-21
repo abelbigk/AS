@@ -23,7 +23,7 @@ import {
   RefreshCw,
   Navigation,
 } from "lucide-react-native";
-import { format, subDays, addDays, isToday, parseISO } from "date-fns";
+import { format, subDays, addDays, isToday, parseISO, startOfDay, endOfDay } from "date-fns";
 import { trpc } from "../src/lib/trpc";
 import { useTheme } from "../src/contexts/ThemeContext";
 import { TrackingMap, type LocationPoint } from "../src/components/TrackingMap";
@@ -44,6 +44,7 @@ export default function LocationScreen() {
   const todayStr = useMemo(() => format(new Date(), "yyyy-MM-dd"), []);
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
   const [calendarModalOpen, setCalendarModalOpen] = useState(false);
+  const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
 
   const selectedDate = useMemo(() => {
     try {
@@ -55,6 +56,14 @@ export default function LocationScreen() {
 
   const isCurrentDayToday = selectedDateStr === todayStr;
 
+  // Compute local day start/end in UTC ISO format (UTC+3 / Nairobi timezone precision)
+  const { startIso, endIso } = useMemo(() => {
+    return {
+      startIso: startOfDay(selectedDate).toISOString(),
+      endIso: endOfDay(selectedDate).toISOString(),
+    };
+  }, [selectedDate]);
+
   // Query location history for selected date (auto-refreshes every 10s if viewing today)
   const {
     data: locations = [],
@@ -62,7 +71,7 @@ export default function LocationScreen() {
     refetch,
     isRefetching,
   } = trpc.tracking.getHistory.useQuery(
-    { userId, date: selectedDateStr },
+    { userId, date: selectedDateStr, startIso, endIso },
     {
       enabled: !!userId,
       refetchInterval: isCurrentDayToday ? 10000 : false,
@@ -337,6 +346,7 @@ export default function LocationScreen() {
             <TrackingMap
               locations={locations as LocationPoint[]}
               username={username}
+              selectedPointId={selectedPointId}
             />
           )}
 
@@ -355,19 +365,29 @@ export default function LocationScreen() {
                     const timeStr = format(new Date(loc.timestamp), "hh:mm:ss a");
                     const speedKmh =
                       loc.speed != null ? Math.round(loc.speed * 3.6) : null;
+                    const isSelected = selectedPointId === loc.id;
 
                     return (
-                      <View
+                      <Pressable
                         key={loc.id || idx}
+                        onPress={() => setSelectedPointId(loc.id)}
                         style={[
                           styles.timelineCard,
                           {
-                            backgroundColor: colors.glassBg,
-                            borderColor: colors.border,
+                            backgroundColor: isSelected
+                              ? "rgba(59, 130, 246, 0.2)"
+                              : colors.glassBg,
+                            borderColor: isSelected ? "#3B82F6" : colors.border,
+                            transform: [{ scale: isSelected ? 1.02 : 1 }],
                           },
                         ]}
                       >
-                        <View style={styles.timelineDot} />
+                        <View
+                          style={[
+                            styles.timelineDot,
+                            isSelected && { backgroundColor: "#3B82F6" },
+                          ]}
+                        />
                         <View style={styles.timelineCardBody}>
                           <View style={styles.timelineHeaderRow}>
                             <Text style={[styles.timelineTime, { color: colors.text }]}>
@@ -388,7 +408,7 @@ export default function LocationScreen() {
                             {loc.accuracy ? ` · ±${Math.round(loc.accuracy)}m` : ""}
                           </Text>
                         </View>
-                      </View>
+                      </Pressable>
                     );
                   })}
               </View>

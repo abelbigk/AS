@@ -773,10 +773,17 @@ export const appRouter = router({
         z.object({
           userId: z.number(),
           date: z.string(), // YYYY-MM-DD
+          startIso: z.string().optional(),
+          endIso: z.string().optional(),
         })
       )
       .query(async ({ input }) => {
-        return await getUserLocationsByDate(input.userId, input.date);
+        return await getUserLocationsByDate(
+          input.userId,
+          input.date,
+          input.startIso,
+          input.endIso
+        );
       }),
 
     getLatest: protectedProcedure
