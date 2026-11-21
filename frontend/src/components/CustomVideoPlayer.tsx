@@ -89,7 +89,10 @@ export function CustomVideoPlayer({
   }, [isPlaying, isDragging]);
 
   // ─── Player ───────────────────────────────────────────────────────────────
-  const player = useVideoPlayer({ uri }, (p) => { p.loop = true; });
+  const player = useVideoPlayer({ uri }, (p) => {
+    p.loop = true;
+    p.timeUpdateEventInterval = 0.05; // 50ms interval for smooth time tracking
+  });
 
   useEffect(() => {
     const playSub = player.addListener("playingChange", (e) => {
@@ -97,6 +100,16 @@ export function CustomVideoPlayer({
       isPlayingRef.current = e.isPlaying;
       onPlayingChange?.(e.isPlaying);
       if (e.isPlaying) setShowInitialPlay(false);
+
+      // When pausing or playing, immediately sync currentTime to current position
+      if (!isDraggingRef.current) {
+        const cur = player.currentTime;
+        const dur = durationRef.current || player.duration || 0;
+        if (typeof cur === "number" && !isNaN(cur)) {
+          setCurrentTime(cur);
+          if (dur > 0) currentProgressRef.current = (cur / dur) * 100;
+        }
+      }
     });
 
     const timeSub = player.addListener("timeUpdate", (e) => {
@@ -126,6 +139,35 @@ export function CustomVideoPlayer({
     return () => { playSub.remove(); timeSub.remove(); statusSub.remove(); };
   }, [player, onPlayingChange]);
 
+  // Continuously track playback time at 60 FPS while playing so the hidden bar always follows the video
+  useEffect(() => {
+    let animId: number;
+    let isRunning = true;
+
+    const syncTick = () => {
+      if (isPlayingRef.current && !isDraggingRef.current) {
+        const cur = player.currentTime;
+        const dur = durationRef.current || player.duration || 0;
+        if (typeof cur === "number" && !isNaN(cur)) {
+          setCurrentTime(cur);
+          if (dur > 0) {
+            currentProgressRef.current = (cur / dur) * 100;
+          }
+        }
+      }
+      if (isRunning) {
+        animId = requestAnimationFrame(syncTick);
+      }
+    };
+
+    animId = requestAnimationFrame(syncTick);
+
+    return () => {
+      isRunning = false;
+      cancelAnimationFrame(animId);
+    };
+  }, [player]);
+
   // Keep durationRef in sync with state
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
@@ -142,6 +184,12 @@ export function CustomVideoPlayer({
     if (isDraggingRef.current) return;   // ignore taps during scrub
     if (isPlayingRef.current) {
       player.pause();
+      const cur = player.currentTime;
+      const dur = durationRef.current || player.duration || 0;
+      if (typeof cur === "number" && !isNaN(cur)) {
+        setCurrentTime(cur);
+        if (dur > 0) currentProgressRef.current = (cur / dur) * 100;
+      }
     } else {
       player.play();
       setShowInitialPlay(false);
@@ -159,11 +207,19 @@ export function CustomVideoPlayer({
 
   // ─── Drag lifecycle helpers (called from both native + web handlers) ──────
   const beginDrag = (pageX: number) => {
+    // Immediately sample current position from player so we start with the exact frame
+    const cur = player.currentTime;
+    const dur = durationRef.current || player.duration || 0;
+    const currentPct = dur > 0 && typeof cur === "number" && !isNaN(cur)
+      ? (cur / dur) * 100
+      : currentProgressRef.current;
+
+    currentProgressRef.current   = currentPct;
     dragStartPageXRef.current    = pageX;
-    dragStartProgressRef.current = currentProgressRef.current;
+    dragStartProgressRef.current = currentPct;
     isDraggingRef.current        = true;
     setIsDragging(true);
-    setDragProgress(currentProgressRef.current);  // show current pos, no jump
+    setDragProgress(currentPct);  // show current pos, no jump
     onDraggingChange?.(true);
     if (isPlayingRef.current) player.pause();
     expandBar(true);
