@@ -36,6 +36,7 @@ interface CustomVideoPlayerProps {
   isActive?: boolean;
   onPlayingChange?: (isPlaying: boolean) => void;
   onDraggingChange?: (isDragging: boolean) => void;
+  onFullscreenTrigger?: () => void;
   style?: any;
 }
 
@@ -44,6 +45,7 @@ export function CustomVideoPlayer({
   isActive = true,
   onPlayingChange,
   onDraggingChange,
+  onFullscreenTrigger,
   style,
 }: CustomVideoPlayerProps) {
   // ─── React state (triggers re-render for display) ─────────────────────────
@@ -413,8 +415,17 @@ export function CustomVideoPlayer({
       const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       const delta = d - pinchDistRef.current;
       if (Math.abs(delta) > 30) {
-        if (delta > 0 && !isFullscreen) { enterFullscreen(); pinchDistRef.current = d; }
-        else if (delta < 0 && isFullscreen) { exitFullscreen(); pinchDistRef.current = d; }
+        if (delta > 0) {
+          if (onFullscreenTrigger) {
+            onFullscreenTrigger();
+          } else if (!isFullscreen) {
+            enterFullscreen();
+          }
+          pinchDistRef.current = d;
+        } else if (delta < 0 && isFullscreen) {
+          exitFullscreen();
+          pinchDistRef.current = d;
+        }
       }
     };
     const onTouchEnd = () => { pinchDistRef.current = null; };
@@ -483,7 +494,37 @@ export function CustomVideoPlayer({
   const isLandscape = videoAspect ? videoAspect > 1 : false;
 
   return (
-    <View ref={containerRef} style={[styles.container, style]}>
+    <View
+      ref={containerRef}
+      style={[styles.container, style]}
+      onTouchStart={(e) => {
+        if (Platform.OS !== "web" && e.nativeEvent?.touches?.length === 2) {
+          const t1 = e.nativeEvent.touches[0];
+          const t2 = e.nativeEvent.touches[1];
+          pinchDistRef.current = Math.hypot(t1.pageX - t2.pageX, t1.pageY - t2.pageY);
+        }
+      }}
+      onTouchMove={(e) => {
+        if (Platform.OS !== "web" && e.nativeEvent?.touches?.length === 2 && pinchDistRef.current !== null) {
+          const t1 = e.nativeEvent.touches[0];
+          const t2 = e.nativeEvent.touches[1];
+          const d = Math.hypot(t1.pageX - t2.pageX, t1.pageY - t2.pageY);
+          const delta = d - pinchDistRef.current;
+          if (delta > 35) {
+            if (onFullscreenTrigger) {
+              onFullscreenTrigger();
+            } else if (!isFullscreen) {
+              enterFullscreen();
+            }
+            pinchDistRef.current = d;
+          } else if (delta < -35 && isFullscreen) {
+            exitFullscreen();
+            pinchDistRef.current = d;
+          }
+        }
+      }}
+      onTouchEnd={() => { pinchDistRef.current = null; }}
+    >
       {/* ── Frameless Video Card sized to real aspect ratio ── */}
       <View
         style={[

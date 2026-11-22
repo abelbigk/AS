@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Linking,
   Image as RNImage,
+  BackHandler,
 } from "react-native";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
@@ -30,6 +31,9 @@ import {
   Music,
   Download,
   MapPin,
+  Maximize2,
+  Minimize2,
+  X,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { trpc } from "../lib/trpc";
@@ -82,7 +86,31 @@ export function ContentDetailModal({
   const sliderHeight = Math.min(540, Math.round(SCREEN_HEIGHT * 0.65));
   const [isVideoTimelineDragging, setIsVideoTimelineDragging] = useState(false);
   const [isScrolledPastMedia, setIsScrolledPastMedia] = useState(false);
+  const [fullscreenMediaIndex, setFullscreenMediaIndex] = useState<number | null>(null);
+  const pinchStartDistRef = useRef<number | null>(null);
   const scrollViewRef = useRef<any>(null);
+
+  // Android hardware Back button: exits fullscreen media viewer before modal
+  useEffect(() => {
+    if (fullscreenMediaIndex === null) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      setFullscreenMediaIndex(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [fullscreenMediaIndex]);
+
+  // Web Escape key listener: exits fullscreen media viewer
+  useEffect(() => {
+    if (Platform.OS !== "web" || fullscreenMediaIndex === null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setFullscreenMediaIndex(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fullscreenMediaIndex]);
 
   // Re-fetch item to keep it fresh
   const { data: freshItem } = trpc.content.getById.useQuery(
@@ -116,6 +144,7 @@ export function ContentDetailModal({
       setIsScrolledPastMedia(false);
       setCoverAspectRatio(undefined);
       setMediaAspectRatios({});
+      setFullscreenMediaIndex(null);
       try {
         scrollViewRef.current?.scrollTo({ x: 0, animated: false });
       } catch {}
@@ -602,9 +631,42 @@ export function ContentDetailModal({
                                 isActive={i === displayMediaIndex && !isScrolledPastMedia && visible}
                                 onPlayingChange={handleVideoPlayingChange}
                                 onDraggingChange={setIsVideoTimelineDragging}
+                                onFullscreenTrigger={() => setFullscreenMediaIndex(i)}
                               />
                             ) : (
-                              <View
+                              <Pressable
+                                onPress={() => setFullscreenMediaIndex(i)}
+                                onTouchStart={(e) => {
+                                  if (e.nativeEvent?.touches?.length === 2) {
+                                    const t1 = e.nativeEvent.touches[0];
+                                    const t2 = e.nativeEvent.touches[1];
+                                    pinchStartDistRef.current = Math.hypot(
+                                      t1.pageX - t2.pageX,
+                                      t1.pageY - t2.pageY
+                                    );
+                                  }
+                                }}
+                                onTouchMove={(e) => {
+                                  if (
+                                    e.nativeEvent?.touches?.length === 2 &&
+                                    pinchStartDistRef.current !== null
+                                  ) {
+                                    const t1 = e.nativeEvent.touches[0];
+                                    const t2 = e.nativeEvent.touches[1];
+                                    const curDist = Math.hypot(
+                                      t1.pageX - t2.pageX,
+                                      t1.pageY - t2.pageY
+                                    );
+                                    const delta = curDist - pinchStartDistRef.current;
+                                    if (delta > 35) {
+                                      setFullscreenMediaIndex(i);
+                                      pinchStartDistRef.current = null;
+                                    }
+                                  }
+                                }}
+                                onTouchEnd={() => {
+                                  pinchStartDistRef.current = null;
+                                }}
                                 style={[
                                   styles.imageFramelessWrapper,
                                   aspect
@@ -630,7 +692,7 @@ export function ContentDetailModal({
                                     }
                                   }}
                                 />
-                              </View>
+                              </Pressable>
                             )}
                           </View>
                         );
@@ -831,6 +893,104 @@ export function ContentDetailModal({
           }
         }}
       />
+
+      {/* ── Fullscreen Media Viewer ── */}
+      <Modal
+        visible={fullscreenMediaIndex !== null}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={() => setFullscreenMediaIndex(null)}
+      >
+        <View
+          style={styles.fullscreenMediaBackdrop}
+          onTouchStart={(e) => {
+            if (e.nativeEvent?.touches?.length === 2) {
+              const t1 = e.nativeEvent.touches[0];
+              const t2 = e.nativeEvent.touches[1];
+              pinchStartDistRef.current = Math.hypot(
+                t1.pageX - t2.pageX,
+                t1.pageY - t2.pageY
+              );
+            }
+          }}
+          onTouchMove={(e) => {
+            if (
+              e.nativeEvent?.touches?.length === 2 &&
+              pinchStartDistRef.current !== null
+            ) {
+              const t1 = e.nativeEvent.touches[0];
+              const t2 = e.nativeEvent.touches[1];
+              const curDist = Math.hypot(
+                t1.pageX - t2.pageX,
+                t1.pageY - t2.pageY
+              );
+              const delta = curDist - pinchStartDistRef.current;
+              // Pinching in (closing fingers) exits fullscreen!
+              if (delta < -35) {
+                setFullscreenMediaIndex(null);
+                pinchStartDistRef.current = null;
+              }
+            }
+          }}
+          onTouchEnd={() => {
+            pinchStartDistRef.current = null;
+          }}
+        >
+          {/* Top Bar with Back Button */}
+          <View
+            style={[
+              styles.fullscreenMediaHeader,
+              { paddingTop: Math.max(insets.top, 16) + 8 },
+            ]}
+          >
+            <Pressable
+              onPress={() => setFullscreenMediaIndex(null)}
+              hitSlop={12}
+              style={styles.fullscreenBackBtn}
+            >
+              <ArrowLeft size={20} color="#FFFFFF" />
+              <Text style={styles.fullscreenBackBtnText}>Back</Text>
+            </Pressable>
+
+            {mediaItems.length > 1 && fullscreenMediaIndex !== null && (
+              <View style={styles.fullscreenCounterPill}>
+                <Text style={styles.fullscreenCounterText}>
+                  {fullscreenMediaIndex + 1} / {mediaItems.length}
+                </Text>
+              </View>
+            )}
+
+            <Pressable
+              onPress={handleDownloadCurrentMedia}
+              hitSlop={12}
+              style={styles.fullscreenActionBtn}
+            >
+              <Download size={18} color="#FFFFFF" />
+            </Pressable>
+          </View>
+
+          {/* Media Container */}
+          <View style={styles.fullscreenMediaBody}>
+            {fullscreenMediaIndex !== null && mediaItems[fullscreenMediaIndex] && (
+              mediaItems[fullscreenMediaIndex].type === "video" ? (
+                <CustomVideoPlayer
+                  uri={mediaItems[fullscreenMediaIndex].url}
+                  isActive={true}
+                  onPlayingChange={handleVideoPlayingChange}
+                  onDraggingChange={setIsVideoTimelineDragging}
+                />
+              ) : (
+                <Image
+                  source={{ uri: mediaItems[fullscreenMediaIndex].url }}
+                  style={styles.fullscreenImage}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+              )
+            )}
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -1110,5 +1270,74 @@ const styles = StyleSheet.create({
   addSoundText: {
     fontSize: 12,
     fontWeight: "500",
+  },
+  fullscreenMediaBackdrop: {
+    flex: 1,
+    backgroundColor: "#000000",
+    position: "relative",
+  },
+  fullscreenMediaHeader: {
+    position: "absolute",
+    top: 0,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 100,
+  },
+  fullscreenBackBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30, 30, 30, 0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+    ...Platform.select({
+      web: { backdropFilter: "blur(12px)", cursor: "pointer" } as any,
+      default: {},
+    }),
+  },
+  fullscreenBackBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  fullscreenCounterPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: "rgba(30, 30, 30, 0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  fullscreenCounterText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  fullscreenActionBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(30, 30, 30, 0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  fullscreenMediaBody: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullscreenImage: {
+    width: "100%",
+    height: "100%",
   },
 });
