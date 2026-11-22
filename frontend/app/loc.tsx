@@ -26,7 +26,7 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react-native";
-import { format, subDays, addDays, isToday, parseISO, startOfDay, endOfDay } from "date-fns";
+import { format, subDays, addDays, parseISO } from "date-fns";
 import { trpc } from "../src/lib/trpc";
 import { useTheme } from "../src/contexts/ThemeContext";
 import { TrackingMap, type LocationPoint } from "../src/components/TrackingMap";
@@ -43,8 +43,13 @@ export default function LocationScreen() {
   const userId = parseInt(params.userId || "0", 10);
   const username = params.username || `User #${userId}`;
 
-  // Date state (defaults to today)
-  const todayStr = useMemo(() => format(new Date(), "yyyy-MM-dd"), []);
+  // Date state (defaults to today in Africa/Nairobi timezone UTC+3)
+  const todayStr = useMemo(() => {
+    // Always compute "today" in UTC+3 (Africa/Nairobi) so midnight local
+    // time is used even when JS's local timezone differs (e.g. server UTC).
+    const nairobiNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    return nairobiNow.toISOString().slice(0, 10); // "YYYY-MM-DD"
+  }, []);
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
   const [calendarModalOpen, setCalendarModalOpen] = useState(false);
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
@@ -60,13 +65,15 @@ export default function LocationScreen() {
 
   const isCurrentDayToday = selectedDateStr === todayStr;
 
-  // Compute local day start/end in UTC ISO format (UTC+3 / Nairobi timezone precision)
+  // Compute UTC+3 (Africa/Nairobi) day boundaries as UTC ISO strings.
+  // "2026-11-23" in Nairobi starts at 2026-11-22T21:00:00Z and ends at 2026-11-23T20:59:59.999Z.
   const { startIso, endIso } = useMemo(() => {
-    return {
-      startIso: startOfDay(selectedDate).toISOString(),
-      endIso: endOfDay(selectedDate).toISOString(),
-    };
-  }, [selectedDate]);
+    const [y, m, d] = selectedDateStr.split("-").map(Number);
+    // Nairobi midnight = UTC 00:00 minus 3 h = UTC (day-1) 21:00
+    const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - 3 * 60 * 60 * 1000);
+    const endUtc   = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - 3 * 60 * 60 * 1000);
+    return { startIso: startUtc.toISOString(), endIso: endUtc.toISOString() };
+  }, [selectedDateStr]);
 
   // Query location history for selected date (auto-refreshes every 10s if viewing today)
   const {

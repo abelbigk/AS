@@ -502,6 +502,7 @@ export function ContentDetailModal({
 
           {/* Scrollable Viewer Body */}
           <ScrollView
+            scrollEnabled={!isVideoTimelineDragging}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             scrollEventThrottle={50}

@@ -108,9 +108,10 @@ export function LocationTracker() {
                 await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
               if (!hasStarted) {
                 await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-                  accuracy: Location.Accuracy.High,
+                  accuracy: Location.Accuracy.BestForNavigation,
                   timeInterval: 10000,
-                  distanceInterval: 10,
+                  // distanceInterval removed: TrackingEngine already filters by 10m,
+                  // double-filtering was causing missed updates when moving <10m
                   foregroundService: {
                     notificationTitle: "Live Location Tracking",
                     notificationBody: "Transmitting route coordinates every 10s",
@@ -129,7 +130,7 @@ export function LocationTracker() {
             if (!isMounted || !isAuthRef.current) return;
             try {
               const loc = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.High,
+                accuracy: Location.Accuracy.BestForNavigation,
               });
               if (!isMounted || !isAuthRef.current) return;
               await processAndSendCoordinate({

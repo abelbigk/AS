@@ -587,6 +587,15 @@ export function CustomVideoPlayer({
           ref={progressBarRef}
           style={styles.progressHitbox}
           onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
+          onStartShouldSetResponder={Platform.OS !== "web" ? () => true : undefined}
+          onStartShouldSetResponderCapture={Platform.OS !== "web" ? () => true : undefined}
+          onMoveShouldSetResponder={Platform.OS !== "web" ? () => true : undefined}
+          onMoveShouldSetResponderCapture={Platform.OS !== "web" ? () => true : undefined}
+          onResponderTerminationRequest={Platform.OS !== "web" ? () => false : undefined}
+          onResponderGrant={Platform.OS !== "web" ? onNativeTouchStart : undefined}
+          onResponderMove={Platform.OS !== "web" ? onNativeTouchMove : undefined}
+          onResponderRelease={Platform.OS !== "web" ? onNativeTouchEnd : undefined}
+          onResponderTerminate={Platform.OS !== "web" ? onNativeTouchEnd : undefined}
           onTouchStart={Platform.OS !== "web" ? onNativeTouchStart : undefined}
           onTouchMove={Platform.OS  !== "web" ? onNativeTouchMove  : undefined}
           onTouchEnd={Platform.OS   !== "web" ? onNativeTouchEnd   : undefined}
