@@ -58,9 +58,102 @@ export function TrackingMap({
             border-radius: 12px;
             box-shadow: 0 10px 25px rgba(0,0,0,0.3);
             border: 1px solid ${isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)"};
+            padding: 2px;
+          }
+          .custom-popup .leaflet-popup-content {
+            margin: 10px 12px;
+            line-height: 1.4;
           }
           .custom-popup .leaflet-popup-tip {
             background: ${isDark ? "rgba(24, 24, 27, 0.95)" : "rgba(255, 255, 255, 0.95)"};
+          }
+          .popup-card {
+            font-size: 11px;
+            min-width: 175px;
+          }
+          .popup-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            margin-bottom: 4px;
+          }
+          .popup-title {
+            font-weight: 700;
+            font-size: 12px;
+            color: ${isDark ? "#60A5FA" : "#2563EB"};
+          }
+          .popup-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: ${isDark ? "rgba(59, 130, 246, 0.25)" : "rgba(37, 99, 235, 0.15)"};
+            color: ${isDark ? "#93C5FD" : "#1D4ED8"};
+          }
+          .popup-info-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 2px;
+            color: ${isDark ? "#D1D5DB" : "#4B5563"};
+          }
+          .popup-coords-text {
+            font-family: monospace;
+            font-size: 10.5px;
+            margin-top: 4px;
+            color: ${isDark ? "#9CA3AF" : "#6B7280"};
+          }
+          .popup-bot-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"};
+          }
+          .popup-nav-pin-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 7px;
+            border-radius: 6px;
+            background: ${isDark ? "rgba(59, 130, 246, 0.2)" : "rgba(37, 99, 235, 0.1)"};
+            color: ${isDark ? "#60A5FA" : "#2563EB"};
+            border: 1px solid ${isDark ? "rgba(59, 130, 246, 0.4)" : "rgba(37, 99, 235, 0.3)"};
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+          }
+          .popup-nav-pin-btn:hover {
+            background: #3B82F6;
+            color: #FFFFFF;
+          }
+          .popup-step-btns {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+          }
+          .popup-step-btn {
+            padding: 3px 7px;
+            border-radius: 5px;
+            background: ${isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.05)"};
+            color: ${isDark ? "#E5E7EB" : "#374151"};
+            border: 1px solid ${isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.1)"};
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+          }
+          .popup-step-btn:hover:not(:disabled) {
+            background: ${isDark ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.15)"};
+          }
+          .popup-step-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
           }
           .waypoint-arrow-box {
             width: 16px;
@@ -158,6 +251,44 @@ export function TrackingMap({
             return dirs[Math.round(((deg %= 360) < 0 ? deg + 360 : deg) / 45) % 8];
           }
 
+          function buildPopupContent(idx, title, badge, extraRows) {
+            var pt = points[idx];
+            var timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            var navUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + pt.latitude + ',' + pt.longitude;
+            var prevDisabled = idx <= 0 ? 'disabled' : '';
+            var nextDisabled = idx >= points.length - 1 ? 'disabled' : '';
+
+            return '<div class="popup-card">' +
+              '<div class="popup-head">' +
+                '<span class="popup-title">' + title + '</span>' +
+                (badge ? '<span class="popup-badge">' + badge + '</span>' : '') +
+              '</div>' +
+              '<div class="popup-info-row"><span>Time:</span> <b>' + timeStr + '</b></div>' +
+              (extraRows || '') +
+              '<div class="popup-coords-text">' + pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5) + '</div>' +
+              '<div class="popup-bot-row">' +
+                '<a href="' + navUrl + '" target="_blank" rel="noopener noreferrer" class="popup-nav-pin-btn" title="Open navigation in Maps">' +
+                  '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>' +
+                  '<span>Navigate</span>' +
+                '</a>' +
+                '<div class="popup-step-btns">' +
+                  '<button type="button" onclick="window.goToPoint(' + (idx - 1) + ')" class="popup-step-btn" ' + prevDisabled + ' title="Previous waypoint">&lsaquo; Prev</button>' +
+                  '<button type="button" onclick="window.goToPoint(' + (idx + 1) + ')" class="popup-step-btn" ' + nextDisabled + ' title="Next waypoint">Next &rsaquo;</button>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+          }
+
+          window.goToPoint = function(idx) {
+            if (idx < 0 || idx >= points.length) return;
+            var targetPt = points[idx];
+            if (markerMap[targetPt.id]) {
+              var m = markerMap[targetPt.id];
+              map.flyTo(m.getLatLng(), 17, { duration: 0.6 });
+              m.openPopup();
+            }
+          };
+
           if (points && points.length > 0) {
             if (points.length === 1) {
               const pt = points[0];
@@ -171,10 +302,9 @@ export function TrackingMap({
                 iconSize: [40, 40],
                 iconAnchor: [20, 20]
               });
-              const timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
               const marker = L.marker([pt.latitude, pt.longitude], { icon: singleIcon })
                 .addTo(map)
-                .bindPopup('<b>Current Position: ${username || "User"}</b><br>' + timeStr, { className: 'custom-popup' })
+                .bindPopup(buildPopupContent(0, 'Current Position: ${username || "User"}', 'Live', ''), { className: 'custom-popup' })
                 .openPopup();
               markerMap[pt.id] = marker;
               map.setView([pt.latitude, pt.longitude], 16);
@@ -234,16 +364,14 @@ export function TrackingMap({
                 iconSize: [14, 14],
                 iconAnchor: [7, 7]
               });
-              const startTimeStr = new Date(startPoint.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
               const startMarker = L.marker([startPoint.latitude, startPoint.longitude], { icon: startIcon })
                 .addTo(map)
-                .bindPopup('<b>Trip Start</b><br>' + startTimeStr, { className: 'custom-popup' });
+                .bindPopup(buildPopupContent(0, 'Trip Start', 'Start', ''), { className: 'custom-popup' });
               markerMap[startPoint.id] = startMarker;
 
               // 4. Add intermediate waypoints with DIRECTION ARROWS
               for (let i = 1; i < points.length - 1; i++) {
                 const pt = points[i];
-                const timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                 const speedStr = pt.speed != null ? Math.round(pt.speed * 3.6) + ' km/h' : 'N/A';
                 const heading = (pt.heading != null && pt.heading > 0)
                   ? Math.round(pt.heading)
@@ -261,19 +389,19 @@ export function TrackingMap({
 
                 const wpMarker = L.marker([pt.latitude, pt.longitude], { icon: waypointIcon }).addTo(map);
 
+                var extraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + heading + '&deg; (' + getCompassName(heading) + ')</b></div>' +
+                                '<div class="popup-info-row"><span>Speed:</span> <b>' + speedStr + '</b></div>';
+
                 wpMarker.bindPopup(
-                  '<b>Waypoint #' + (i + 1) + '</b><br>' +
-                  '<b>Time:</b> ' + timeStr + '<br>' +
-                  '<b>Direction:</b> ' + heading + '&deg; (' + getCompassName(heading) + ')<br>' +
-                  '<b>Speed:</b> ' + speedStr + '<br>' +
-                  '<b>Coords:</b> ' + pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5),
+                  buildPopupContent(i, 'Waypoint #' + (i + 1), (i + 1) + '/' + points.length, extraRows),
                   { className: 'custom-popup' }
                 );
                 markerMap[pt.id] = wpMarker;
               }
 
               // 5. Add latest CURRENT LIVE AVATAR with DIRECTION BEAM
-              const lastPoint = points[points.length - 1];
+              const lastIdx = points.length - 1;
+              const lastPoint = points[lastIdx];
               const lastHeading = (lastPoint.heading != null && lastPoint.heading > 0)
                 ? Math.round(lastPoint.heading)
                 : (points.length >= 2 ? computeBearing(points[points.length - 2], lastPoint) : 0);
@@ -296,15 +424,13 @@ export function TrackingMap({
                 iconAnchor: [20, 20]
               });
 
-              const lastTimeStr = new Date(lastPoint.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
               const lastSpeedStr = lastPoint.speed != null ? Math.round(lastPoint.speed * 3.6) + ' km/h' : 'N/A';
               const lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: avatarIcon }).addTo(map);
+              var lastExtraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + lastHeading + '&deg; (' + getCompassName(lastHeading) + ')</b></div>' +
+                                  '<div class="popup-info-row"><span>Speed:</span> <b>' + lastSpeedStr + '</b></div>';
+
               lastMarker.bindPopup(
-                '<b>Live Avatar: ${username || "User"}</b><br>' +
-                '<b>Direction:</b> ' + lastHeading + '&deg; (' + getCompassName(lastHeading) + ')<br>' +
-                '<b>Time:</b> ' + lastTimeStr + '<br>' +
-                '<b>Speed:</b> ' + lastSpeedStr + '<br>' +
-                '<b>Coordinates:</b> ' + lastPoint.latitude.toFixed(5) + ', ' + lastPoint.longitude.toFixed(5),
+                buildPopupContent(lastIdx, 'Live Avatar: ${username || "User"}', 'Live', lastExtraRows),
                 { className: 'custom-popup' }
               );
               markerMap[lastPoint.id] = lastMarker;
