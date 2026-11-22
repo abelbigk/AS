@@ -50,6 +50,10 @@ export default function LocationScreen() {
     const nairobiNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
     return nairobiNow.toISOString().slice(0, 10); // "YYYY-MM-DD"
   }, []);
+  const yesterdayStr = useMemo(() => {
+    const nairobiYesterday = new Date(Date.now() + 3 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000);
+    return nairobiYesterday.toISOString().slice(0, 10);
+  }, []);
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
   const [calendarModalOpen, setCalendarModalOpen] = useState(false);
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
@@ -89,16 +93,18 @@ export default function LocationScreen() {
     }
   );
 
-  // Date step handlers
+  // Date step handlers (computed with pure UTC+3 calendar arithmetic)
   const handlePrevDay = () => {
-    const prev = subDays(selectedDate, 1);
-    setSelectedDateStr(format(prev, "yyyy-MM-dd"));
+    const [y, m, d] = selectedDateStr.split("-").map(Number);
+    const prev = new Date(Date.UTC(y, m - 1, d - 1, 12));
+    setSelectedDateStr(prev.toISOString().slice(0, 10));
   };
 
   const handleNextDay = () => {
-    if (isCurrentDayToday) return;
-    const next = addDays(selectedDate, 1);
-    setSelectedDateStr(format(next, "yyyy-MM-dd"));
+    if (selectedDateStr >= todayStr) return;
+    const [y, m, d] = selectedDateStr.split("-").map(Number);
+    const next = new Date(Date.UTC(y, m - 1, d + 1, 12));
+    setSelectedDateStr(next.toISOString().slice(0, 10));
   };
 
   const handleSetToday = () => {
@@ -106,8 +112,7 @@ export default function LocationScreen() {
   };
 
   const handleSetYesterday = () => {
-    const yesterday = subDays(new Date(), 1);
-    setSelectedDateStr(format(yesterday, "yyyy-MM-dd"));
+    setSelectedDateStr(yesterdayStr);
   };
 
   // Stats calculation
@@ -279,7 +284,7 @@ export default function LocationScreen() {
                 onPress={handleSetYesterday}
                 style={[
                   styles.quickChip,
-                  selectedDateStr === format(subDays(new Date(), 1), "yyyy-MM-dd")
+                  selectedDateStr === yesterdayStr
                     ? { backgroundColor: colors.accent, borderColor: colors.accent }
                     : { backgroundColor: "rgba(255, 255, 255, 0.06)", borderColor: colors.border },
                 ]}
@@ -289,8 +294,7 @@ export default function LocationScreen() {
                     styles.quickChipText,
                     {
                       color:
-                        selectedDateStr ===
-                        format(subDays(new Date(), 1), "yyyy-MM-dd")
+                        selectedDateStr === yesterdayStr
                           ? "#FFFFFF"
                           : colors.textMuted,
                     },

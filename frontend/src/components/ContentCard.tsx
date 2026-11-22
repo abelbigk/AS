@@ -268,7 +268,7 @@ export function ContentCard({
             source={{ uri: item.posterImageUrl }}
             style={aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage}
             contentFit="cover"
-            cachePolicy="memory-disk"
+            cachePolicy="disk"
             transition={200}
             onLoad={(e) => {
               if (e.source.width && e.source.height) {

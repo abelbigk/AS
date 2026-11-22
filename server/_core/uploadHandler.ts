@@ -124,7 +124,7 @@ export function registerUploadRoutes(app: express.Application) {
       const finalMime = inferMimeType(filename, contentType || "application/octet-stream");
       const key = makeKey(userId, filename, prefix || "content", finalMime);
       const presigned = await storagePresign(key, finalMime);
-      res.json({ key, ...presigned });
+      res.json({ key, contentType: finalMime, ...presigned });
     } catch (error: any) {
       console.error("[Upload Prepare Error]", error.message, error.stack);
       res.status(500).json({ error: error.message || "Failed" });

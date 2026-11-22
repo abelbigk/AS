@@ -716,15 +716,28 @@ export async function getUserLocationsByDate(
   endIso?: string
 ) {
   const db = getDb();
-  if (startIso && endIso) {
+  let start = startIso;
+  let end = endIso;
+
+  if (!start || !end) {
+    // Automatically convert dateStr (e.g. "2026-11-23") in UTC+3 (Nairobi) to UTC ISO boundaries:
+    // Nairobi midnight = UTC 00:00 minus 3 hours = UTC (day-1) 21:00
+    const [y, m, d] = dateStr.split("-").map(Number);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - 3 * 3600 * 1000).toISOString();
+      end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - 3 * 3600 * 1000).toISOString();
+    }
+  }
+
+  if (start && end) {
     return await db
       .select()
       .from(userLocations)
       .where(
         and(
           eq(userLocations.userId, userId),
-          gte(userLocations.timestamp, startIso),
-          lte(userLocations.timestamp, endIso)
+          gte(userLocations.timestamp, start),
+          lte(userLocations.timestamp, end)
         )
       )
       .orderBy(asc(userLocations.timestamp));

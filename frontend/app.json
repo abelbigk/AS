@@ -7,6 +7,11 @@
     "icon": "./assets/images/icon.png",
     "scheme": "asapp",
     "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/images/splash-image.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0A0A0A"
+    },
     "web": {
       "bundler": "metro",
       "output": "single",
@@ -46,6 +51,10 @@
     },
     "android": {
       "package": "com.contentorganizer.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#0A0A0A"
+      },
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_COARSE_LOCATION",

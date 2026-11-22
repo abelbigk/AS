@@ -30,12 +30,15 @@ import {
 import { VideoView, useVideoPlayer } from "expo-video";
 import { Play, MoreVertical, PictureInPicture2, Gauge } from "lucide-react-native";
 import { DropdownMenu, DropdownItem } from "./DropdownMenu";
+import { getOrCacheVideoUri } from "../lib/videoCache";
 
 interface CustomVideoPlayerProps {
   uri: string;
   isActive?: boolean;
   onPlayingChange?: (isPlaying: boolean) => void;
   onDraggingChange?: (isDragging: boolean) => void;
+  onBufferingChange?: (isBuffering: boolean) => void;
+  onUserPausedChange?: (isUserPaused: boolean) => void;
   onFullscreenTrigger?: () => void;
   style?: any;
 }
@@ -45,10 +48,13 @@ export function CustomVideoPlayer({
   isActive = true,
   onPlayingChange,
   onDraggingChange,
+  onBufferingChange,
+  onUserPausedChange,
   onFullscreenTrigger,
   style,
 }: CustomVideoPlayerProps) {
   // ─── React state (triggers re-render for display) ─────────────────────────
+  const [playableUri,     setPlayableUri]     = useState(uri);
   const [isPlaying,       setIsPlaying]       = useState(false);
   const [showInitialPlay, setShowInitialPlay] = useState(true);
   const [currentTime,     setCurrentTime]     = useState(0);
@@ -57,9 +63,21 @@ export function CustomVideoPlayer({
   const [dragProgress,    setDragProgress]    = useState(0);  // 0–100 displayed during drag
   const [videoAspect,     setVideoAspect]     = useState<number | null>(null);
 
+  // Cache video locally for instant playback on repeat views (2-day cache)
+  useEffect(() => {
+    let isMounted = true;
+    getOrCacheVideoUri(uri).then((cached) => {
+      if (isMounted && cached && cached !== playableUri) {
+        setPlayableUri(cached);
+      }
+    });
+    return () => { isMounted = false; };
+  }, [uri]);
+
   // ─── Refs (read in event handlers — no stale closures) ───────────────────
   const isDraggingRef        = useRef(false);
   const isPlayingRef         = useRef(false);
+  const isBufferingRef       = useRef(false);
   const currentProgressRef   = useRef(0);     // video progress 0–100, updated each timeUpdate
   const dragStartPageXRef    = useRef(0);     // absolute X where drag started
   const dragStartProgressRef = useRef(0);     // video progress at drag start
@@ -92,7 +110,7 @@ export function CustomVideoPlayer({
   }, [isPlaying, isDragging]);
 
   // ─── Player ───────────────────────────────────────────────────────────────
-  const player = useVideoPlayer({ uri }, (p) => {
+  const player = useVideoPlayer({ uri: playableUri }, (p) => {
     p.loop = true;
     p.timeUpdateEventInterval = 0.05; // 50ms interval for smooth time tracking
   });
@@ -132,16 +150,34 @@ export function CustomVideoPlayer({
         setDuration(player.duration);
         durationRef.current = player.duration;
       }
-      const size = (player as any).videoTrack?.size;
+      const track = (player as any).videoTrack;
+      const size = track?.size;
       if (size?.width && size?.height) {
-        setVideoAspect(size.width / size.height);
+        const rotation = track?.rotation || 0;
+        const aspect = (rotation === 90 || rotation === 270)
+          ? size.height / size.width
+          : size.width / size.height;
+        setVideoAspect(aspect);
+      }
+      // Detect buffering state
+      const status = (player as any).status;
+      const playbackState = (player as any).playbackState;
+      const buffering = status === "buffering" || playbackState === "buffering";
+      if (buffering !== isBufferingRef.current) {
+        isBufferingRef.current = buffering;
+        onBufferingChange?.(buffering);
       }
     });
 
     const trackSub = (player as any).addListener?.("videoTrackChange", (e: any) => {
-      const size = e?.videoTrack?.size || (player as any).videoTrack?.size;
+      const track = e?.videoTrack || (player as any).videoTrack;
+      const size = track?.size;
       if (size?.width && size?.height) {
-        setVideoAspect(size.width / size.height);
+        const rotation = track?.rotation || 0;
+        const aspect = (rotation === 90 || rotation === 270)
+          ? size.height / size.width
+          : size.width / size.height;
+        setVideoAspect(aspect);
       }
     });
 
@@ -150,9 +186,14 @@ export function CustomVideoPlayer({
       durationRef.current = player.duration;
     }
 
-    const initSize = (player as any).videoTrack?.size;
+    const initTrack = (player as any).videoTrack;
+    const initSize = initTrack?.size;
     if (initSize?.width && initSize?.height) {
-      setVideoAspect(initSize.width / initSize.height);
+      const rotation = initTrack?.rotation || 0;
+      const aspect = (rotation === 90 || rotation === 270)
+        ? initSize.height / initSize.width
+        : initSize.width / initSize.height;
+      setVideoAspect(aspect);
     }
 
     return () => {
@@ -229,7 +270,22 @@ export function CustomVideoPlayer({
 
   // Pause when slide becomes inactive
   useEffect(() => {
-    if (!isActive && isPlayingRef.current) { player.pause(); setIsPlaying(false); }
+    if (!isActive) {
+      try {
+        player.pause();
+        // Seek to beginning to fully stop audio
+        player.currentTime = 0;
+        // Mute as a failsafe while inactive
+        (player as any).muted = true;
+      } catch {}
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+    } else {
+      try {
+        // Unmute when active again
+        (player as any).muted = false;
+      } catch {}
+    }
   }, [isActive, player]);
 
   // Pause on unmount
@@ -240,6 +296,7 @@ export function CustomVideoPlayer({
     if (isDraggingRef.current) return;   // ignore taps during scrub
     if (isPlayingRef.current) {
       player.pause();
+      onUserPausedChange?.(true);
       const cur = player.currentTime;
       const dur = durationRef.current || player.duration || 0;
       if (typeof cur === "number" && !isNaN(cur)) {
@@ -249,8 +306,9 @@ export function CustomVideoPlayer({
     } else {
       player.play();
       setShowInitialPlay(false);
+      onUserPausedChange?.(false);
     }
-  }, [player]);
+  }, [player, onUserPausedChange]);
 
   // ─── Seek helper ──────────────────────────────────────────────────────────
   const seekTo = (pct: number) => {
@@ -277,6 +335,7 @@ export function CustomVideoPlayer({
     setIsDragging(true);
     setDragProgress(currentPct);  // show current pos, no jump
     onDraggingChange?.(true);
+    onUserPausedChange?.(true);
     if (isPlayingRef.current) player.pause();
     expandBar(true);
   };
@@ -297,6 +356,7 @@ export function CustomVideoPlayer({
     isDraggingRef.current = false;
     setIsDragging(false);
     onDraggingChange?.(false);
+    onUserPausedChange?.(false);
     expandBar(false);
     try { player.play(); } catch {}
     setIsPlaying(true);
@@ -530,9 +590,7 @@ export function CustomVideoPlayer({
         style={[
           styles.videoCard,
           videoAspect
-            ? isLandscape
-              ? { width: "100%", aspectRatio: videoAspect }
-              : { height: "100%", aspectRatio: videoAspect }
+            ? { width: "100%", aspectRatio: videoAspect, maxHeight: "100%" }
             : { width: "100%", height: "100%" },
         ]}
       >
@@ -543,7 +601,7 @@ export function CustomVideoPlayer({
             player={player}
             style={styles.videoFlex}
             nativeControls={false}
-            contentFit="cover"
+            contentFit={isLandscape ? "contain" : "cover"}
           />
         </Pressable>
 

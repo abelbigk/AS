@@ -82,6 +82,8 @@ export function ContentDetailModal({
   const [soundPickerOpen, setSoundPickerOpen] = useState(false);
   const [activeSound, setActiveSound] = useState<{ id: number; url: string; title: string; name?: string | null } | null>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [isVideoBuffering, setIsVideoBuffering] = useState(false);
+  const [isVideoUserPaused, setIsVideoUserPaused] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(Math.min(SCREEN_WIDTH - 32, 640));
   const sliderHeight = Math.min(540, Math.round(SCREEN_HEIGHT * 0.65));
   const [isVideoTimelineDragging, setIsVideoTimelineDragging] = useState(false);
@@ -140,6 +142,8 @@ export function ContentDetailModal({
       setActiveMediaIndex(0);
       setActiveSound((item as any)?.sound ?? null);
       setIsVideoPlaying(false);
+      setIsVideoBuffering(false);
+      setIsVideoUserPaused(false);
       setIsVideoTimelineDragging(false);
       setIsScrolledPastMedia(false);
       setCoverAspectRatio(undefined);
@@ -541,7 +545,11 @@ export function ContentDetailModal({
                   {displaySound ? (
                     <SoundControl
                       sound={displaySound}
-                      isParentVideoPlaying={isVideoPlaying || isVideoTimelineDragging}
+                      isParentVideoPlaying={
+                        mediaItems[displayMediaIndex]?.type === "video"
+                          ? (!isVideoUserPaused || isVideoPlaying || isVideoBuffering || isVideoTimelineDragging)
+                          : false
+                      }
                       onSoundClick={() => setSoundPickerOpen(true)}
                     />
                   ) : (
@@ -631,6 +639,8 @@ export function ContentDetailModal({
                                 uri={m.url}
                                 isActive={i === displayMediaIndex && !isScrolledPastMedia && visible}
                                 onPlayingChange={handleVideoPlayingChange}
+                                onBufferingChange={setIsVideoBuffering}
+                                onUserPausedChange={setIsVideoUserPaused}
                                 onDraggingChange={setIsVideoTimelineDragging}
                                 onFullscreenTrigger={() => setFullscreenMediaIndex(i)}
                               />
@@ -681,7 +691,7 @@ export function ContentDetailModal({
                                   source={{ uri: m.url }}
                                   style={styles.imageFrameless}
                                   contentFit="cover"
-                                  cachePolicy="memory-disk"
+                                  cachePolicy="disk"
                                   transition={200}
                                   onLoad={(e) => {
                                     if (e.source.width && e.source.height) {
@@ -978,6 +988,8 @@ export function ContentDetailModal({
                   uri={mediaItems[fullscreenMediaIndex].url}
                   isActive={true}
                   onPlayingChange={handleVideoPlayingChange}
+                  onBufferingChange={setIsVideoBuffering}
+                  onUserPausedChange={setIsVideoUserPaused}
                   onDraggingChange={setIsVideoTimelineDragging}
                 />
               ) : (
@@ -985,7 +997,7 @@ export function ContentDetailModal({
                   source={{ uri: mediaItems[fullscreenMediaIndex].url }}
                   style={styles.fullscreenImage}
                   contentFit="contain"
-                  cachePolicy="memory-disk"
+                  cachePolicy="disk"
                 />
               )
             )}

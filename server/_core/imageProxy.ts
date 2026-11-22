@@ -33,7 +33,7 @@ export function registerImageProxy(app: express.Application) {
 
       res.set("Content-Type", contentType);
       res.set("Access-Control-Allow-Origin", "*");
-      res.set("Cache-Control", "public, max-age=86400");
+      res.set("Cache-Control", "public, max-age=172800, immutable");
       res.send(Buffer.from(buffer));
     } catch (err) {
       res.status(500).json({ error: "Proxy failed" });

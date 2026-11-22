@@ -196,6 +196,12 @@ export async function processAndSendCoordinate(
   payload: CoordinatePayload
 ): Promise<boolean> {
   try {
+    // Discard coarse / inaccurate fixes (e.g. cellular triangulation ±250m or ±50000m)
+    // to ensure only accurate GPS / fused fixes are recorded on the route
+    if (payload.accuracy != null && payload.accuracy > 65) {
+      return false;
+    }
+
     const shouldRecord = await shouldRecordCoordinate({
       latitude: payload.latitude,
       longitude: payload.longitude,

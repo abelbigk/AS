@@ -93,6 +93,12 @@ export function LocationTracker() {
           }
         } else {
           // --- NATIVE ANDROID / IOS TRACKING ---
+          if (Platform.OS === "android") {
+            try {
+              await Location.enableNetworkProviderAsync();
+            } catch {}
+          }
+
           const { status: fgStatus } =
             await Location.requestForegroundPermissionsAsync();
           if (fgStatus !== "granted") {

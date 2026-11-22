@@ -50,6 +50,7 @@ export async function storagePut(
       Key: relKey,
       Body: data,
       ContentType: contentType,
+      CacheControl: "public, max-age=172800, immutable",
     },
     partSize: 5 * 1024 * 1024,
     queueSize: 1,
@@ -110,16 +111,17 @@ export async function storagePut(
  */
 export async function storagePresign(
   relKey: string,
-  contentType: string,
+  contentType?: string,
   expiresIn = 3600
 ): Promise<{ uploadUrl: string; publicUrl: string }> {
   const client = getR2Client();
   const { bucket, publicUrl } = getR2Config();
 
+  // Omit ContentType from signed command so AWS SigV4 presigner does not reject
+  // uploads when mobile client mime types vary (e.g. image/jpg vs image/jpeg, codecs suffix)
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: relKey,
-    ContentType: contentType,
   });
 
   const uploadUrl = await getSignedUrl(client, command, { expiresIn });

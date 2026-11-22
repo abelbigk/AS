@@ -78,6 +78,8 @@ export function SubcategoryCard({
             source={{ uri: subcategory.coverImageUrl }}
             style={StyleSheet.absoluteFill}
             contentFit="cover"
+            cachePolicy="disk"
+            transition={200}
             onLoad={(e) => {
               if (e.source.width && e.source.height) {
                 // Constrain aspect ratio between 0.65 and 1.8 for balanced masonry layout

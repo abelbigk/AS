@@ -40,7 +40,8 @@ export async function uploadFile(
       throw new Error(`Failed to prepare upload: ${prepareRes.statusText} - ${errText}`);
     }
 
-    const { uploadUrl, publicUrl, key } = await prepareRes.json();
+    const { uploadUrl, publicUrl, key, contentType: preparedMime } = await prepareRes.json();
+    const uploadMime = preparedMime || mimeType || "application/octet-stream";
 
     // 2. Upload file data
     if (Platform.OS === "web") {
@@ -48,7 +49,7 @@ export async function uploadFile(
       const blob = await blobRes.blob();
 
       await axios.put(uploadUrl, blob, {
-        headers: { "Content-Type": mimeType || "application/octet-stream" },
+        headers: { "Content-Type": uploadMime },
         onUploadProgress: (e) => {
           if (onProgress && e.total) {
             onProgress(e.loaded, e.total);
@@ -60,7 +61,36 @@ export async function uploadFile(
       return { url: publicUrl, key };
     } else {
       // Native iOS / Android:
-      // Try multipart upload to /api/upload first to avoid presigned PUT chunking issues on mobile
+      // Fast path: Direct presigned PUT to Cloudflare R2 via binary streaming
+      // (bypasses Render 512MB RAM and 100s timeout limits for large media/videos)
+      try {
+        const uploadTask = FileSystem.createUploadTask(
+          uploadUrl,
+          fileUri,
+          {
+            headers: {
+              "Content-Type": uploadMime,
+            },
+            httpMethod: "PUT",
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          },
+          (data) => {
+            if (onProgress && data.totalBytesExpectedToSend > 0) {
+              onProgress(data.totalBytesSent, data.totalBytesExpectedToSend);
+            }
+          }
+        );
+
+        const result = await uploadTask.uploadAsync();
+        if (result && result.status >= 200 && result.status < 300) {
+          if (onProgress) onProgress(100, 100);
+          return { url: publicUrl, key };
+        }
+      } catch (putErr) {
+        console.warn("[Upload] Direct presigned PUT failed, attempting multipart fallback:", putErr);
+      }
+
+      // Fallback: Multipart upload to server
       try {
         const uploadTask = FileSystem.createUploadTask(
           `${baseUrl}/api/upload`,
@@ -72,7 +102,7 @@ export async function uploadFile(
             httpMethod: "POST",
             uploadType: FileSystem.FileSystemUploadType.MULTIPART,
             fieldName: "file",
-            mimeType: mimeType || "image/jpeg",
+            mimeType: uploadMime,
             parameters: {
               key,
             },
@@ -87,52 +117,14 @@ export async function uploadFile(
         const result = await uploadTask.uploadAsync();
         if (result && result.status >= 200 && result.status < 300) {
           const resData = JSON.parse(result.body);
+          if (onProgress) onProgress(100, 100);
           return { url: resData.url, key: resData.key };
         }
       } catch (nativeErr) {
-        console.warn("[Upload] Native multipart upload failed, attempting direct presigned PUT:", nativeErr);
+        console.warn("[Upload] Native multipart upload failed:", nativeErr);
       }
 
-      // Fallback: try direct presigned PUT
-      try {
-        const uploadTask = FileSystem.createUploadTask(
-          uploadUrl,
-          fileUri,
-          {
-            headers: {
-              "Content-Type": mimeType || "application/octet-stream",
-            },
-            httpMethod: "PUT",
-            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          },
-          (data) => {
-            if (onProgress && data.totalBytesExpectedToSend > 0) {
-              onProgress(data.totalBytesSent, data.totalBytesExpectedToSend);
-            }
-          }
-        );
-
-        const result = await uploadTask.uploadAsync();
-        if (result && result.status >= 200 && result.status < 300) {
-          return { url: publicUrl, key };
-        }
-      } catch (putErr) {
-        console.warn("[Upload] Direct presigned PUT failed:", putErr);
-      }
-
-      // Final fallback: fetch blob and PUT via axios
-      const response = await fetch(fileUri);
-      const blob = await response.blob();
-      await axios.put(uploadUrl, blob, {
-        headers: { "Content-Type": mimeType || "application/octet-stream" },
-        onUploadProgress: (e) => {
-          if (onProgress && e.total) {
-            onProgress(e.loaded, e.total);
-          }
-        },
-      });
-
-      return { url: publicUrl, key };
+      return null;
     }
   } catch (err) {
     console.error("[Upload] Error uploading file:", err);

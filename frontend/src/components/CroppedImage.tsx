@@ -42,7 +42,7 @@ export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
         ]}
         contentFit="cover"
         transition={200}
-        cachePolicy="memory-disk"
+        cachePolicy="disk"
       />
     </View>
   );
