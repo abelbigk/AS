@@ -197,9 +197,9 @@ export async function processAndSendCoordinate(
   payload: CoordinatePayload
 ): Promise<boolean> {
   try {
-    // 1. Discard coarse/inaccurate fixes (e.g. cellular triangulation ±80m, ±100m, ±250m)
-    // Only accept accurate fixes (<= 45m) so cell tower jumps NEVER pollute the map
-    if (payload.accuracy != null && payload.accuracy > 45) {
+    // 1. Discard coarse/inaccurate fixes (e.g. cellular/wifi triangulation > 20m)
+    // Only accept high-precision GPS fixes (<= 20m) so cell tower jumps NEVER pollute the map
+    if (payload.accuracy != null && payload.accuracy > 20) {
       return false;
     }
 
