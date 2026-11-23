@@ -207,7 +207,7 @@ export async function processAndSendCoordinate(
     const now = Date.now();
 
     if (!state.lastRecordedCoord) {
-      // First fix: set stationary anchor
+      // First fix: set stationary anchor and record initial position
       state.lastRecordedCoord = {
         latitude: payload.latitude,
         longitude: payload.longitude,
@@ -215,33 +215,40 @@ export async function processAndSendCoordinate(
       state.stationarySince = now;
       state.hasRecordedStationary = false;
       await saveState(state);
-    } else {
-      const distance = getDistanceMeters(
-        payload.latitude,
-        payload.longitude,
-        state.lastRecordedCoord.latitude,
-        state.lastRecordedCoord.longitude
-      );
 
-      if (distance >= 10) {
-        // True physical movement >= 10 meters! Move anchor to new position
-        state.lastRecordedCoord = {
-          latitude: payload.latitude,
-          longitude: payload.longitude,
-        };
-        state.stationarySince = now;
-        state.hasRecordedStationary = false;
-        await saveState(state);
-      } else {
-        // Stationary (< 10m from anchor): snap coordinates to the anchor
-        // so natural GPS signal jitter (±2m) doesn't draw spiderwebs while sitting in the house
-        payload.latitude = state.lastRecordedCoord.latitude;
-        payload.longitude = state.lastRecordedCoord.longitude;
-        payload.speed = 0;
+      try {
+        await trpcVanillaClient.tracking.ping.mutate(payload);
+        flushOfflineQueue().catch(() => {});
+        return true;
+      } catch (networkErr) {
+        await enqueueOfflineCoordinate(payload);
+        return false;
       }
     }
 
-    // 2. Transmit to server every 10 seconds!
+    const distance = getDistanceMeters(
+      payload.latitude,
+      payload.longitude,
+      state.lastRecordedCoord.latitude,
+      state.lastRecordedCoord.longitude
+    );
+
+    // If moved < 10 meters: user is stationary at the same location!
+    // Do NOT record duplicate stationary coordinates into route history
+    if (distance < 10) {
+      return false;
+    }
+
+    // True physical movement >= 10 meters: record new route coordinate
+    state.lastRecordedCoord = {
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+    };
+    state.stationarySince = now;
+    state.hasRecordedStationary = false;
+    await saveState(state);
+
+    // Transmit to server
     try {
       await trpcVanillaClient.tracking.ping.mutate(payload);
       flushOfflineQueue().catch(() => {});

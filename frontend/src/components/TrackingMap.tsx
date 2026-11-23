@@ -289,9 +289,30 @@ export function TrackingMap({
             }
           };
 
+          function getDistanceM(p1, p2) {
+            var R = 6371e3;
+            var dLat = ((p2.latitude - p1.latitude) * Math.PI) / 180;
+            var dLon = ((p2.longitude - p1.longitude) * Math.PI) / 180;
+            var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos((p1.latitude * Math.PI) / 180) * Math.cos((p2.latitude * Math.PI) / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          }
+
           if (points && points.length > 0) {
-            if (points.length === 1) {
-              const pt = points[0];
+            // Filter to waypoints that represent true physical movement >= 10m apart
+            var movingPoints = [points[0]];
+            for (var i = 1; i < points.length; i++) {
+              var d = getDistanceM(movingPoints[movingPoints.length - 1], points[i]);
+              if (d >= 10) {
+                movingPoints.push(points[i]);
+              }
+            }
+
+            // If user did not move >= 10 meters (stationary at the house):
+            // Show only the live position marker — DO NOT draw any lines across blocks
+            if (movingPoints.length < 2) {
+              const pt = points[points.length - 1];
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
               const singleIcon = L.divIcon({
                 className: 'live-avatar-marker',
@@ -304,15 +325,13 @@ export function TrackingMap({
               });
               const marker = L.marker([pt.latitude, pt.longitude], { icon: singleIcon })
                 .addTo(map)
-                .bindPopup(buildPopupContent(0, 'Current Position: ${username || "User"}', 'Live', ''), { className: 'custom-popup' })
+                .bindPopup(buildPopupContent(points.length - 1, 'Current Position: ${username || "User"}', 'Live (Stationary)', ''), { className: 'custom-popup' })
                 .openPopup();
               markerMap[pt.id] = marker;
-              map.setView([pt.latitude, pt.longitude], 16);
+              map.setView([pt.latitude, pt.longitude], 17);
             } else {
-              const latlngs = points.map(p => [p.latitude, p.longitude]);
-
-              // 1. Dual-layer road path (casing + core line)
-              const casingLine = L.polyline(latlngs, {
+              // True physical movement >= 10m! Draw road-snapped route along streets & blocks
+              const casingLine = L.polyline([], {
                 color: '#1E3A8A',
                 weight: 7,
                 opacity: 0.5,
@@ -320,25 +339,24 @@ export function TrackingMap({
                 lineCap: 'round'
               }).addTo(map);
 
-              const polyline = L.polyline(latlngs, {
+              const polyline = L.polyline([], {
                 color: '#3B82F6',
                 weight: 4,
                 opacity: 0.95,
                 lineJoin: 'round',
-                lineCap: 'round',
-                dashArray: null
+                lineCap: 'round'
               }).addTo(map);
 
-              // 2. Fetch short valid road/street path from OSRM routing engine
+              // Fetch valid street path from OSRM routing engine along roads and blocks
               try {
-                // If more than 70 points, sample for OSRM URL limit
-                var queryPts = points;
-                if (points.length > 70) {
-                  var qStep = Math.ceil(points.length / 50);
-                  queryPts = points.filter(function(_, idx) { return idx % qStep === 0 || idx === points.length - 1; });
+                var queryPts = movingPoints;
+                if (movingPoints.length > 50) {
+                  var qStep = Math.ceil(movingPoints.length / 40);
+                  queryPts = movingPoints.filter(function(_, idx) { return idx % qStep === 0 || idx === movingPoints.length - 1; });
                 }
                 var osrmCoords = queryPts.map(function(p) { return p.longitude + ',' + p.latitude; }).join(';');
                 var osrmUrl = 'https://router.project-osrm.org/route/v1/driving/' + osrmCoords + '?overview=full&geometries=geojson';
+
                 fetch(osrmUrl)
                   .then(function(res) { return res.json(); })
                   .then(function(data) {
@@ -349,12 +367,30 @@ export function TrackingMap({
                       casingLine.setLatLngs(roadPath);
                       polyline.setLatLngs(roadPath);
                       if (!targetId) {
-                        map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 16 });
+                        map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 17 });
+                      }
+                    } else {
+                      var fallbackLine = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
+                      casingLine.setLatLngs(fallbackLine);
+                      polyline.setLatLngs(fallbackLine);
+                      if (!targetId) {
+                        map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 17 });
                       }
                     }
                   })
-                  .catch(function() {});
-              } catch (e) {}
+                  .catch(function() {
+                    var fallbackLine = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
+                    casingLine.setLatLngs(fallbackLine);
+                    polyline.setLatLngs(fallbackLine);
+                    if (!targetId) {
+                      map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 17 });
+                    }
+                  });
+              } catch (e) {
+                var fallbackLine = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
+                casingLine.setLatLngs(fallbackLine);
+                polyline.setLatLngs(fallbackLine);
+              }
 
               // 3. Add starting marker
               const startPoint = points[0];
