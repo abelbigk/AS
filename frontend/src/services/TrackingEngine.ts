@@ -190,35 +190,63 @@ export async function flushOfflineQueue(): Promise<void> {
 }
 
 /**
- * Primary processor: applies distance/stationary filtering and sends or buffers coordinates
+ * Primary processor: filters out inaccurate cellular fixes, prevents jitter when stationary,
+ * and transmits every 10s to the server.
  */
 export async function processAndSendCoordinate(
   payload: CoordinatePayload
 ): Promise<boolean> {
   try {
-    // Discard coarse / inaccurate fixes (e.g. cellular triangulation ±250m or ±50000m)
-    // to ensure only accurate GPS / fused fixes are recorded on the route
-    if (payload.accuracy != null && payload.accuracy > 65) {
+    // 1. Discard coarse/inaccurate fixes (e.g. cellular triangulation ±80m, ±100m, ±250m)
+    // Only accept accurate fixes (<= 45m) so cell tower jumps NEVER pollute the map
+    if (payload.accuracy != null && payload.accuracy > 45) {
       return false;
     }
 
-    const shouldRecord = await shouldRecordCoordinate({
-      latitude: payload.latitude,
-      longitude: payload.longitude,
-    });
+    const state = await loadState();
+    const now = Date.now();
 
-    if (!shouldRecord) {
-      return false;
+    if (!state.lastRecordedCoord) {
+      // First fix: set stationary anchor
+      state.lastRecordedCoord = {
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+      };
+      state.stationarySince = now;
+      state.hasRecordedStationary = false;
+      await saveState(state);
+    } else {
+      const distance = getDistanceMeters(
+        payload.latitude,
+        payload.longitude,
+        state.lastRecordedCoord.latitude,
+        state.lastRecordedCoord.longitude
+      );
+
+      if (distance >= 10) {
+        // True physical movement >= 10 meters! Move anchor to new position
+        state.lastRecordedCoord = {
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+        };
+        state.stationarySince = now;
+        state.hasRecordedStationary = false;
+        await saveState(state);
+      } else {
+        // Stationary (< 10m from anchor): snap coordinates to the anchor
+        // so natural GPS signal jitter (±2m) doesn't draw spiderwebs while sitting in the house
+        payload.latitude = state.lastRecordedCoord.latitude;
+        payload.longitude = state.lastRecordedCoord.longitude;
+        payload.speed = 0;
+      }
     }
 
-    // Attempt to ping server
+    // 2. Transmit to server every 10 seconds!
     try {
       await trpcVanillaClient.tracking.ping.mutate(payload);
-      // If ping succeeded, try flushing any previously buffered offline points
       flushOfflineQueue().catch(() => {});
       return true;
     } catch (networkErr) {
-      // Offline or network error: buffer for replay when connection restores
       await enqueueOfflineCoordinate(payload);
       return false;
     }

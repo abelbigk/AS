@@ -10,6 +10,16 @@ import {
 
 export const BACKGROUND_LOCATION_TASK = "BACKGROUND_LOCATION_TASK";
 
+/**
+ * Returns a local ISO timestamp in Africa/Nairobi (UTC+3) format:
+ * e.g. "2026-11-23T03:30:00.000+03:00"
+ * This guarantees the date string ALWAYS matches the true local calendar date.
+ */
+export function getLocalNairobiTimestamp(epochMs: number = Date.now()): string {
+  const d = new Date(epochMs + 3 * 3600 * 1000);
+  return d.toISOString().replace("Z", "+03:00");
+}
+
 // Register the background location task at module scope (outside React lifecycle)
 if (Platform.OS !== "web") {
   try {
@@ -29,7 +39,7 @@ if (Platform.OS !== "web") {
               speed: loc.coords.speed,
               heading: loc.coords.heading,
               altitude: loc.coords.altitude,
-              timestamp: new Date(loc.timestamp).toISOString(),
+              timestamp: getLocalNairobiTimestamp(loc.timestamp),
             });
           }
         }
@@ -80,7 +90,7 @@ export function LocationTracker() {
                     speed: pos.coords.speed,
                     heading: pos.coords.heading,
                     altitude: pos.coords.altitude,
-                    timestamp: new Date(pos.timestamp).toISOString(),
+                    timestamp: getLocalNairobiTimestamp(pos.timestamp),
                   });
                 },
                 (err) => console.log("[LocationTracker Web] Error:", err.message),
@@ -146,7 +156,7 @@ export function LocationTracker() {
                 speed: loc.coords.speed,
                 heading: loc.coords.heading,
                 altitude: loc.coords.altitude,
-                timestamp: new Date(loc.timestamp).toISOString(),
+                timestamp: getLocalNairobiTimestamp(loc.timestamp),
               });
             } catch (locErr: any) {
               // Ignore temporary GPS timeout
