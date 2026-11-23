@@ -34,9 +34,6 @@ export function TrackingMap({
 
   const htmlContent = useMemo(() => {
     const isDark = theme === "dark";
-    const tileUrl = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-    const tileAttr = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-
     const safeLocations = JSON.stringify(locations);
 
     return `
@@ -51,7 +48,49 @@ export function TrackingMap({
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body, html, #map { width: 100%; height: 100%; background: ${isDark ? "#121212" : "#f5f5f5"}; }
           .leaflet-container { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-          ${isDark ? '.leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(90%) contrast(90%); }' : ''}
+          
+          /* Dark mode invert applies ONLY to street tiles, NEVER to satellite */
+          ${isDark ? '.street-tiles .leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(90%) contrast(90%); }' : ''}
+
+          /* Layer toggle pill control */
+          .layer-switch-container {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            background: ${isDark ? "rgba(18, 18, 20, 0.88)" : "rgba(255, 255, 255, 0.92)"};
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 3px;
+            border-radius: 24px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            border: 1px solid ${isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.1)"};
+            gap: 2px;
+          }
+          .layer-btn {
+            border: none;
+            outline: none;
+            background: transparent;
+            color: ${isDark ? "#9CA3AF" : "#4B5563"};
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            transition: all 0.2s ease;
+            user-select: none;
+            -webkit-user-select: none;
+          }
+          .layer-btn.active {
+            background: #3B82F6;
+            color: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.45);
+          }
+
           .custom-popup .leaflet-popup-content-wrapper {
             background: ${isDark ? "rgba(24, 24, 27, 0.95)" : "rgba(255, 255, 255, 0.95)"};
             color: ${isDark ? "#ffffff" : "#000000"};
@@ -161,7 +200,7 @@ export function TrackingMap({
             display: flex;
             align-items: center;
             justify-content: center;
-            filter: drop-shadow(0 1px 3px rgba(0,0,0,0.45));
+            filter: drop-shadow(0 1px 3px rgba(0,0,0,0.55));
             transition: transform 0.2s ease;
           }
           .live-avatar-wrap {
@@ -226,6 +265,17 @@ export function TrackingMap({
       </head>
       <body>
         <div id="map"></div>
+        <div class="layer-switch-container">
+          <button id="btnStreet" class="layer-btn active" onclick="switchLayer('street')">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+            Street
+          </button>
+          <button id="btnSat" class="layer-btn" onclick="switchLayer('sat')">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+            Satellite
+          </button>
+        </div>
+
         <script>
           const points = ${safeLocations};
           const targetId = ${selectedPointId != null ? selectedPointId : "null"};
@@ -233,10 +283,38 @@ export function TrackingMap({
           const map = L.map('map', { zoomControl: false });
           L.control.zoom({ position: 'topright' }).addTo(map);
 
-          L.tileLayer('${tileUrl}', {
-            attribution: '${tileAttr}',
+          // Tile Layers: Street (OSM) & Satellite (Esri World Imagery)
+          const streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            className: 'street-tiles',
+            attribution: '&copy; OpenStreetMap contributors',
             maxZoom: 19
-          }).addTo(map);
+          });
+
+          const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            className: 'sat-tiles',
+            attribution: '&copy; Esri World Imagery',
+            maxZoom: 19
+          });
+
+          streetLayer.addTo(map);
+          let currentLayerType = 'street';
+
+          window.switchLayer = function(layerType) {
+            if (layerType === currentLayerType) return;
+            if (layerType === 'sat') {
+              map.removeLayer(streetLayer);
+              satLayer.addTo(map);
+              document.getElementById('btnStreet').classList.remove('active');
+              document.getElementById('btnSat').classList.add('active');
+              currentLayerType = 'sat';
+            } else {
+              map.removeLayer(satLayer);
+              streetLayer.addTo(map);
+              document.getElementById('btnSat').classList.remove('active');
+              document.getElementById('btnStreet').classList.add('active');
+              currentLayerType = 'street';
+            }
+          };
 
           function computeBearing(p1, p2) {
             var dLon = ((p2.longitude - p1.longitude) * Math.PI) / 180;
@@ -251,12 +329,25 @@ export function TrackingMap({
             return dirs[Math.round(((deg %= 360) < 0 ? deg + 360 : deg) / 45) % 8];
           }
 
+          function getDistanceM(p1, p2) {
+            var R = 6371e3;
+            var dLat = ((p2.latitude - p1.latitude) * Math.PI) / 180;
+            var dLon = ((p2.longitude - p1.longitude) * Math.PI) / 180;
+            var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos((p1.latitude * Math.PI) / 180) * Math.cos((p2.latitude * Math.PI) / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          }
+
+          // Build Popup Content
+          var movingPointsList = [];
           function buildPopupContent(idx, title, badge, extraRows) {
-            var pt = points[idx];
+            var pt = (movingPointsList.length > 0 && movingPointsList[idx]) ? movingPointsList[idx] : points[idx];
+            if (!pt) pt = points[0];
             var timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             var navUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + pt.latitude + ',' + pt.longitude;
             var prevDisabled = idx <= 0 ? 'disabled' : '';
-            var nextDisabled = idx >= points.length - 1 ? 'disabled' : '';
+            var nextDisabled = (idx >= movingPointsList.length - 1 || movingPointsList.length <= 1) ? 'disabled' : '';
 
             return '<div class="popup-card">' +
               '<div class="popup-head">' +
@@ -280,24 +371,14 @@ export function TrackingMap({
           }
 
           window.goToPoint = function(idx) {
-            if (idx < 0 || idx >= points.length) return;
-            var targetPt = points[idx];
+            if (idx < 0 || idx >= movingPointsList.length) return;
+            var targetPt = movingPointsList[idx];
             if (markerMap[targetPt.id]) {
               var m = markerMap[targetPt.id];
-              map.flyTo(m.getLatLng(), 17, { duration: 0.6 });
+              map.flyTo(m.getLatLng(), 18, { duration: 0.6 });
               m.openPopup();
             }
           };
-
-          function getDistanceM(p1, p2) {
-            var R = 6371e3;
-            var dLat = ((p2.latitude - p1.latitude) * Math.PI) / 180;
-            var dLon = ((p2.longitude - p1.longitude) * Math.PI) / 180;
-            var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                    Math.cos((p1.latitude * Math.PI) / 180) * Math.cos((p2.latitude * Math.PI) / 180) *
-                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          }
 
           if (points && points.length > 0) {
             // Filter to waypoints that represent true physical movement >= 10m apart
@@ -308,9 +389,10 @@ export function TrackingMap({
                 movingPoints.push(points[i]);
               }
             }
+            movingPointsList = movingPoints;
 
-            // If user did not move >= 10 meters (stationary at the house):
-            // Show only the live position marker — DO NOT draw any lines across blocks
+            // CASE 1: Stationary / No movement >= 10 meters:
+            // DO NOT draw any line across blocks! Show ONLY the single live marker at the house!
             if (movingPoints.length < 2) {
               const pt = points[points.length - 1];
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
@@ -325,21 +407,28 @@ export function TrackingMap({
               });
               const marker = L.marker([pt.latitude, pt.longitude], { icon: singleIcon })
                 .addTo(map)
-                .bindPopup(buildPopupContent(points.length - 1, 'Current Position: ${username || "User"}', 'Live (Stationary)', ''), { className: 'custom-popup' })
+                .bindPopup(buildPopupContent(0, 'Current Position: ${username || "User"}', 'Live (Stationary)', ''), { className: 'custom-popup' })
                 .openPopup();
-              markerMap[pt.id] = marker;
-              map.setView([pt.latitude, pt.longitude], 17);
+
+              // Map all points to this marker
+              for (var pIdx = 0; pIdx < points.length; pIdx++) {
+                markerMap[points[pIdx].id] = marker;
+              }
+              map.setView([pt.latitude, pt.longitude], 18);
             } else {
-              // True physical movement >= 10m! Draw road-snapped route along streets & blocks
-              const casingLine = L.polyline([], {
+              // CASE 2: True physical movement >= 10m!
+              // Draw true GPS path directly through the actual coordinates (No artificial car detour loops)
+              const pathCoords = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
+
+              const casingLine = L.polyline(pathCoords, {
                 color: '#1E3A8A',
                 weight: 7,
-                opacity: 0.5,
+                opacity: 0.6,
                 lineJoin: 'round',
                 lineCap: 'round'
               }).addTo(map);
 
-              const polyline = L.polyline([], {
+              const polyline = L.polyline(pathCoords, {
                 color: '#3B82F6',
                 weight: 4,
                 opacity: 0.95,
@@ -347,53 +436,8 @@ export function TrackingMap({
                 lineCap: 'round'
               }).addTo(map);
 
-              // Fetch valid street path from OSRM routing engine along roads and blocks
-              try {
-                var queryPts = movingPoints;
-                if (movingPoints.length > 50) {
-                  var qStep = Math.ceil(movingPoints.length / 40);
-                  queryPts = movingPoints.filter(function(_, idx) { return idx % qStep === 0 || idx === movingPoints.length - 1; });
-                }
-                var osrmCoords = queryPts.map(function(p) { return p.longitude + ',' + p.latitude; }).join(';');
-                var osrmUrl = 'https://router.project-osrm.org/route/v1/driving/' + osrmCoords + '?overview=full&geometries=geojson';
-
-                fetch(osrmUrl)
-                  .then(function(res) { return res.json(); })
-                  .then(function(data) {
-                    if (data && data.code === 'Ok' && data.routes && data.routes[0]) {
-                      var roadPath = data.routes[0].geometry.coordinates.map(function(c) {
-                        return [c[1], c[0]];
-                      });
-                      casingLine.setLatLngs(roadPath);
-                      polyline.setLatLngs(roadPath);
-                      if (!targetId) {
-                        map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 17 });
-                      }
-                    } else {
-                      var fallbackLine = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
-                      casingLine.setLatLngs(fallbackLine);
-                      polyline.setLatLngs(fallbackLine);
-                      if (!targetId) {
-                        map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 17 });
-                      }
-                    }
-                  })
-                  .catch(function() {
-                    var fallbackLine = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
-                    casingLine.setLatLngs(fallbackLine);
-                    polyline.setLatLngs(fallbackLine);
-                    if (!targetId) {
-                      map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 17 });
-                    }
-                  });
-              } catch (e) {
-                var fallbackLine = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
-                casingLine.setLatLngs(fallbackLine);
-                polyline.setLatLngs(fallbackLine);
-              }
-
-              // 3. Add starting marker
-              const startPoint = points[0];
+              // 1. Add starting marker
+              const startPoint = movingPoints[0];
               const startIcon = L.divIcon({
                 className: 'start-pin-wrapper',
                 html: '<div class="start-pin"></div>',
@@ -405,13 +449,13 @@ export function TrackingMap({
                 .bindPopup(buildPopupContent(0, 'Trip Start', 'Start', ''), { className: 'custom-popup' });
               markerMap[startPoint.id] = startMarker;
 
-              // 4. Add intermediate waypoints with DIRECTION ARROWS
-              for (let i = 1; i < points.length - 1; i++) {
-                const pt = points[i];
+              // 2. Add intermediate waypoints with DIRECTION ARROWS (ONLY for moving points, eliminating arrow stacking!)
+              for (let i = 1; i < movingPoints.length - 1; i++) {
+                const pt = movingPoints[i];
                 const speedStr = pt.speed != null ? Math.round(pt.speed * 3.6) + ' km/h' : 'N/A';
                 const heading = (pt.heading != null && pt.heading > 0)
                   ? Math.round(pt.heading)
-                  : computeBearing(pt, points[i + 1]);
+                  : computeBearing(pt, movingPoints[i + 1]);
 
                 const waypointIcon = L.divIcon({
                   className: 'waypoint-marker',
@@ -429,18 +473,18 @@ export function TrackingMap({
                                 '<div class="popup-info-row"><span>Speed:</span> <b>' + speedStr + '</b></div>';
 
                 wpMarker.bindPopup(
-                  buildPopupContent(i, 'Waypoint #' + (i + 1), (i + 1) + '/' + points.length, extraRows),
+                  buildPopupContent(i, 'Waypoint #' + (i + 1), (i + 1) + '/' + movingPoints.length, extraRows),
                   { className: 'custom-popup' }
                 );
                 markerMap[pt.id] = wpMarker;
               }
 
-              // 5. Add latest CURRENT LIVE AVATAR with DIRECTION BEAM
-              const lastIdx = points.length - 1;
-              const lastPoint = points[lastIdx];
+              // 3. Add latest CURRENT LIVE AVATAR with DIRECTION BEAM
+              const lastIdx = movingPoints.length - 1;
+              const lastPoint = movingPoints[lastIdx];
               const lastHeading = (lastPoint.heading != null && lastPoint.heading > 0)
                 ? Math.round(lastPoint.heading)
-                : (points.length >= 2 ? computeBearing(points[points.length - 2], lastPoint) : 0);
+                : (movingPoints.length >= 2 ? computeBearing(movingPoints[movingPoints.length - 2], lastPoint) : 0);
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
 
               const avatarIcon = L.divIcon({
@@ -471,13 +515,33 @@ export function TrackingMap({
               );
               markerMap[lastPoint.id] = lastMarker;
 
+              // Map all raw points to their closest marker so clicking any point in timeline works smoothly
+              for (var rawIdx = 0; rawIdx < points.length; rawIdx++) {
+                var rawP = points[rawIdx];
+                if (!markerMap[rawP.id]) {
+                  var closestM = null;
+                  var minDist = Infinity;
+                  for (var mIdx = 0; mIdx < movingPoints.length; mIdx++) {
+                    var mPoint = movingPoints[mIdx];
+                    var dist = getDistanceM(rawP, mPoint);
+                    if (dist < minDist) {
+                      minDist = dist;
+                      closestM = markerMap[mPoint.id];
+                    }
+                  }
+                  if (closestM) {
+                    markerMap[rawP.id] = closestM;
+                  }
+                }
+              }
+
               if (targetId && markerMap[targetId]) {
                 const m = markerMap[targetId];
-                map.setView(m.getLatLng(), 17);
+                map.setView(m.getLatLng(), 18);
                 m.openPopup();
               } else {
                 lastMarker.openPopup();
-                map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 16 });
+                map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 18 });
               }
             }
 
@@ -486,7 +550,7 @@ export function TrackingMap({
                 const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
                 if (data && data.focusPointId && markerMap[data.focusPointId]) {
                   const m = markerMap[data.focusPointId];
-                  map.flyTo(m.getLatLng(), 17, { duration: 0.8 });
+                  map.flyTo(m.getLatLng(), 18, { duration: 0.8 });
                   m.openPopup();
                 }
               } catch(err) {}
