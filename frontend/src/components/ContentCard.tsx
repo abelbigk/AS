@@ -1,5 +1,5 @@
-import React, { useState, useRef } from "react";
-import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
+import React, { useRef, useState } from "react";
+import { View, Text, StyleSheet, Pressable, Platform, Animated } from "react-native";
 import { Image } from "expo-image";
 import { useTheme } from "../contexts/ThemeContext";
 import {
@@ -67,7 +67,7 @@ export function ContentCard({
 }: ContentCardProps) {
   const { colors, theme } = useTheme();
   const [aspectRatio, setAspectRatio] = useState<number>(3 / 4);
-  const [isImageLoaded, setIsImageLoaded] = useState(false);
+  const imageSkeletonOpacity = useRef(new Animated.Value(1)).current;
   const { dialogState, hide, showConfirm } = useAppDialog();
   const lastMenuActionTime = useRef(0);
 
@@ -266,24 +266,22 @@ export function ContentCard({
       {/* Poster Image Container */}
       {item.posterImageUrl ? (
         <View style={[styles.imageWrapper, aspectRatio ? { aspectRatio } : undefined]}>
-          {!isImageLoaded && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
           <Image
             source={{ uri: item.posterImageUrl }}
-            style={[
-              aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage,
-              { opacity: isImageLoaded ? 1 : 0 },
-            ]}
+            style={aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage}
             contentFit="cover"
             cachePolicy="memory-disk"
             priority="high"
-            transition={200}
             onLoad={(e) => {
-              setIsImageLoaded(true);
+              Animated.timing(imageSkeletonOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start();
               if (e.source.width && e.source.height) {
                 setAspectRatio(e.source.width / e.source.height);
               }
             }}
           />
+          <Animated.View style={[StyleSheet.absoluteFill, { opacity: imageSkeletonOpacity }]} pointerEvents="none">
+            <SkeletonShimmer style={StyleSheet.absoluteFill} />
+          </Animated.View>
 
           {/* Status badge on image */}
           {!isSelectMode && item.status !== "default" && (

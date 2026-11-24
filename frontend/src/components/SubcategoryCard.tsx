@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
+import React, { useRef, useState } from "react";
+import { View, Text, StyleSheet, Pressable, Platform, Animated } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { CheckCircle2 } from "lucide-react-native";
 import { Image } from "expo-image";
@@ -34,7 +34,7 @@ export function SubcategoryCard({
 }: SubcategoryCardProps) {
   const { colors, theme } = useTheme();
   const [aspectRatio, setAspectRatio] = useState<number>(4 / 3);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const imageSkeletonOpacity = useRef(new Animated.Value(1)).current;
 
   return (
     <Pressable
@@ -76,16 +76,14 @@ export function SubcategoryCard({
 
       {subcategory.coverImageUrl ? (
         <View style={[styles.imageWrapper, { aspectRatio }]}>
-          {!isLoaded && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
           <Image
             source={{ uri: subcategory.coverImageUrl }}
-            style={[StyleSheet.absoluteFill, { opacity: isLoaded ? 1 : 0 }]}
+            style={StyleSheet.absoluteFill}
             contentFit="cover"
             cachePolicy="memory-disk"
             priority="high"
-            transition={200}
             onLoad={(e) => {
-              setIsLoaded(true);
+              Animated.timing(imageSkeletonOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start();
               if (e.source.width && e.source.height) {
                 // Constrain aspect ratio between 0.65 and 1.8 for balanced masonry layout
                 const rawRatio = e.source.width / e.source.height;
@@ -94,6 +92,9 @@ export function SubcategoryCard({
               }
             }}
           />
+          <Animated.View style={[StyleSheet.absoluteFill, { opacity: imageSkeletonOpacity }]} pointerEvents="none">
+            <SkeletonShimmer style={StyleSheet.absoluteFill} />
+          </Animated.View>
           <LinearGradient
             colors={["transparent", "rgba(0, 0, 0, 0.2)", "rgba(0, 0, 0, 0.85)"]}
             style={StyleSheet.absoluteFill}

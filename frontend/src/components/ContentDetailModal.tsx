@@ -115,27 +115,21 @@ export function ContentDetailModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [fullscreenMediaIndex]);
 
-  // Re-fetch item to keep it fresh
-  const { data: freshItem } = trpc.content.getById.useQuery(
+  // Single round-trip: fetch item + its media together so everything renders at once
+  const { data: freshData } = trpc.content.getByIdWithMedia.useQuery(
     { itemId: item?.id || 0 },
     { enabled: !!item?.id && visible }
   );
 
-  // Guard freshItem against stale query cache from a previously opened item
-  const displayItem = (freshItem && freshItem.id === item?.id) ? freshItem : item;
+  // Guard against stale query cache from a previously opened item
+  const freshItem = (freshData && freshData.id === item?.id) ? freshData : null;
+  const displayItem = freshItem ?? item;
 
-  // Fetch attached media items
-  const { data: rawMediaItems = [], isLoading: mediaLoading } =
-    trpc.media.listByContent.useQuery(
-      { contentItemId: item?.id || 0 },
-      { enabled: !!item?.id && visible }
-    );
-
-  // Filter media items to ensure they strictly belong to the currently viewed item
+  // Media comes from the combined query — zero extra round-trips
   const mediaItems = useMemo(() => {
-    if (!rawMediaItems || !item?.id) return [];
-    return rawMediaItems.filter((m: any) => m.contentItemId === item.id);
-  }, [rawMediaItems, item?.id]);
+    if (!freshItem?.media || freshItem.id !== item?.id) return [];
+    return freshItem.media.filter((m: any) => m.contentItemId === item?.id);
+  }, [freshItem, item?.id]);
 
   // Reset all item-specific state whenever a different item is opened or modal becomes visible
   useEffect(() => {
@@ -310,7 +304,10 @@ export function ContentDetailModal({
       utils.content.listByCategory.invalidate();
       utils.content.listBySubcategory.invalidate();
       utils.content.listByStatus.invalidate();
-      if (item?.id) utils.content.getById.invalidate({ itemId: item.id });
+      if (item?.id) {
+        utils.content.getById.invalidate({ itemId: item.id });
+        utils.content.getByIdWithMedia.invalidate({ itemId: item.id });
+      }
     },
   });
 
@@ -327,13 +324,19 @@ export function ContentDetailModal({
 
   const assignSound = trpc.sounds.assignToContent.useMutation({
     onSuccess: () => {
-      if (item?.id) utils.content.getById.invalidate({ itemId: item.id });
+      if (item?.id) {
+        utils.content.getById.invalidate({ itemId: item.id });
+        utils.content.getByIdWithMedia.invalidate({ itemId: item.id });
+      }
     },
   });
 
   const removeSound = trpc.sounds.removeFromContent.useMutation({
     onSuccess: () => {
-      if (item?.id) utils.content.getById.invalidate({ itemId: item.id });
+      if (item?.id) {
+        utils.content.getById.invalidate({ itemId: item.id });
+        utils.content.getByIdWithMedia.invalidate({ itemId: item.id });
+      }
     },
   });
 
@@ -810,7 +813,7 @@ export function ContentDetailModal({
               ) : null}
 
               {/* If no media was found, show the empty box at the bottom */}
-              {mediaItems.length === 0 && !mediaLoading && (
+              {mediaItems.length === 0 && !!freshItem && (
                 <View style={[styles.mediaEmptyBox, { borderColor: colors.border, marginBottom: 20 }]}>
                   <Images size={24} color={colors.textSubtle} />
                   <Text style={[styles.mediaEmptyText, { color: colors.textSubtle }]}>

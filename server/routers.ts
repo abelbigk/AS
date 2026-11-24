@@ -623,6 +623,18 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         return await getContentItemById(input.itemId, ctx.user.id);
       }),
+
+    // Returns item + its media in one round-trip — used by ContentDetailModal
+    getByIdWithMedia: protectedProcedure
+      .input(z.object({ itemId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const [item, media] = await Promise.all([
+          getContentItemById(input.itemId, ctx.user.id),
+          getMediaByContentItem(input.itemId),
+        ]);
+        if (!item) return null;
+        return { ...item, media: media ?? [] };
+      }),
   }),
 
   // Media items (photos/videos inside a content item)

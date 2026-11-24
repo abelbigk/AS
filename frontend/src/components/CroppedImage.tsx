@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { View, StyleSheet, StyleProp, ViewStyle, ImageStyle } from "react-native";
+import React, { useRef } from "react";
+import { View, StyleSheet, Animated, StyleProp, ViewStyle, ImageStyle } from "react-native";
 import { Image } from "expo-image";
 import { SkeletonShimmer } from "./SkeletonShimmer";
 
@@ -17,7 +17,17 @@ interface Props {
 }
 
 export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
-  const [isLoaded, setIsLoaded] = useState(false);
+  // Fade the skeleton OUT when the image is ready — no opacity manipulation on the image itself
+  const skeletonOpacity = useRef(new Animated.Value(1)).current;
+
+  const handleLoad = () => {
+    Animated.timing(skeletonOpacity, {
+      toValue: 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start();
+  };
+
   let crop: CropData | null = null;
   if (cropData) {
     try {
@@ -27,7 +37,7 @@ export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
 
   return (
     <View style={[styles.container, containerStyle]}>
-      {!isLoaded && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
+      {/* Image always renders at full opacity — no flash or gap */}
       <Image
         source={{ uri: src }}
         style={[
@@ -42,14 +52,16 @@ export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
                 ],
               }
             : undefined,
-          { opacity: isLoaded ? 1 : 0 },
         ]}
         contentFit="cover"
-        transition={200}
         cachePolicy="memory-disk"
         priority="high"
-        onLoad={() => setIsLoaded(true)}
+        onLoad={handleLoad}
       />
+      {/* Skeleton sits on top and fades out when image is ready */}
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: skeletonOpacity }]} pointerEvents="none">
+        <SkeletonShimmer style={StyleSheet.absoluteFill} />
+      </Animated.View>
     </View>
   );
 }
