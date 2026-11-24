@@ -12,6 +12,8 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic } from "./vite";
 import { isCorsOriginAllowed } from "./corsConfig";
+import { getDb } from "../db";
+import { users } from "../../drizzle/schema";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -52,6 +54,18 @@ async function startServer() {
   registerImageProxy(app);
   registerOAuthRoutes(app);
   registerUploadRoutes(app);
+
+  // Health check endpoint
+  app.get("/tenaw", async (_req, res) => {
+    try {
+      const db = getDb();
+      await db.select({ id: users.id }).from(users).limit(1);
+      res.status(200).send("server crushed");
+    } catch {
+      res.status(503).send("Server is down for some time");
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
