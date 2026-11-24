@@ -12,6 +12,7 @@ import {
   Linking,
   Image as RNImage,
   BackHandler,
+  Animated,
 } from "react-native";
 import { Image } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
@@ -60,6 +61,44 @@ interface ContentDetailModalProps {
 }
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+
+function ModalMediaImage({
+  uri,
+  onAspectRatio,
+}: {
+  uri: string;
+  onAspectRatio: (ratio: number) => void;
+}) {
+  const skeletonOpacity = useRef(new Animated.Value(1)).current;
+
+  return (
+    <>
+      <Image
+        source={{ uri }}
+        style={styles.imageFrameless}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        priority="high"
+        onLoad={(e) => {
+          Animated.timing(skeletonOpacity, {
+            toValue: 0,
+            duration: 150,
+            useNativeDriver: true,
+          }).start();
+          if (e.source.width && e.source.height) {
+            onAspectRatio(e.source.width / e.source.height);
+          }
+        }}
+      />
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { opacity: skeletonOpacity }]}
+        pointerEvents="none"
+      >
+        <SkeletonShimmer style={StyleSheet.absoluteFill} />
+      </Animated.View>
+    </>
+  );
+}
 
 export function ContentDetailModal({
   item,
@@ -193,7 +232,7 @@ export function ContentDetailModal({
     });
   }, [mediaItems]);
 
-  const displaySound = activeSound !== null ? activeSound : ((item as any)?.sound ?? null);
+  const displaySound = activeSound ?? (freshItem as any)?.sound ?? (item as any)?.sound ?? null;
 
   // Safe clamped index to ensure counter and dots never display out-of-bounds (e.g. 4/2)
   const displayMediaIndex = mediaItems.length > 0
@@ -527,6 +566,20 @@ export function ContentDetailModal({
                 }
               }}
             >
+              {!freshItem ? (
+                <View style={{ gap: 14, paddingTop: 4 }}>
+                  <SkeletonShimmer style={{ height: 28, width: "70%" }} borderRadius={8} />
+                  <SkeletonShimmer style={{ height: 34, width: "100%" }} borderRadius={10} />
+                  <SkeletonShimmer style={{ height: Math.min(420, sliderHeight), width: "100%" }} borderRadius={14} />
+                  <SkeletonShimmer style={{ height: 16, width: "90%" }} borderRadius={6} />
+                  <SkeletonShimmer style={{ height: 16, width: "60%" }} borderRadius={6} />
+                  <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+                    <SkeletonShimmer style={{ flex: 1, height: 46 }} borderRadius={12} />
+                    <SkeletonShimmer style={{ flex: 1, height: 46 }} borderRadius={12} />
+                  </View>
+                </View>
+              ) : (
+                <>
               {/* Heading */}
               <Text style={[styles.heading, { color: colors.text }]}>
                 {displayItem.heading}
@@ -691,22 +744,13 @@ export function ContentDetailModal({
                                     : { width: "100%", height: "100%" },
                                 ]}
                               >
-                                {!mediaAspectRatios[m.id] && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
-                                <Image
-                                  source={{ uri: m.url }}
-                                  style={[styles.imageFrameless, { opacity: mediaAspectRatios[m.id] ? 1 : 0 }]}
-                                  contentFit="cover"
-                                  cachePolicy="memory-disk"
-                                  priority="high"
-                                  transition={200}
-                                  onLoad={(e) => {
-                                    if (e.source.width && e.source.height) {
-                                      const ratio = e.source.width / e.source.height;
-                                      setMediaAspectRatios((prev) => ({
-                                        ...prev,
-                                        [m.id]: ratio,
-                                      }));
-                                    }
+                                <ModalMediaImage
+                                  uri={m.url}
+                                  onAspectRatio={(ratio) => {
+                                    setMediaAspectRatios((prev) => ({
+                                      ...prev,
+                                      [m.id]: ratio,
+                                    }));
                                   }}
                                 />
                               </Pressable>
@@ -767,6 +811,8 @@ export function ContentDetailModal({
                       source={{ uri: displayItem.posterImageUrl }}
                       style={StyleSheet.absoluteFill}
                       contentFit="contain"
+                      cachePolicy="memory-disk"
+                      priority="high"
                       onLoad={(e) => {
                         if (e.source.width && e.source.height) {
                           setCoverAspectRatio(e.source.width / e.source.height);
@@ -802,6 +848,8 @@ export function ContentDetailModal({
                       source={{ uri: displayItem.posterImageUrl }}
                       style={StyleSheet.absoluteFill}
                       contentFit="contain"
+                      cachePolicy="memory-disk"
+                      priority="high"
                       onLoad={(e) => {
                         if (e.source.width && e.source.height) {
                           setCoverAspectRatio(e.source.width / e.source.height);
@@ -879,6 +927,8 @@ export function ContentDetailModal({
                   </Text>
                 </Pressable>
               </View>
+                </>
+              )}
             </View>
           </ScrollView>
         </View>
@@ -890,7 +940,10 @@ export function ContentDetailModal({
         visible={editModalOpen}
         onClose={() => setEditModalOpen(false)}
         onSaved={() => {
-          if (item?.id) utils.content.getById.invalidate({ itemId: item.id });
+          if (item?.id) {
+            utils.content.getById.invalidate({ itemId: item.id });
+            utils.content.getByIdWithMedia.invalidate({ itemId: item.id });
+          }
         }}
       />
       <AppDialogRenderer {...dialogState} onHide={hide} />
