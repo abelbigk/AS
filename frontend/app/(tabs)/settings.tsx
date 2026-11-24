@@ -178,6 +178,8 @@ export default function SettingsScreen() {
         source={{ uri: bgImage }}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
+        cachePolicy="memory-disk"
+        priority="high"
         blurRadius={Platform.OS !== "web" ? 25 : undefined}
       />
       <View

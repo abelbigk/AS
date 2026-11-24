@@ -78,7 +78,8 @@ export function SubcategoryCard({
             source={{ uri: subcategory.coverImageUrl }}
             style={StyleSheet.absoluteFill}
             contentFit="cover"
-            cachePolicy="disk"
+            cachePolicy="memory-disk"
+            priority="high"
             transition={200}
             onLoad={(e) => {
               if (e.source.width && e.source.height) {

@@ -691,7 +691,8 @@ export function ContentDetailModal({
                                   source={{ uri: m.url }}
                                   style={styles.imageFrameless}
                                   contentFit="cover"
-                                  cachePolicy="disk"
+                                  cachePolicy="memory-disk"
+                                  priority="high"
                                   transition={200}
                                   onLoad={(e) => {
                                     if (e.source.width && e.source.height) {
@@ -997,7 +998,8 @@ export function ContentDetailModal({
                   source={{ uri: mediaItems[fullscreenMediaIndex].url }}
                   style={styles.fullscreenImage}
                   contentFit="contain"
-                  cachePolicy="disk"
+                  cachePolicy="memory-disk"
+                  priority="high"
                 />
               )
             )}
