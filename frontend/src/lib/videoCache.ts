@@ -26,9 +26,7 @@ async function ensureDirExists(): Promise<void> {
  * Generates a stable, safe local filename for a given remote video URL.
  */
 function getLocalCachePath(remoteUri: string): string {
-  // Strip query parameters
   const cleanUri = remoteUri.split("?")[0];
-  // Create a clean alphanumeric filename with last 50 chars
   const sanitized = cleanUri.replace(/[^a-zA-Z0-9]/g, "_");
   const ext = cleanUri.toLowerCase().endsWith(".webm") ? ".webm" : ".mp4";
   return `${VIDEO_CACHE_DIR}${sanitized.slice(-50)}${ext}`;
@@ -37,9 +35,13 @@ function getLocalCachePath(remoteUri: string): string {
 /**
  * Returns a cached local video URI if already downloaded and less than 2 days old.
  * If not cached, returns the remote URI for immediate streaming, and kicks off
- * a background download so subsequent plays are instant with zero buffering.
+ * a background download so subsequent plays, loops, and seeks are 100% instant from disk.
+ * Invokes onCached callback as soon as the background download completes.
  */
-export async function getOrCacheVideoUri(remoteUri: string): Promise<string> {
+export async function getOrCacheVideoUri(
+  remoteUri: string,
+  onCached?: (localUri: string) => void
+): Promise<string> {
   if (Platform.OS === "web" || !remoteUri || !remoteUri.startsWith("http")) {
     return remoteUri;
   }
@@ -57,6 +59,7 @@ export async function getOrCacheVideoUri(remoteUri: string): Promise<string> {
 
       // If file is within the 2-day cache window, serve instantly from disk!
       if (now - modTime < TWO_DAYS_MS) {
+        onCached?.(localUri);
         return localUri;
       }
 
@@ -69,7 +72,11 @@ export async function getOrCacheVideoUri(remoteUri: string): Promise<string> {
       const downloadPromise = (async () => {
         try {
           const res = await FileSystem.downloadAsync(remoteUri, localUri);
-          return res.uri;
+          if (res.status >= 200 && res.status < 300 && res.uri) {
+            onCached?.(res.uri);
+            return res.uri;
+          }
+          return remoteUri;
         } catch (err) {
           return remoteUri;
         } finally {
@@ -78,6 +85,12 @@ export async function getOrCacheVideoUri(remoteUri: string): Promise<string> {
       })();
 
       inFlightDownloads.set(remoteUri, downloadPromise);
+    } else {
+      inFlightDownloads.get(remoteUri)?.then((cached) => {
+        if (cached && cached.startsWith("file://")) {
+          onCached?.(cached);
+        }
+      });
     }
 
     // Return remote URL immediately so playback starts with zero delay

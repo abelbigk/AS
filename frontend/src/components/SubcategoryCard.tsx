@@ -4,6 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { CheckCircle2 } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useTheme } from "../contexts/ThemeContext";
+import { SkeletonShimmer } from "./SkeletonShimmer";
 
 interface SubcategoryCardProps {
   subcategory: {
@@ -33,6 +34,7 @@ export function SubcategoryCard({
 }: SubcategoryCardProps) {
   const { colors, theme } = useTheme();
   const [aspectRatio, setAspectRatio] = useState<number>(4 / 3);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   return (
     <Pressable
@@ -74,14 +76,16 @@ export function SubcategoryCard({
 
       {subcategory.coverImageUrl ? (
         <View style={[styles.imageWrapper, { aspectRatio }]}>
+          {!isLoaded && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
           <Image
             source={{ uri: subcategory.coverImageUrl }}
-            style={StyleSheet.absoluteFill}
+            style={[StyleSheet.absoluteFill, { opacity: isLoaded ? 1 : 0 }]}
             contentFit="cover"
             cachePolicy="memory-disk"
             priority="high"
             transition={200}
             onLoad={(e) => {
+              setIsLoaded(true);
               if (e.source.width && e.source.height) {
                 // Constrain aspect ratio between 0.65 and 1.8 for balanced masonry layout
                 const rawRatio = e.source.width / e.source.height;

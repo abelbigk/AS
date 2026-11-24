@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { View, StyleSheet, StyleProp, ViewStyle, ImageStyle } from "react-native";
 import { Image } from "expo-image";
+import { SkeletonShimmer } from "./SkeletonShimmer";
 
 interface CropData {
   zoom?: number;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
+  const [isLoaded, setIsLoaded] = useState(false);
   let crop: CropData | null = null;
   if (cropData) {
     try {
@@ -25,6 +27,7 @@ export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
 
   return (
     <View style={[styles.container, containerStyle]}>
+      {!isLoaded && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
       <Image
         source={{ uri: src }}
         style={[
@@ -39,11 +42,13 @@ export function CroppedImage({ src, cropData, style, containerStyle }: Props) {
                 ],
               }
             : undefined,
+          { opacity: isLoaded ? 1 : 0 },
         ]}
         contentFit="cover"
         transition={200}
         cachePolicy="memory-disk"
         priority="high"
+        onLoad={() => setIsLoaded(true)}
       />
     </View>
   );

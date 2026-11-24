@@ -45,6 +45,7 @@ import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import { SoundControl } from "./SoundControl";
 import { SoundPickerModal } from "./SoundPickerModal";
 import { CustomVideoPlayer } from "./CustomVideoPlayer";
+import { SkeletonShimmer } from "./SkeletonShimmer";
 import type { ContentItem } from "./ContentCard";
 
 interface ContentDetailModalProps {
@@ -687,9 +688,10 @@ export function ContentDetailModal({
                                     : { width: "100%", height: "100%" },
                                 ]}
                               >
+                                {!mediaAspectRatios[m.id] && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
                                 <Image
                                   source={{ uri: m.url }}
-                                  style={styles.imageFrameless}
+                                  style={[styles.imageFrameless, { opacity: mediaAspectRatios[m.id] ? 1 : 0 }]}
                                   contentFit="cover"
                                   cachePolicy="memory-disk"
                                   priority="high"

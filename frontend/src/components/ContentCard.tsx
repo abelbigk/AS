@@ -15,6 +15,7 @@ import {
 } from "lucide-react-native";
 import { DropdownMenu } from "./DropdownMenu";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
+import { SkeletonShimmer } from "./SkeletonShimmer";
 
 export interface ContentItem {
   id: number;
@@ -66,6 +67,7 @@ export function ContentCard({
 }: ContentCardProps) {
   const { colors, theme } = useTheme();
   const [aspectRatio, setAspectRatio] = useState<number>(3 / 4);
+  const [isImageLoaded, setIsImageLoaded] = useState(false);
   const { dialogState, hide, showConfirm } = useAppDialog();
   const lastMenuActionTime = useRef(0);
 
@@ -264,14 +266,19 @@ export function ContentCard({
       {/* Poster Image Container */}
       {item.posterImageUrl ? (
         <View style={[styles.imageWrapper, aspectRatio ? { aspectRatio } : undefined]}>
+          {!isImageLoaded && <SkeletonShimmer style={StyleSheet.absoluteFill} />}
           <Image
             source={{ uri: item.posterImageUrl }}
-            style={aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage}
+            style={[
+              aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage,
+              { opacity: isImageLoaded ? 1 : 0 },
+            ]}
             contentFit="cover"
             cachePolicy="memory-disk"
             priority="high"
             transition={200}
             onLoad={(e) => {
+              setIsImageLoaded(true);
               if (e.source.width && e.source.height) {
                 setAspectRatio(e.source.width / e.source.height);
               }

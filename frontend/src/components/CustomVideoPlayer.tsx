@@ -63,17 +63,6 @@ export function CustomVideoPlayer({
   const [dragProgress,    setDragProgress]    = useState(0);  // 0–100 displayed during drag
   const [videoAspect,     setVideoAspect]     = useState<number | null>(null);
 
-  // Cache video locally for instant playback on repeat views (2-day cache)
-  useEffect(() => {
-    let isMounted = true;
-    getOrCacheVideoUri(uri).then((cached) => {
-      if (isMounted && cached && cached !== playableUri) {
-        setPlayableUri(cached);
-      }
-    });
-    return () => { isMounted = false; };
-  }, [uri]);
-
   // ─── Refs (read in event handlers — no stale closures) ───────────────────
   const isDraggingRef        = useRef(false);
   const isPlayingRef         = useRef(false);
@@ -114,6 +103,22 @@ export function CustomVideoPlayer({
     p.loop = true;
     p.timeUpdateEventInterval = 0.05; // 50ms interval for smooth time tracking
   });
+
+  // Cache video locally. When background download completes, hot-swap to local
+  // file without restarting playback — fixes looping re-buffer and seek-back reload.
+  useEffect(() => {
+    let isMounted = true;
+    getOrCacheVideoUri(uri, (localUri) => {
+      if (!isMounted || localUri === playableUri) return;
+      setPlayableUri(localUri);
+      try { player.replace({ uri: localUri }); } catch {}
+    }).then((initial) => {
+      if (isMounted && initial && initial !== playableUri) {
+        setPlayableUri(initial);
+      }
+    });
+    return () => { isMounted = false; };
+  }, [uri]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const playSub = player.addListener("playingChange", (e) => {

@@ -13,6 +13,7 @@ export interface CoordinatePayload {
 
 interface TrackingStationaryState {
   lastRecordedCoord: { latitude: number; longitude: number } | null;
+  stationaryAnchor: { latitude: number; longitude: number } | null;
   stationarySince: number | null; // epoch ms
   hasRecordedStationary: boolean;
 }
@@ -57,6 +58,7 @@ async function loadState(): Promise<TrackingStationaryState> {
   }
   memoryState = {
     lastRecordedCoord: null,
+    stationaryAnchor: null,
     stationarySince: null,
     hasRecordedStationary: false,
   };
@@ -206,14 +208,21 @@ export async function processAndSendCoordinate(
     const state = await loadState();
     const now = Date.now();
 
+    // Human walking speed is ~1.2 to 1.5 m/s. If reported speed is < 0.6 m/s (or 0), the phone is physically stationary.
+    const isStationarySpeed = payload.speed != null && payload.speed < 0.6;
+
     if (!state.lastRecordedCoord) {
       // First fix: set stationary anchor and record initial position
       state.lastRecordedCoord = {
         latitude: payload.latitude,
         longitude: payload.longitude,
       };
+      state.stationaryAnchor = {
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+      };
       state.stationarySince = now;
-      state.hasRecordedStationary = false;
+      state.hasRecordedStationary = true;
       await saveState(state);
 
       try {
@@ -226,26 +235,63 @@ export async function processAndSendCoordinate(
       }
     }
 
-    const distance = getDistanceMeters(
+    // 2. Stationary Anchor Filter (Prevents indoor/desk multipath jitter from creating false waypoints)
+    if (!state.stationaryAnchor) {
+      if (isStationarySpeed) {
+        state.stationaryAnchor = {
+          latitude: state.lastRecordedCoord.latitude,
+          longitude: state.lastRecordedCoord.longitude,
+        };
+      }
+    }
+
+    if (state.stationaryAnchor) {
+      const distFromAnchor = getDistanceMeters(
+        payload.latitude,
+        payload.longitude,
+        state.stationaryAnchor.latitude,
+        state.stationaryAnchor.longitude
+      );
+
+      // If within 25m of the anchor: this is indoor GPS satellite drift, NOT true travel!
+      if (distFromAnchor < 25) {
+        return false;
+      }
+
+      // If beyond 25m, check if user is actually traveling (speed >= 0.7 m/s or strong displacement >= 40m)
+      const hasDeparted = (payload.speed != null && payload.speed >= 0.7) || distFromAnchor >= 40;
+      if (!hasDeparted) {
+        // Discard as transient satellite jump
+        return false;
+      }
+
+      // User has genuinely left the stationary anchor and started moving!
+      state.stationaryAnchor = null;
+    }
+
+    const distFromLast = getDistanceMeters(
       payload.latitude,
       payload.longitude,
       state.lastRecordedCoord.latitude,
       state.lastRecordedCoord.longitude
     );
 
-    // If moved < 10 meters: user is stationary at the same location!
-    // Do NOT record duplicate stationary coordinates into route history
-    if (distance < 10) {
+    // If moved < 15 meters while in motion: skip to avoid micro-jitter
+    if (distFromLast < 15) {
       return false;
     }
 
-    // True physical movement >= 10 meters: record new route coordinate
+    // True physical movement >= 15 meters along the route:
     state.lastRecordedCoord = {
       latitude: payload.latitude,
       longitude: payload.longitude,
     };
-    state.stationarySince = now;
-    state.hasRecordedStationary = false;
+    if (isStationarySpeed) {
+      state.stationaryAnchor = {
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+      };
+    }
     await saveState(state);
 
     // Transmit to server

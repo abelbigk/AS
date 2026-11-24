@@ -381,19 +381,28 @@ export function TrackingMap({
           };
 
           if (points && points.length > 0) {
-            // Filter to waypoints that represent true physical movement >= 10m apart
+            // Check if all recorded points for this date are within a 35m indoor stationary cluster
+            var maxSpread = 0;
+            var origin = points[0];
+            for (var k = 1; k < points.length; k++) {
+              var dist = getDistanceM(origin, points[k]);
+              if (dist > maxSpread) maxSpread = dist;
+            }
+
+            // Filter to waypoints that represent true physical movement >= 15m apart
             var movingPoints = [points[0]];
             for (var i = 1; i < points.length; i++) {
               var d = getDistanceM(movingPoints[movingPoints.length - 1], points[i]);
-              if (d >= 10) {
+              if (d >= 15) {
                 movingPoints.push(points[i]);
               }
             }
             movingPointsList = movingPoints;
 
-            // CASE 1: Stationary / No movement >= 10 meters:
+            // CASE 1: Stationary / No movement outside 35m cluster:
+            // If the entire day's points are within 35 meters, or if movingPoints < 2:
             // DO NOT draw any line across blocks! Show ONLY the single live marker at the house!
-            if (movingPoints.length < 2) {
+            if (maxSpread < 35 || movingPoints.length < 2) {
               const pt = points[points.length - 1];
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
               const singleIcon = L.divIcon({
