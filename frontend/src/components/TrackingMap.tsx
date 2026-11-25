@@ -402,36 +402,212 @@ export function TrackingMap({
           };
 
           let hasInitialViewport = false;
+          let currentRenderSeq = 0;
+          let routeAbortController = null;
+          const osrmRouteCache = {};
+
+          function sortPointsChronological(raw) {
+            return (raw || []).slice().sort(function(a, b) {
+              var ta = new Date(a.timestamp).getTime() || 0;
+              var tb = new Date(b.timestamp).getTime() || 0;
+              if (ta !== tb) return ta - tb;
+              return (a.id || 0) - (b.id || 0);
+            });
+          }
+
+          function denoisePoints(sorted) {
+            if (!sorted || sorted.length <= 2) return sorted || [];
+            // 1. Filter out very low accuracy fixes (> 65m) if we have enough accurate points
+            var accurate = sorted.filter(function(p) {
+              return p.accuracy == null || p.accuracy <= 65;
+            });
+            var pts = accurate.length >= 2 ? accurate : sorted;
+
+            // 2. Remove single-point GPS teleport spikes (jumps > 60m out and immediately > 60m back)
+            var cleaned = [pts[0]];
+            for (var i = 1; i < pts.length - 1; i++) {
+              var prev = cleaned[cleaned.length - 1];
+              var cur = pts[i];
+              var next = pts[i + 1];
+              var dPrev = getDistanceM(prev, cur);
+              var dNext = getDistanceM(cur, next);
+              var dSpan = getDistanceM(prev, next);
+              if (dPrev > 60 && dNext > 60 && dSpan < 40) {
+                continue;
+              }
+              cleaned.push(cur);
+            }
+            cleaned.push(pts[pts.length - 1]);
+            return cleaned;
+          }
+
+          function extractMovingWaypoints(cleaned) {
+            if (!cleaned || cleaned.length === 0) return [];
+            // Step >= 25m between waypoints to prevent indoor GPS drift from creating star/spiderweb clusters
+            var moving = [cleaned[0]];
+            for (var i = 1; i < cleaned.length; i++) {
+              var d = getDistanceM(moving[moving.length - 1], cleaned[i]);
+              if (d >= 25) {
+                moving.push(cleaned[i]);
+              }
+            }
+            // Collapse quick ping-pong bounces (A -> B -> A within 25m of A and < 2 mins)
+            if (moving.length >= 3) {
+              var collapsed = [moving[0]];
+              for (var j = 1; j < moving.length; j++) {
+                if (collapsed.length >= 2) {
+                  var prev2 = collapsed[collapsed.length - 2];
+                  var prev1 = collapsed[collapsed.length - 1];
+                  var cur = moving[j];
+                  var dt = Math.abs(new Date(cur.timestamp).getTime() - new Date(prev2.timestamp).getTime());
+                  if (getDistanceM(prev2, cur) < 25 && getDistanceM(prev1, cur) < 50 && dt < 120000) {
+                    collapsed.pop();
+                    continue;
+                  }
+                }
+                collapsed.push(moving[j]);
+              }
+              moving = collapsed;
+            }
+            // Always ensure the very latest point is represented if >= 25m from start
+            var lastRaw = cleaned[cleaned.length - 1];
+            if (moving.length >= 2 && moving[moving.length - 1].id !== lastRaw.id) {
+              if (getDistanceM(moving[moving.length - 1], lastRaw) >= 15) {
+                moving.push(lastRaw);
+              } else {
+                moving[moving.length - 1] = lastRaw;
+              }
+            }
+            return moving;
+          }
+
+          async function fetchOsrmChunk(chunk, profile, signal) {
+            var coordsStr = chunk.map(function(p) { return p.longitude + ',' + p.latitude; }).join(';');
+            var url = profile === 'driving'
+              ? 'https://router.project-osrm.org/route/v1/driving/' + coordsStr + '?overview=full&geometries=geojson&continue_straight=false'
+              : 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/' + coordsStr + '?overview=full&geometries=geojson&continue_straight=false';
+            var resp = await fetch(url, { signal: signal });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            var json = await resp.json();
+            if (json && json.code === 'Ok' && json.routes && json.routes[0] && json.routes[0].geometry && json.routes[0].geometry.coordinates) {
+              return json.routes[0].geometry.coordinates.map(function(c) { return [c[1], c[0]]; });
+            }
+            throw new Error('No route');
+          }
+
+          async function getValidRoadPath(waypoints, signal) {
+            if (!waypoints || waypoints.length < 2) return null;
+            var cacheKey = waypoints.map(function(p) { return p.latitude.toFixed(5) + ',' + p.longitude.toFixed(5); }).join('|');
+            if (osrmRouteCache[cacheKey]) return osrmRouteCache[cacheKey];
+
+            var maxSpeed = 0;
+            for (var i = 0; i < waypoints.length; i++) {
+              if (waypoints[i].speed && waypoints[i].speed > maxSpeed) maxSpeed = waypoints[i].speed;
+            }
+            var primaryProfile = maxSpeed > 10 ? 'driving' : 'foot';
+            var fallbackProfile = primaryProfile === 'foot' ? 'driving' : 'foot';
+
+            var chunkSize = 70;
+            var chunks = [];
+            for (var start = 0; start < waypoints.length - 1; start += (chunkSize - 1)) {
+              var end = Math.min(start + chunkSize, waypoints.length);
+              chunks.push(waypoints.slice(start, end));
+              if (end === waypoints.length) break;
+            }
+
+            async function runWithProfile(profile) {
+              var fullCoords = [];
+              for (var c = 0; c < chunks.length; c++) {
+                var part = await fetchOsrmChunk(chunks[c], profile, signal);
+                if (c > 0 && fullCoords.length > 0 && part.length > 0) {
+                  part = part.slice(1);
+                }
+                for (var k = 0; k < part.length; k++) fullCoords.push(part[k]);
+              }
+              return fullCoords;
+            }
+
+            try {
+              var coords = await runWithProfile(primaryProfile);
+              if (coords.length >= 2) {
+                osrmRouteCache[cacheKey] = coords;
+                return coords;
+              }
+            } catch (e) {
+              if (e && e.name === 'AbortError') throw e;
+            }
+
+            try {
+              var fbCoords = await runWithProfile(fallbackProfile);
+              if (fbCoords.length >= 2) {
+                osrmRouteCache[cacheKey] = fbCoords;
+                return fbCoords;
+              }
+            } catch (e2) {
+              if (e2 && e2.name === 'AbortError') throw e2;
+            }
+            return null;
+          }
+
+          function addRouteChevrons(coords, targetGroup) {
+            if (!coords || coords.length < 2) return;
+            var accumDist = 0;
+            var chevronInterval = 110; // meters between decorative street direction arrows
+            for (var i = 1; i < coords.length; i++) {
+              var p1 = { latitude: coords[i - 1][0], longitude: coords[i - 1][1] };
+              var p2 = { latitude: coords[i][0], longitude: coords[i][1] };
+              var segDist = getDistanceM(p1, p2);
+              accumDist += segDist;
+              if (accumDist >= chevronInterval) {
+                accumDist = 0;
+                var midLat = (p1.latitude + p2.latitude) / 2;
+                var midLon = (p1.longitude + p2.longitude) / 2;
+                var brg = computeBearing(p1, p2);
+                var chevIcon = L.divIcon({
+                  className: 'waypoint-marker',
+                  html: '<div style="transform: rotate(' + brg + 'deg); pointer-events: none;">' +
+                        '<svg viewBox="0 0 24 24" width="12" height="12">' +
+                        '<polygon points="12,3 20,19 12,15 4,19" fill="#FFFFFF" stroke="#1E3A8A" stroke-width="2"/>' +
+                        '</svg></div>',
+                  iconSize: [12, 12],
+                  iconAnchor: [6, 6]
+                });
+                L.marker([midLat, midLon], { icon: chevIcon, interactive: false }).addTo(targetGroup);
+              }
+            }
+          }
+
           window.renderRoute = function(newPoints, newTargetId, preserveViewport) {
-            points = newPoints || [];
+            var seq = ++currentRenderSeq;
+            if (routeAbortController) {
+              try { routeAbortController.abort(); } catch (e) {}
+              routeAbortController = null;
+            }
+
+            points = sortPointsChronological(newPoints);
             targetId = newTargetId != null ? newTargetId : null;
             routeGroup.clearLayers();
             movingPointsList = [];
             for (const k in markerMap) { delete markerMap[k]; }
             if (points && points.length > 0) {
-            // Check if all recorded points for this date are within a 35m indoor stationary cluster
+            var cleanedPoints = denoisePoints(points);
+
+            // Check if all cleaned points for this date are within a 35m indoor stationary cluster
             var maxSpread = 0;
-            var origin = points[0];
-            for (var k = 1; k < points.length; k++) {
-              var dist = getDistanceM(origin, points[k]);
+            var origin = cleanedPoints[0];
+            for (var k = 1; k < cleanedPoints.length; k++) {
+              var dist = getDistanceM(origin, cleanedPoints[k]);
               if (dist > maxSpread) maxSpread = dist;
             }
 
-            // Filter to waypoints that represent true physical movement >= 15m apart
-            var movingPoints = [points[0]];
-            for (var i = 1; i < points.length; i++) {
-              var d = getDistanceM(movingPoints[movingPoints.length - 1], points[i]);
-              if (d >= 15) {
-                movingPoints.push(points[i]);
-              }
-            }
+            var movingPoints = extractMovingWaypoints(cleanedPoints);
             movingPointsList = movingPoints;
 
             // CASE 1: Stationary / No movement outside 35m cluster:
             // If the entire day's points are within 35 meters, or if movingPoints < 2:
             // DO NOT draw any line across blocks! Show ONLY the single live marker at the house!
             if (maxSpread < 35 || movingPoints.length < 2) {
-              const pt = points[points.length - 1];
+              const pt = cleanedPoints[cleanedPoints.length - 1];
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
               const singleIcon = L.divIcon({
                 className: 'live-avatar-marker',
@@ -451,27 +627,43 @@ export function TrackingMap({
               for (var pIdx = 0; pIdx < points.length; pIdx++) {
                 markerMap[points[pIdx].id] = marker;
               }
-              map.setView([pt.latitude, pt.longitude], 18);
+              if (!preserveViewport || !hasInitialViewport) {
+                map.setView([pt.latitude, pt.longitude], 18);
+                hasInitialViewport = true;
+              }
             } else {
-              // CASE 2: True physical movement >= 10m!
-              // Draw true GPS path directly through the actual coordinates (No artificial car detour loops)
-              const pathCoords = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
+              // CASE 2: True physical movement!
+              // Route along actual streets/paths via OSRM, with immediate preview & seamless replacement
+              const lineGroup = L.layerGroup().addTo(routeGroup);
+              const rawCoords = movingPoints.map(function(p) { return [p.latitude, p.longitude]; });
 
-              const casingLine = L.polyline(pathCoords, {
-                color: '#1E3A8A',
-                weight: 7,
-                opacity: 0.6,
-                lineJoin: 'round',
-                lineCap: 'round'
-              }).addTo(routeGroup);
+              function drawPathGeometry(coords, isPreview) {
+                lineGroup.clearLayers();
+                L.polyline(coords, {
+                  color: '#1E3A8A',
+                  weight: isPreview ? 5 : 7,
+                  opacity: isPreview ? 0.3 : 0.65,
+                  lineJoin: 'round',
+                  lineCap: 'round',
+                  dashArray: isPreview ? '6, 8' : null
+                }).addTo(lineGroup);
 
-              const polyline = L.polyline(pathCoords, {
-                color: '#3B82F6',
-                weight: 4,
-                opacity: 0.95,
-                lineJoin: 'round',
-                lineCap: 'round'
-              }).addTo(routeGroup);
+                var mainLine = L.polyline(coords, {
+                  color: '#3B82F6',
+                  weight: isPreview ? 3 : 4.5,
+                  opacity: isPreview ? 0.55 : 0.95,
+                  lineJoin: 'round',
+                  lineCap: 'round',
+                  dashArray: isPreview ? '6, 8' : null
+                }).addTo(lineGroup);
+
+                if (!isPreview) {
+                  addRouteChevrons(coords, lineGroup);
+                }
+                return mainLine;
+              }
+
+              const previewLine = drawPathGeometry(rawCoords, true);
 
               // 1. Add starting marker
               const startPoint = movingPoints[0];
@@ -486,9 +678,16 @@ export function TrackingMap({
                 .bindPopup(buildPopupContent(0, 'Trip Start', 'Start', ''), { className: 'custom-popup' });
               markerMap[startPoint.id] = startMarker;
 
-              // 2. Add intermediate waypoints with DIRECTION ARROWS (ONLY for moving points, eliminating arrow stacking!)
+              // 2. Add intermediate waypoints with DIRECTION ARROWS (spaced >= 35m apart so arrows never stack!)
+              const lastIdx = movingPoints.length - 1;
+              const lastPoint = movingPoints[lastIdx];
+              var lastPlacedArrowPt = startPoint;
               for (let i = 1; i < movingPoints.length - 1; i++) {
                 const pt = movingPoints[i];
+                if (getDistanceM(lastPlacedArrowPt, pt) < 35 || getDistanceM(pt, lastPoint) < 35) {
+                  continue;
+                }
+                lastPlacedArrowPt = pt;
                 const speedStr = pt.speed != null ? Math.round(pt.speed * 3.6) + ' km/h' : 'N/A';
                 const heading = (pt.heading != null && pt.heading > 0)
                   ? Math.round(pt.heading)
@@ -517,8 +716,6 @@ export function TrackingMap({
               }
 
               // 3. Add latest CURRENT LIVE AVATAR with DIRECTION BEAM
-              const lastIdx = movingPoints.length - 1;
-              const lastPoint = movingPoints[lastIdx];
               const lastHeading = (lastPoint.heading != null && lastPoint.heading > 0)
                 ? Math.round(lastPoint.heading)
                 : (movingPoints.length >= 2 ? computeBearing(movingPoints[movingPoints.length - 2], lastPoint) : 0);
@@ -552,23 +749,25 @@ export function TrackingMap({
               );
               markerMap[lastPoint.id] = lastMarker;
 
-              // Map all raw points to their closest marker so clicking any point in timeline works smoothly
+              // Map all raw points to their closest placed marker so clicking any point in timeline works smoothly
+              var placedMarkers = [];
+              for (var mkId in markerMap) {
+                if (markerMap[mkId]) placedMarkers.push({ id: mkId, marker: markerMap[mkId] });
+              }
               for (var rawIdx = 0; rawIdx < points.length; rawIdx++) {
                 var rawP = points[rawIdx];
-                if (!markerMap[rawP.id]) {
-                  var closestM = null;
+                if (!markerMap[rawP.id] && placedMarkers.length > 0) {
+                  var closestM = placedMarkers[0].marker;
                   var minDist = Infinity;
-                  for (var mIdx = 0; mIdx < movingPoints.length; mIdx++) {
-                    var mPoint = movingPoints[mIdx];
-                    var dist = getDistanceM(rawP, mPoint);
+                  for (var pmIdx = 0; pmIdx < placedMarkers.length; pmIdx++) {
+                    var pmLatLng = placedMarkers[pmIdx].marker.getLatLng();
+                    var dist = getDistanceM(rawP, { latitude: pmLatLng.lat, longitude: pmLatLng.lng });
                     if (dist < minDist) {
                       minDist = dist;
-                      closestM = markerMap[mPoint.id];
+                      closestM = placedMarkers[pmIdx].marker;
                     }
                   }
-                  if (closestM) {
-                    markerMap[rawP.id] = closestM;
-                  }
+                  markerMap[rawP.id] = closestM;
                 }
               }
 
@@ -578,9 +777,29 @@ export function TrackingMap({
                 m.openPopup();
               } else if (!preserveViewport || !hasInitialViewport) {
                 lastMarker.openPopup();
-                map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 18 });
+                map.fitBounds(previewLine.getBounds(), { padding: [40, 40], maxZoom: 18 });
               }
               hasInitialViewport = true;
+
+              // Async upgrade to valid OSRM street/path route
+              routeAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+              getValidRoadPath(movingPoints, routeAbortController ? routeAbortController.signal : undefined)
+                .then(function(roadCoords) {
+                  if (seq !== currentRenderSeq) return;
+                  if (roadCoords && roadCoords.length >= 2) {
+                    var roadLine = drawPathGeometry(roadCoords, false);
+                    if (!preserveViewport && !targetId) {
+                      map.fitBounds(roadLine.getBounds(), { padding: [40, 40], maxZoom: 18 });
+                    }
+                  } else {
+                    drawPathGeometry(rawCoords, false);
+                  }
+                })
+                .catch(function(err) {
+                  if (err && err.name === 'AbortError') return;
+                  if (seq !== currentRenderSeq) return;
+                  drawPathGeometry(rawCoords, false);
+                });
             }
           } else {
             if (!hasInitialViewport) {
