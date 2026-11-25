@@ -753,6 +753,62 @@ export async function getLatestUserLocation(userId: number) {
   return rows.length > 0 ? rows[0] : null;
 }
 
+export async function getUserLocationDates(userId: number): Promise<string[]> {
+  const db = getDb();
+  const rows = await db
+    .select({ timestamp: userLocations.timestamp })
+    .from(userLocations)
+    .where(eq(userLocations.userId, userId));
+
+  const dateSet = new Set<string>();
+  for (const row of rows) {
+    const ms = Date.parse(row.timestamp);
+    if (!Number.isNaN(ms)) {
+      const nairobiDate = new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
+      dateSet.add(nairobiDate);
+    } else if (row.timestamp.length >= 10) {
+      dateSet.add(row.timestamp.slice(0, 10));
+    }
+  }
+  return Array.from(dateSet).sort();
+}
+
+export async function deleteUserLocations(
+  userId: number,
+  dates: string[], // YYYY-MM-DD[]
+  startIso?: string | null, // only used when dates.length === 1
+  endIso?: string | null    // only used when dates.length === 1
+): Promise<number> {
+  const db = getDb();
+  let totalDeleted = 0;
+
+  const hasTimeRange = dates.length === 1 && !!startIso && !!endIso;
+  const rangeStartMs = hasTimeRange ? Date.parse(startIso!) : null;
+  const rangeEndMs = hasTimeRange ? Date.parse(endIso!) : null;
+
+  for (const dateStr of dates) {
+    const rows = await getUserLocationsByDate(userId, dateStr);
+    const idsToDelete = rows
+      .filter((row) => {
+        if (rangeStartMs == null || rangeEndMs == null) return true;
+        const tsMs = Date.parse(row.timestamp);
+        if (Number.isNaN(tsMs)) return false;
+        return tsMs >= rangeStartMs && tsMs <= rangeEndMs;
+      })
+      .map((row) => row.id);
+
+    // Delete in chunks to stay well below SQLite variable limits
+    const CHUNK = 400;
+    for (let i = 0; i < idsToDelete.length; i += CHUNK) {
+      const chunk = idsToDelete.slice(i, i + CHUNK);
+      await db.delete(userLocations).where(inArray(userLocations.id, chunk));
+      totalDeleted += chunk.length;
+    }
+  }
+
+  return totalDeleted;
+}
+
 export async function getAllUsers() {
   const db = getDb();
   return await db

@@ -25,6 +25,8 @@ import {
   Navigation,
   Maximize2,
   Minimize2,
+  RotateCcw,
+  Trash2,
 } from "lucide-react-native";
 import { format, subDays, addDays, parseISO } from "date-fns";
 import { trpc } from "../src/lib/trpc";
@@ -32,6 +34,8 @@ import { useTheme } from "../src/contexts/ThemeContext";
 import { usePullToRefresh } from "../src/hooks/usePullToRefresh";
 import { TrackingMap, type LocationPoint } from "../src/components/TrackingMap";
 import { DatePickerModal } from "../src/components/DatePickerModal";
+import { TimeIntervalModal, formatMinutes12h } from "../src/components/TimeIntervalModal";
+import { DeleteRecordsModal } from "../src/components/DeleteRecordsModal";
 
 const DEFAULT_BG =
   "https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=80";
@@ -57,8 +61,12 @@ export default function LocationScreen() {
   }, []);
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
   const [calendarModalOpen, setCalendarModalOpen] = useState(false);
+  const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [startMinutes, setStartMinutes] = useState<number>(0); // 0 = 12:00 AM
+  const [endMinutes, setEndMinutes] = useState<number | null>(null); // null = Now (current)
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   const selectedDate = useMemo(() => {
     try {
@@ -95,6 +103,33 @@ export default function LocationScreen() {
   );
   const { refreshControlProps } = usePullToRefresh(refetch);
 
+  // Live streaming status (polls every 3s when viewing today)
+  const { data: liveData } = trpc.tracking.getLive.useQuery(
+    { userId },
+    {
+      enabled: !!userId && isCurrentDayToday,
+      refetchInterval: isCurrentDayToday ? 3000 : false,
+    }
+  );
+
+  const isDefaultTimeInterval = startMinutes === 0 && endMinutes === null;
+  const activeLiveStatus =
+    isCurrentDayToday && endMinutes === null ? (liveData ?? null) : null;
+
+  // Filter locations by selected time interval (Africa/Nairobi UTC+3 time-of-day)
+  const filteredLocations = useMemo(() => {
+    if (isDefaultTimeInterval) return locations;
+    return locations.filter((loc) => {
+      const ms = new Date(loc.timestamp).getTime();
+      if (Number.isNaN(ms)) return true;
+      const nairobi = new Date(ms + 3 * 3600 * 1000);
+      const mins = nairobi.getUTCHours() * 60 + nairobi.getUTCMinutes();
+      if (mins < startMinutes) return false;
+      if (endMinutes !== null && mins > endMinutes) return false;
+      return true;
+    });
+  }, [locations, startMinutes, endMinutes, isDefaultTimeInterval]);
+
   // Date step handlers (computed with pure UTC+3 calendar arithmetic)
   const handlePrevDay = () => {
     const [y, m, d] = selectedDateStr.split("-").map(Number);
@@ -119,15 +154,15 @@ export default function LocationScreen() {
 
   // Stats calculation
   const stats = useMemo(() => {
-    if (locations.length === 0) return null;
-    const firstPoint = locations[0];
-    const lastPoint = locations[locations.length - 1];
+    if (filteredLocations.length === 0) return null;
+    const firstPoint = filteredLocations[0];
+    const lastPoint = filteredLocations[filteredLocations.length - 1];
 
     const firstTime = format(new Date(firstPoint.timestamp), "hh:mm a");
     const lastTime = format(new Date(lastPoint.timestamp), "hh:mm a");
 
     let maxSpeed = 0;
-    for (const p of locations) {
+    for (const p of filteredLocations) {
       if (p.speed && p.speed > maxSpeed) {
         maxSpeed = p.speed;
       }
@@ -136,12 +171,12 @@ export default function LocationScreen() {
     return {
       firstTime,
       lastTime,
-      count: locations.length,
+      count: filteredLocations.length,
       maxSpeedKmh: Math.round(maxSpeed * 3.6),
       latestSpeedKmh:
         lastPoint.speed != null ? Math.round(lastPoint.speed * 3.6) : 0,
     };
-  }, [locations]);
+  }, [filteredLocations]);
 
   return (
     <View style={styles.container}>
@@ -198,6 +233,13 @@ export default function LocationScreen() {
                 color={colors.textMuted}
                 style={isRefetching ? styles.rotating : undefined}
               />
+            </Pressable>
+            <Pressable
+              onPress={() => setDeleteModalOpen(true)}
+              style={styles.refreshIconBtn}
+              hitSlop={10}
+            >
+              <Trash2 size={16} color="#EF4444" />
             </Pressable>
           </View>
 
@@ -300,6 +342,52 @@ export default function LocationScreen() {
                 </Text>
               </Pressable>
             </View>
+
+            {/* Time Interval Chooser */}
+            <View style={styles.timeFilterRow}>
+              <Pressable
+                onPress={() => setTimeModalOpen(true)}
+                style={[
+                  styles.timeFilterBtn,
+                  {
+                    backgroundColor: !isDefaultTimeInterval
+                      ? "rgba(59, 130, 246, 0.16)"
+                      : "rgba(255, 255, 255, 0.06)",
+                    borderColor: !isDefaultTimeInterval
+                      ? colors.accent
+                      : colors.border,
+                  },
+                ]}
+              >
+                <Clock size={14} color={colors.accent} />
+                <Text style={[styles.timeFilterText, { color: colors.text }]}>
+                  {formatMinutes12h(startMinutes)} –{" "}
+                  {endMinutes === null ? "Now" : formatMinutes12h(endMinutes)}
+                </Text>
+              </Pressable>
+
+              {!isDefaultTimeInterval && (
+                <Pressable
+                  onPress={() => {
+                    setStartMinutes(0);
+                    setEndMinutes(null);
+                  }}
+                  style={[
+                    styles.timeResetBtn,
+                    {
+                      backgroundColor: "rgba(255, 255, 255, 0.06)",
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  hitSlop={6}
+                >
+                  <RotateCcw size={13} color={colors.text} />
+                  <Text style={[styles.timeResetText, { color: colors.text }]}>
+                    Reset
+                  </Text>
+                </Pressable>
+              )}
+            </View>
           </View>
 
           {/* Stats Bar */}
@@ -355,14 +443,15 @@ export default function LocationScreen() {
             </View>
           ) : (
             <TrackingMap
-              locations={locations as LocationPoint[]}
+              locations={filteredLocations as LocationPoint[]}
               username={username}
               selectedPointId={selectedPointId}
+              liveStatus={activeLiveStatus}
             />
           )}
 
           {/* Full Screen Map Button */}
-          {!isLoading && locations.length > 0 && (
+          {!isLoading && (filteredLocations.length > 0 || activeLiveStatus?.isLive) && (
             <Pressable
               onPress={() => setIsMapFullscreen(true)}
               style={({ pressed }) => [
@@ -382,14 +471,14 @@ export default function LocationScreen() {
           )}
 
           {/* Chronological Coordinates Timeline */}
-          {locations.length > 0 && (
+          {filteredLocations.length > 0 && (
             <View style={styles.timelineSection}>
               <Text style={[styles.timelineSectionTitle, { color: colors.textSubtle }]}>
-                WAYPOINTS TIMELINE ({locations.length})
+                WAYPOINTS TIMELINE ({filteredLocations.length})
               </Text>
 
               <View style={styles.timelineList}>
-                {locations
+                {filteredLocations
                   .slice()
                   .reverse()
                   .map((loc, idx) => {
@@ -456,9 +545,10 @@ export default function LocationScreen() {
       >
         <View style={[styles.fullscreenModalContainer, { paddingBottom: insets.bottom }]}>
           <TrackingMap
-            locations={locations as LocationPoint[]}
+            locations={filteredLocations as LocationPoint[]}
             username={username}
             selectedPointId={selectedPointId}
+            liveStatus={activeLiveStatus}
             isFullScreen={true}
           />
 
@@ -500,7 +590,7 @@ export default function LocationScreen() {
               </Text>
               <View style={styles.fullscreenCountBadge}>
                 <Text style={styles.fullscreenCountText}>
-                  {locations.length} pts
+                  {filteredLocations.length} pts
                 </Text>
               </View>
             </View>
@@ -533,6 +623,32 @@ export default function LocationScreen() {
         onSelectDate={(dateStr) => {
           setSelectedDateStr(dateStr);
         }}
+      />
+
+      <TimeIntervalModal
+        visible={timeModalOpen}
+        startMinutes={startMinutes}
+        endMinutes={endMinutes}
+        isToday={isCurrentDayToday}
+        onApply={(s, e) => {
+          setStartMinutes(s);
+          setEndMinutes(e);
+        }}
+        onReset={() => {
+          setStartMinutes(0);
+          setEndMinutes(null);
+        }}
+        onClose={() => setTimeModalOpen(false)}
+      />
+
+      <DeleteRecordsModal
+        visible={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        userId={userId}
+        currentDateStr={selectedDateStr}
+        currentStartMinutes={startMinutes}
+        currentEndMinutes={endMinutes}
+        onDeleted={() => refetch()}
       />
     </View>
   );
@@ -600,6 +716,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     marginBottom: 14,
+  },
+  timeFilterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+  timeFilterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  timeFilterText: {
+    fontSize: 12.5,
+    fontWeight: "600",
+  },
+  timeResetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  timeResetText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   dateNavRow: {
     flexDirection: "row",

@@ -18,10 +18,25 @@ export interface LocationPoint {
   timestamp: string;
 }
 
+export interface LiveLocationData {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  speed?: number | null;
+  heading?: number | null;
+  timestamp: string;
+}
+
+export interface LiveStatus {
+  isLive: boolean;
+  liveLocation: LiveLocationData | null;
+}
+
 interface TrackingMapProps {
   locations: LocationPoint[];
   username?: string;
   selectedPointId?: number | null;
+  liveStatus?: LiveStatus | null;
   isFullScreen?: boolean;
   style?: any;
 }
@@ -30,6 +45,7 @@ export function TrackingMap({
   locations,
   username,
   selectedPointId,
+  liveStatus = null,
   isFullScreen = false,
   style,
 }: TrackingMapProps) {
@@ -38,13 +54,16 @@ export function TrackingMap({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const latestLocationsRef = useRef(locations);
   const latestSelectedIdRef = useRef(selectedPointId);
+  const latestLiveStatusRef = useRef(liveStatus);
   latestLocationsRef.current = locations;
   latestSelectedIdRef.current = selectedPointId;
+  latestLiveStatusRef.current = liveStatus;
 
   const htmlContent = useMemo(() => {
     const isDark = theme === "dark";
     const initialLocations = JSON.stringify(latestLocationsRef.current);
     const initialTargetId = latestSelectedIdRef.current != null ? latestSelectedIdRef.current : "null";
+    const initialLiveStatus = JSON.stringify(latestLiveStatusRef.current ?? null);
     const initialLayer = savedMapLayer;
 
     return `
@@ -216,18 +235,21 @@ export function TrackingMap({
           }
           .live-avatar-wrap {
             position: relative;
-            width: 40px;
-            height: 40px;
+            width: 44px;
+            height: 46px;
             display: flex;
             align-items: center;
             justify-content: center;
           }
           .avatar-radar {
             position: absolute;
-            inset: 2px;
+            width: 34px;
+            height: 34px;
+            bottom: 0px;
+            left: 5px;
             border-radius: 50%;
-            background: rgba(59, 130, 246, 0.25);
-            border: 2px solid #3B82F6;
+            background: rgba(34, 197, 94, 0.28);
+            border: 2px solid #22C55E;
             animation: radarPulse 2s infinite ease-out;
           }
           @keyframes radarPulse {
@@ -237,12 +259,27 @@ export function TrackingMap({
           }
           .avatar-heading-beam {
             position: absolute;
-            width: 32px;
-            height: 32px;
-            top: 4px;
-            left: 4px;
+            width: 34px;
+            height: 34px;
+            bottom: 0px;
+            left: 5px;
             pointer-events: none;
-            filter: drop-shadow(0 2px 4px rgba(59,130,246,0.6));
+            filter: drop-shadow(0 2px 4px rgba(34,197,94,0.65));
+          }
+          .avatar-radar-blue {
+            position: absolute;
+            inset: 2px;
+            border-radius: 50%;
+            background: rgba(59, 130, 246, 0.25);
+            border: 2px solid #3B82F6;
+            animation: radarPulse 2s infinite ease-out;
+          }
+          .avatar-drop-svg {
+            position: relative;
+            z-index: 2;
+            filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45));
+            transform-origin: 50% 62%;
+            transition: transform 0.35s ease;
           }
           .avatar-core {
             position: relative;
@@ -290,6 +327,7 @@ export function TrackingMap({
         <script>
           let points = ${initialLocations};
           let targetId = ${initialTargetId};
+          let currentLiveStatus = ${initialLiveStatus};
           const markerMap = {};
           const map = L.map('map', { zoomControl: false });
           L.control.zoom({ position: 'topright' }).addTo(map);
@@ -423,21 +461,48 @@ export function TrackingMap({
             });
             var pts = accurate.length >= 2 ? accurate : sorted;
 
-            // 2. Remove single-point GPS teleport spikes (jumps > 60m out and immediately > 60m back)
+            // 2. Remove genuinely impossible teleport jumps (> 55 m/s = ~200 km/h)
+            var speedFiltered = [pts[0]];
+            for (var s = 1; s < pts.length; s++) {
+              var prevS = speedFiltered[speedFiltered.length - 1];
+              var curS = pts[s];
+              var dS = getDistanceM(prevS, curS);
+              var dtS = Math.max(1, (new Date(curS.timestamp).getTime() - new Date(prevS.timestamp).getTime()) / 1000);
+              var impliedS = dS / dtS;
+              if (dS > 120 && impliedS > 55) {
+                if (s + 1 < pts.length && getDistanceM(curS, pts[s + 1]) < 40 && speedFiltered.length === 1) {
+                  speedFiltered[0] = curS;
+                }
+                continue;
+              }
+              speedFiltered.push(curS);
+            }
+            pts = speedFiltered;
+
+            // 3. Remove 1-to-4-point GPS out-and-back glitch loops (e.g. jumps > 50m away and returns within 35m in < 2 mins)
             var cleaned = [pts[0]];
-            for (var i = 1; i < pts.length - 1; i++) {
+            for (var i = 1; i < pts.length; i++) {
               var prev = cleaned[cleaned.length - 1];
               var cur = pts[i];
-              var next = pts[i + 1];
               var dPrev = getDistanceM(prev, cur);
-              var dNext = getDistanceM(cur, next);
-              var dSpan = getDistanceM(prev, next);
-              if (dPrev > 60 && dNext > 60 && dSpan < 40) {
-                continue;
+              if (dPrev > 50) {
+                var tPrev = new Date(prev.timestamp).getTime();
+                var returnIdx = -1;
+                for (var look = 1; look <= 4 && i + look < pts.length; look++) {
+                  var cand = pts[i + look];
+                  var dtLook = Math.abs(new Date(cand.timestamp).getTime() - tPrev);
+                  if (dtLook <= 120000 && getDistanceM(prev, cand) < 35) {
+                    returnIdx = i + look;
+                    break;
+                  }
+                }
+                if (returnIdx !== -1) {
+                  i = returnIdx - 1;
+                  continue;
+                }
               }
               cleaned.push(cur);
             }
-            cleaned.push(pts[pts.length - 1]);
             return cleaned;
           }
 
@@ -577,7 +642,49 @@ export function TrackingMap({
             }
           }
 
-          window.renderRoute = function(newPoints, newTargetId, preserveViewport) {
+          function buildGreenDropMarker(liveLoc, fallbackPoint) {
+            var userInitial = ('${username || "U"}').charAt(0).toUpperCase();
+            var heading = (liveLoc.heading != null && liveLoc.heading >= 0)
+              ? Math.round(liveLoc.heading)
+              : (fallbackPoint && getDistanceM(fallbackPoint, liveLoc) >= 3
+                  ? computeBearing(fallbackPoint, liveLoc)
+                  : 0);
+            var dropSvg =
+              '<svg class="avatar-drop-svg" style="transform: rotate(' + heading + 'deg);" viewBox="0 0 36 44" width="34" height="42">' +
+              '  <defs><linearGradient id="dropGradLive" x1="0" y1="0" x2="1" y2="1">' +
+              '    <stop offset="0%" stop-color="#22C55E"/><stop offset="100%" stop-color="#15803D"/>' +
+              '  </linearGradient></defs>' +
+              '  <path d="M18 3 C18 3 5 18.5 5 28 A13 13 0 1 0 31 28 C31 18.5 18 3 18 3 Z" fill="url(#dropGradLive)" stroke="#FFFFFF" stroke-width="2.5" stroke-linejoin="round"/>' +
+              '  <text x="18" y="32" text-anchor="middle" fill="#FFFFFF" font-size="12" font-weight="800" font-family="sans-serif" transform="rotate(' + (-heading) + ' 18 28)">' + userInitial + '</text>' +
+              '</svg>';
+            var liveIcon = L.divIcon({
+              className: 'live-avatar-marker',
+              html: '<div class="live-avatar-wrap">' +
+                    '  <div class="avatar-radar"></div>' +
+                    '  ' + dropSvg +
+                    '</div>',
+              iconSize: [44, 46],
+              iconAnchor: [22, 30]
+            });
+            var spdStr = liveLoc.speed != null && liveLoc.speed >= 0 ? Math.round(liveLoc.speed * 3.6) + ' km/h' : '0 km/h';
+            var timeStr = new Date(liveLoc.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            var popupHtml =
+              '<div class="popup-card">' +
+                '<div class="popup-head">' +
+                  '<span class="popup-title">${username || "User"}</span>' +
+                  '<span class="popup-badge" style="background:rgba(34,197,94,0.2);color:#22C55E;">Live Online</span>' +
+                '</div>' +
+                '<div class="popup-info-row"><span>Updated:</span> <b>' + timeStr + '</b></div>' +
+                '<div class="popup-info-row"><span>Facing:</span> <b>' + heading + '&deg; (' + getCompassName(heading) + ')</b></div>' +
+                '<div class="popup-info-row"><span>Speed:</span> <b>' + spdStr + '</b></div>' +
+                '<div class="popup-coords-text">' + liveLoc.latitude.toFixed(5) + ', ' + liveLoc.longitude.toFixed(5) + '</div>' +
+              '</div>';
+            return L.marker([liveLoc.latitude, liveLoc.longitude], { icon: liveIcon, zIndexOffset: 1000 })
+              .addTo(routeGroup)
+              .bindPopup(popupHtml, { className: 'custom-popup' });
+          }
+
+          window.renderRoute = function(newPoints, newTargetId, preserveViewport, newLiveStatus) {
             var seq = ++currentRenderSeq;
             if (routeAbortController) {
               try { routeAbortController.abort(); } catch (e) {}
@@ -586,6 +693,11 @@ export function TrackingMap({
 
             points = sortPointsChronological(newPoints);
             targetId = newTargetId != null ? newTargetId : null;
+            if (newLiveStatus !== undefined) {
+              currentLiveStatus = newLiveStatus;
+            }
+            var isLiveOnline = !!(currentLiveStatus && currentLiveStatus.isLive && currentLiveStatus.liveLocation);
+
             routeGroup.clearLayers();
             movingPointsList = [];
             for (const k in markerMap) { delete markerMap[k]; }
@@ -604,31 +716,50 @@ export function TrackingMap({
             movingPointsList = movingPoints;
 
             // CASE 1: Stationary / No movement outside 35m cluster:
-            // If the entire day's points are within 35 meters, or if movingPoints < 2:
-            // DO NOT draw any line across blocks! Show ONLY the single live marker at the house!
             if (maxSpread < 35 || movingPoints.length < 2) {
               const pt = cleanedPoints[cleanedPoints.length - 1];
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
-              const singleIcon = L.divIcon({
-                className: 'live-avatar-marker',
-                html: '<div class="live-avatar-wrap">' +
-                      '  <div class="avatar-radar"></div>' +
-                      '  <div class="avatar-core"><span>' + userInitial + '</span></div>' +
-                      '</div>',
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
-              });
-              const marker = L.marker([pt.latitude, pt.longitude], { icon: singleIcon })
-                .addTo(routeGroup)
-                .bindPopup(buildPopupContent(0, 'Current Position: ${username || "User"}', 'Live (Stationary)', ''), { className: 'custom-popup' })
-                .openPopup();
+              let marker;
+              if (isLiveOnline) {
+                // Online: last recorded point becomes a normal arrow/pin, and green water-drop shows live streaming location
+                const ptHeading = (pt.heading != null && pt.heading >= 0) ? Math.round(pt.heading) : 0;
+                const arrowIcon = L.divIcon({
+                  className: 'waypoint-marker',
+                  html: '<div class="waypoint-arrow-box" style="transform: rotate(' + ptHeading + 'deg);">' +
+                        '<svg viewBox="0 0 24 24" width="16" height="16">' +
+                        '<polygon points="12,2 21,20 12,15 3,20" fill="#3B82F6" stroke="#FFFFFF" stroke-width="2"/>' +
+                        '</svg></div>',
+                  iconSize: [16, 16],
+                  iconAnchor: [8, 8]
+                });
+                marker = L.marker([pt.latitude, pt.longitude], { icon: arrowIcon })
+                  .addTo(routeGroup)
+                  .bindPopup(buildPopupContent(0, 'Last Recorded: ${username || "User"}', 'Recorded', ''), { className: 'custom-popup' });
+                buildGreenDropMarker(currentLiveStatus.liveLocation, pt);
+              } else {
+                // Offline: last recorded location is blue circle with user's initial
+                const blueIcon = L.divIcon({
+                  className: 'live-avatar-marker',
+                  html: '<div class="live-avatar-wrap" style="width:40px;height:40px;">' +
+                        '  <div class="avatar-radar-blue"></div>' +
+                        '  <div class="avatar-core"><span>' + userInitial + '</span></div>' +
+                        '</div>',
+                  iconSize: [40, 40],
+                  iconAnchor: [20, 20]
+                });
+                marker = L.marker([pt.latitude, pt.longitude], { icon: blueIcon })
+                  .addTo(routeGroup)
+                  .bindPopup(buildPopupContent(0, 'Last Recorded: ${username || "User"}', 'Offline', ''), { className: 'custom-popup' })
+                  .openPopup();
+              }
 
               // Map all points to this marker
               for (var pIdx = 0; pIdx < points.length; pIdx++) {
                 markerMap[points[pIdx].id] = marker;
               }
               if (!preserveViewport || !hasInitialViewport) {
-                map.setView([pt.latitude, pt.longitude], 18);
+                var focusPt = isLiveOnline ? currentLiveStatus.liveLocation : pt;
+                map.setView([focusPt.latitude, focusPt.longitude], 18);
                 hasInitialViewport = true;
               }
             } else {
@@ -715,38 +846,57 @@ export function TrackingMap({
                 markerMap[pt.id] = wpMarker;
               }
 
-              // 3. Add latest CURRENT LIVE AVATAR with DIRECTION BEAM
+              // 3. Add latest recorded point: normal arrow if user is live online (+ green water-drop live avatar), OR blue initial circle if offline
               const lastHeading = (lastPoint.heading != null && lastPoint.heading > 0)
                 ? Math.round(lastPoint.heading)
                 : (movingPoints.length >= 2 ? computeBearing(movingPoints[movingPoints.length - 2], lastPoint) : 0);
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
-
-              const avatarIcon = L.divIcon({
-                className: 'live-avatar-marker',
-                html: '<div class="live-avatar-wrap">' +
-                      '  <div class="avatar-radar"></div>' +
-                      '  <div class="avatar-heading-beam" style="transform: rotate(' + lastHeading + 'deg);">' +
-                      '    <svg viewBox="0 0 32 32" width="32" height="32">' +
-                      '      <polygon points="16,1 25,18 16,13 7,18" fill="#3B82F6" opacity="0.95"/>' +
-                      '    </svg>' +
-                      '  </div>' +
-                      '  <div class="avatar-core">' +
-                      '    <span>' + userInitial + '</span>' +
-                      '  </div>' +
-                      '</div>',
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
-              });
-
               const lastSpeedStr = lastPoint.speed != null ? Math.round(lastPoint.speed * 3.6) + ' km/h' : 'N/A';
-              const lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: avatarIcon }).addTo(routeGroup);
-              var lastExtraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + lastHeading + '&deg; (' + getCompassName(lastHeading) + ')</b></div>' +
-                                  '<div class="popup-info-row"><span>Speed:</span> <b>' + lastSpeedStr + '</b></div>';
 
-              lastMarker.bindPopup(
-                buildPopupContent(lastIdx, 'Live Avatar: ${username || "User"}', 'Live', lastExtraRows),
-                { className: 'custom-popup' }
-              );
+              let lastMarker;
+              if (isLiveOnline) {
+                const lastArrowIcon = L.divIcon({
+                  className: 'waypoint-marker',
+                  html: '<div class="waypoint-arrow-box" style="transform: rotate(' + lastHeading + 'deg);">' +
+                        '<svg viewBox="0 0 24 24" width="16" height="16">' +
+                        '<polygon points="12,2 21,20 12,15 3,20" fill="#3B82F6" stroke="#FFFFFF" stroke-width="2"/>' +
+                        '</svg></div>',
+                  iconSize: [16, 16],
+                  iconAnchor: [8, 8]
+                });
+                lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: lastArrowIcon }).addTo(routeGroup);
+                var lastExtraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + lastHeading + '&deg; (' + getCompassName(lastHeading) + ')</b></div>' +
+                                    '<div class="popup-info-row"><span>Speed:</span> <b>' + lastSpeedStr + '</b></div>';
+                lastMarker.bindPopup(
+                  buildPopupContent(lastIdx, 'Last Recorded: ${username || "User"}', 'Recorded', lastExtraRows),
+                  { className: 'custom-popup' }
+                );
+                buildGreenDropMarker(currentLiveStatus.liveLocation, lastPoint);
+              } else {
+                const blueAvatarIcon = L.divIcon({
+                  className: 'live-avatar-marker',
+                  html: '<div class="live-avatar-wrap" style="width:40px;height:40px;">' +
+                        '  <div class="avatar-radar-blue"></div>' +
+                        '  <div class="avatar-heading-beam" style="top:4px;left:4px;bottom:auto;width:32px;height:32px;transform: rotate(' + lastHeading + 'deg);">' +
+                        '    <svg viewBox="0 0 32 32" width="32" height="32">' +
+                        '      <polygon points="16,1 25,18 16,13 7,18" fill="#3B82F6" opacity="0.95"/>' +
+                        '    </svg>' +
+                        '  </div>' +
+                        '  <div class="avatar-core">' +
+                        '    <span>' + userInitial + '</span>' +
+                        '  </div>' +
+                        '</div>',
+                  iconSize: [40, 40],
+                  iconAnchor: [20, 20]
+                });
+                lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: blueAvatarIcon }).addTo(routeGroup);
+                var offExtraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + lastHeading + '&deg; (' + getCompassName(lastHeading) + ')</b></div>' +
+                                   '<div class="popup-info-row"><span>Speed:</span> <b>' + lastSpeedStr + '</b></div>';
+                lastMarker.bindPopup(
+                  buildPopupContent(lastIdx, 'Last Recorded: ${username || "User"}', 'Offline', offExtraRows),
+                  { className: 'custom-popup' }
+                );
+              }
               markerMap[lastPoint.id] = lastMarker;
 
               // Map all raw points to their closest placed marker so clicking any point in timeline works smoothly
@@ -801,6 +951,12 @@ export function TrackingMap({
                   drawPathGeometry(rawCoords, false);
                 });
             }
+          } else if (isLiveOnline) {
+            buildGreenDropMarker(currentLiveStatus.liveLocation, null);
+            if (!preserveViewport || !hasInitialViewport) {
+              map.setView([currentLiveStatus.liveLocation.latitude, currentLiveStatus.liveLocation.longitude], 18);
+              hasInitialViewport = true;
+            }
           } else {
             if (!hasInitialViewport) {
               // Default center if no coordinates
@@ -810,13 +966,13 @@ export function TrackingMap({
           }
           };
 
-          window.renderRoute(points, targetId, false);
+          window.renderRoute(points, targetId, false, currentLiveStatus);
 
             window.addEventListener('message', function(e) {
               try {
                 const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
                 if (data && data.type === 'updateRoute') {
-                  window.renderRoute(data.locations, data.selectedPointId, true);
+                  window.renderRoute(data.locations, data.selectedPointId, true, data.liveStatus);
                 } else if (data && data.focusPointId && markerMap[data.focusPointId]) {
                   const m = markerMap[data.focusPointId];
                   map.flyTo(m.getLatLng(), 18, { duration: 0.8 });
@@ -830,23 +986,29 @@ export function TrackingMap({
     `;
   }, [theme, username]);
 
-  // Push new coordinates / selected point in-place without reloading WebView (preserves Satellite layer!)
+  // Push new coordinates / selected point / live status in-place without reloading WebView (preserves Satellite layer!)
   useEffect(() => {
     if (Platform.OS === "web") {
       try {
         iframeRef.current?.contentWindow?.postMessage(
-          JSON.stringify({ type: "updateRoute", locations, selectedPointId: selectedPointId ?? null }),
+          JSON.stringify({
+            type: "updateRoute",
+            locations,
+            selectedPointId: selectedPointId ?? null,
+            liveStatus: liveStatus ?? null,
+          }),
           "*"
         );
       } catch {}
     } else if (webViewRef.current) {
       const payload = JSON.stringify(locations);
       const target = selectedPointId != null ? selectedPointId : "null";
+      const livePayload = JSON.stringify(liveStatus ?? null);
       webViewRef.current.injectJavaScript(
-        `window.renderRoute && window.renderRoute(${payload}, ${target}, true); true;`
+        `window.renderRoute && window.renderRoute(${payload}, ${target}, true, ${livePayload}); true;`
       );
     }
-  }, [locations, selectedPointId]);
+  }, [locations, selectedPointId, liveStatus]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;

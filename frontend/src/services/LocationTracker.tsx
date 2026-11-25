@@ -6,6 +6,7 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   processAndSendCoordinate,
   clearTrackingState,
+  flushOfflineQueue,
 } from "./TrackingEngine";
 
 export const BACKGROUND_LOCATION_TASK = "BACKGROUND_LOCATION_TASK";
@@ -32,6 +33,8 @@ if (Platform.OS !== "web") {
         const { locations } = data as { locations?: Location.LocationObject[] };
         if (locations && locations.length > 0) {
           for (const loc of locations) {
+            // Skip stale OS cached fixes older than 15 seconds
+            if (loc.timestamp && Date.now() - loc.timestamp > 15000) continue;
             await processAndSendCoordinate({
               latitude: loc.coords.latitude,
               longitude: loc.coords.longitude,
@@ -73,9 +76,11 @@ export function LocationTracker() {
 
     let isMounted = true;
     let foregroundTimer: any = null;
+    let watchSubscription: Location.LocationSubscription | null = null;
 
     async function initTracking() {
       try {
+        flushOfflineQueue().catch(() => {});
         if (Platform.OS === "web") {
           // --- WEB GEOLOCATION TRACKING (10s interval) ---
           if ("geolocation" in navigator) {
@@ -121,35 +126,32 @@ export function LocationTracker() {
             const { status: bgStatus } =
               await Location.requestBackgroundPermissionsAsync();
             if (bgStatus === "granted") {
-              const hasStarted =
-                await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-              if (!hasStarted) {
-                await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-                  accuracy: Location.Accuracy.BestForNavigation,
-                  timeInterval: 10000,
-                  // distanceInterval removed: TrackingEngine already filters by 10m,
-                  // double-filtering was causing missed updates when moving <10m
-                  foregroundService: {
-                    notificationTitle: "Plan for tomorrow",
-                    notificationBody: "Start you adventure by saving experience",
-                    notificationColor: "#b6a152ff",
-                  },
-                  pausesUpdatesAutomatically: false,
-                });
-              }
+              await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+                accuracy: Location.Accuracy.BestForNavigation,
+                timeInterval: 5000,
+                // distanceInterval removed: TrackingEngine filters & smooths continuously
+                foregroundService: {
+                  notificationTitle: "Plan for tomorrow",
+                  notificationBody: "Start you adventure by saving experience",
+                  notificationColor: "#3a0eb4ff",
+                },
+                pausesUpdatesAutomatically: false,
+              });
             }
           } catch (bgErr) {
             console.warn("[LocationTracker] Background service setup:", bgErr);
           }
 
-          // Foreground watchdog timer (every 10s)
-          const sendForegroundLocation = async () => {
-            if (!isMounted || !isAuthRef.current) return;
-            try {
-              const loc = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.BestForNavigation,
-              });
+          // Continuous foreground stream (keeps Google Fused Location Kalman filter warm like Google Maps)
+          watchSubscription = await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.BestForNavigation,
+              timeInterval: 1000,
+              distanceInterval: 0,
+            },
+            async (loc) => {
               if (!isMounted || !isAuthRef.current) return;
+              if (loc.timestamp && Date.now() - loc.timestamp > 15000) return;
               await processAndSendCoordinate({
                 latitude: loc.coords.latitude,
                 longitude: loc.coords.longitude,
@@ -159,13 +161,8 @@ export function LocationTracker() {
                 altitude: loc.coords.altitude,
                 timestamp: getLocalNairobiTimestamp(loc.timestamp),
               });
-            } catch (locErr: any) {
-              // Ignore temporary GPS timeout
             }
-          };
-
-          sendForegroundLocation();
-          foregroundTimer = setInterval(sendForegroundLocation, 10000);
+          );
         }
       } catch (err) {
         console.error("[LocationTracker] Init error:", err);
@@ -177,6 +174,11 @@ export function LocationTracker() {
     return () => {
       isMounted = false;
       if (foregroundTimer) clearInterval(foregroundTimer);
+      if (watchSubscription) {
+        try {
+          watchSubscription.remove();
+        } catch {}
+      }
     };
   }, [shouldTrack]);
 

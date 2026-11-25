@@ -4,6 +4,19 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { authRouter } from "./authRouter";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
+
+interface LiveLocationEntry {
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+  timestamp: string;
+  updatedAtMs: number;
+}
+
+const liveLocationMap = new Map<number, LiveLocationEntry>();
 import {
   getCategoriesByUser,
   getCategoryById,
@@ -53,6 +66,8 @@ import {
   recordUserLocation,
   getUserLocationsByDate,
   getLatestUserLocation,
+  getUserLocationDates,
+  deleteUserLocations,
   getAllUsers,
 } from "./db";
 
@@ -754,6 +769,45 @@ export const appRouter = router({
 
   // Tracking procedures
   tracking: router({
+    liveHeartbeat: protectedProcedure
+      .input(
+        z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+          accuracy: z.number().nullable().optional(),
+          speed: z.number().nullable().optional(),
+          heading: z.number().nullable().optional(),
+          timestamp: z.string().optional(),
+        })
+      )
+      .mutation(({ ctx, input }) => {
+        if (ctx.user.role === "admin") {
+          return { success: true };
+        }
+        const fallbackTimestamp = new Date(Date.now() + 3 * 3600 * 1000).toISOString().replace("Z", "+03:00");
+        liveLocationMap.set(ctx.user.id, {
+          latitude: input.latitude,
+          longitude: input.longitude,
+          accuracy: input.accuracy ?? null,
+          speed: input.speed ?? null,
+          heading: input.heading ?? null,
+          timestamp: input.timestamp || fallbackTimestamp,
+          updatedAtMs: Date.now(),
+        });
+        return { success: true };
+      }),
+
+    getLive: protectedProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(({ input }) => {
+        const entry = liveLocationMap.get(input.userId);
+        const isLive = !!entry && Date.now() - entry.updatedAtMs < 20000;
+        return {
+          isLive,
+          liveLocation: isLive ? entry : null,
+        };
+      }),
+
     ping: protectedProcedure
       .input(
         z.object({
@@ -771,6 +825,16 @@ export const appRouter = router({
           return { success: true };
         }
         const fallbackTimestamp = new Date(Date.now() + 3 * 3600 * 1000).toISOString().replace("Z", "+03:00");
+        const ts = input.timestamp || fallbackTimestamp;
+        liveLocationMap.set(ctx.user.id, {
+          latitude: input.latitude,
+          longitude: input.longitude,
+          accuracy: input.accuracy ?? null,
+          speed: input.speed ?? null,
+          heading: input.heading ?? null,
+          timestamp: ts,
+          updatedAtMs: Date.now(),
+        });
         await recordUserLocation({
           userId: ctx.user.id,
           latitude: input.latitude,
@@ -779,7 +843,7 @@ export const appRouter = router({
           speed: input.speed,
           heading: input.heading,
           altitude: input.altitude,
-          timestamp: input.timestamp || fallbackTimestamp,
+          timestamp: ts,
         });
         return { success: true };
       }),
@@ -806,6 +870,40 @@ export const appRouter = router({
       .input(z.object({ userId: z.number() }))
       .query(async ({ input }) => {
         return await getLatestUserLocation(input.userId);
+      }),
+
+    getAvailableDates: protectedProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ input }) => {
+        return await getUserLocationDates(input.userId);
+      }),
+
+    deleteRecords: protectedProcedure
+      .input(
+        z.object({
+          userId: z.number().optional(),
+          // Array of YYYY-MM-DD strings. When length > 1, the entire day is deleted for each.
+          dates: z.array(z.string()).min(1),
+          // Optional ISO strings — only applied when dates.length === 1
+          startIso: z.string().optional().nullable(),
+          endIso: z.string().optional().nullable(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const targetUserId = input.userId ?? ctx.user.id;
+        if (targetUserId !== ctx.user.id && ctx.user.role !== "admin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Only admins can delete another user's location records",
+          });
+        }
+        const deleted = await deleteUserLocations(
+          targetUserId,
+          input.dates,
+          input.startIso ?? null,
+          input.endIso ?? null
+        );
+        return { deleted };
       }),
   }),
 
