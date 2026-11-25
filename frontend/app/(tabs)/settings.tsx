@@ -9,6 +9,7 @@ import {
   Platform,
   ActivityIndicator,
   Modal,
+  RefreshControl,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,11 +31,11 @@ import {
 } from "lucide-react-native";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
+import { usePullToRefresh } from "../../src/hooks/usePullToRefresh";
 import { useAuth } from "../../src/contexts/AuthContext";
 import { SETTINGS_DARK_IMAGE, SETTINGS_LIGHT_IMAGE } from "../../src/lib/constants";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
 import { CategorizeContentModal } from "../../src/components/CategorizeContentModal";
-import { ContentDetailModal } from "../../src/components/ContentDetailModal";
 import { DropdownMenu } from "../../src/components/DropdownMenu";
 import { AppDialogRenderer, useAppDialog } from "../../src/components/AppDialog";
 import { AppToastRenderer, useAppToast } from "../../src/components/AppToast";
@@ -54,7 +55,6 @@ export default function SettingsScreen() {
 
   // Categorize content modal state
   const [contentToCategorize, setContentToCategorize] = useState<ContentItem | null>(null);
-  const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
 
   // User detail modal state (Admin)
   const [selectedUserForDetail, setSelectedUserForDetail] = useState<{
@@ -69,13 +69,24 @@ export default function SettingsScreen() {
   const isAdmin = user?.role === "admin";
 
   // Queries
-  const { data: uncategorizedContent = [], isLoading: uncategorizedLoading } =
-    trpc.content.listUncategorized.useQuery();
+  const {
+    data: uncategorizedContent = [],
+    isLoading: uncategorizedLoading,
+    refetch: refetchUncategorized,
+  } = trpc.content.listUncategorized.useQuery();
 
-  const { data: allUsers = [], isLoading: usersLoading } = trpc.users.list.useQuery(
-    undefined,
-    { enabled: isAdmin }
-  );
+  const {
+    data: allUsers = [],
+    isLoading: usersLoading,
+    refetch: refetchUsers,
+  } = trpc.users.list.useQuery(undefined, { enabled: isAdmin });
+
+  const { refreshControlProps } = usePullToRefresh(async () => {
+    await Promise.all([
+      refetchUncategorized(),
+      isAdmin ? refetchUsers() : Promise.resolve(),
+    ]);
+  });
 
   const notify = (title: string, msg: string) => {
     if (title === "Success") {
@@ -199,6 +210,7 @@ export default function SettingsScreen() {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl {...refreshControlProps} />}
       >
         <View style={styles.wrapper}>
           {/* Page title */}
@@ -524,13 +536,6 @@ export default function SettingsScreen() {
         content={contentToCategorize}
         visible={!!contentToCategorize}
         onClose={() => setContentToCategorize(null)}
-      />
-
-      {/* Content Detail Viewer */}
-      <ContentDetailModal
-        item={activeItem}
-        visible={!!activeItem}
-        onClose={() => setActiveItem(null)}
       />
 
       {/* User Detail Modal */}

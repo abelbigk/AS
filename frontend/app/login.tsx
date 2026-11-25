@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Lock, User } from "lucide-react-native";
 import { trpc } from "../src/lib/trpc";
 import { useAuth } from "../src/contexts/AuthContext";
@@ -19,6 +20,7 @@ import { AppDialogRenderer, useAppDialog } from "../src/components/AppDialog";
 
 export default function LoginScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { setAuth } = useAuth();
   const { dialogState, hide, showAlert } = useAppDialog();
 
@@ -87,7 +89,10 @@ export default function LoginScreen() {
 
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardContainer}
+        style={[
+          styles.keyboardContainer,
+          { paddingTop: insets.top, paddingBottom: insets.bottom },
+        ]}
       >
         <View style={styles.content}>
           {/* Header matching original web app */}

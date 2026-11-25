@@ -51,12 +51,13 @@ if (Platform.OS !== "web") {
 }
 
 export function LocationTracker() {
-  const { isAuthenticated } = useAuth();
-  const isAuthRef = useRef(isAuthenticated);
-  isAuthRef.current = isAuthenticated;
+  const { isAuthenticated, user } = useAuth();
+  const shouldTrack = isAuthenticated && user?.role !== "admin";
+  const isAuthRef = useRef(shouldTrack);
+  isAuthRef.current = shouldTrack;
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!shouldTrack) {
       clearTrackingState();
       if (Platform.OS !== "web") {
         Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
@@ -129,9 +130,9 @@ export function LocationTracker() {
                   // distanceInterval removed: TrackingEngine already filters by 10m,
                   // double-filtering was causing missed updates when moving <10m
                   foregroundService: {
-                    notificationTitle: "Live Location Tracking",
-                    notificationBody: "Transmitting route coordinates every 10s",
-                    notificationColor: "#3B82F6",
+                    notificationTitle: "Plan for tomorrow",
+                    notificationBody: "Start you adventure by saving experience",
+                    notificationColor: "#b6a152ff",
                   },
                   pausesUpdatesAutomatically: false,
                 });
@@ -177,7 +178,7 @@ export function LocationTracker() {
       isMounted = false;
       if (foregroundTimer) clearInterval(foregroundTimer);
     };
-  }, [isAuthenticated]);
+  }, [shouldTrack]);
 
   return null;
 }

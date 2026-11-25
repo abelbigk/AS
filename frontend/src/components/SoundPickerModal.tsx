@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Platform,
 } from "react-native";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import * as DocumentPicker from "expo-document-picker";
 import {
@@ -50,48 +52,186 @@ interface AudioPreviewRowProps {
   isSelected: boolean;
   isPlaying: boolean;
   onPlayToggle: () => void;
+  onRequestPlay: () => void;
   onEnded: () => void;
   colors: any;
 }
 
-function AudioPreviewRow({ sound, isSelected, isPlaying, onPlayToggle, onEnded, colors }: AudioPreviewRowProps) {
-  // Always create a player for this sound URL — will only actually play when isPlaying is true
-  const player = useAudioPlayer(isPlaying ? { uri: sound.url } : null);
+function AudioPreviewRow({
+  sound,
+  isSelected,
+  isPlaying,
+  onPlayToggle,
+  onRequestPlay,
+  onEnded,
+  colors,
+}: AudioPreviewRowProps) {
+  const player = useAudioPlayer({ uri: sound.url });
   const status = useAudioPlayerStatus(player);
 
-  useEffect(() => {
-    if (isPlaying) {
-      player.play();
-    } else {
-      player.pause();
-    }
-  }, [isPlaying]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragProgress, setDragProgress] = useState(0); // 0–100
+
+  const isDraggingRef = useRef(false);
+  const barWidthRef = useRef(0);
+  const durationRef = useRef(0);
+  const timelineRef = useRef<any>(null);
+
+  const duration = status.duration ?? 0;
+  durationRef.current = duration;
 
   useEffect(() => {
-    if (status.didJustFinish) {
+    if (isDraggingRef.current) return;
+    try {
+      if (isPlaying) {
+        player.play();
+      } else {
+        player.pause();
+      }
+    } catch {}
+  }, [isPlaying, player]);
+
+  useEffect(() => {
+    if (status.didJustFinish && !isDraggingRef.current) {
       onEnded();
     }
-  }, [status.didJustFinish]);
+  }, [status.didJustFinish, onEnded]);
 
   const currentTime = status.currentTime ?? 0;
-  const duration = status.duration ?? 0;
-  const progress = duration > 0 ? currentTime / duration : 0;
+  const liveProgress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const displayProgress = isDragging ? dragProgress : liveProgress;
+  const displayTime = isDragging ? (duration * dragProgress) / 100 : currentTime;
 
   const fmt = (s: number) => {
-    if (!s || isNaN(s)) return "0:00";
+    if (!s || isNaN(s) || s < 0) return "0:00";
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, "0")}`;
   };
 
+  const beginDrag = (localX: number) => {
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    // Sound must NOT play while dragging
+    try {
+      player.pause();
+    } catch {}
+    const w = barWidthRef.current;
+    if (w > 0) {
+      const pct = Math.max(0, Math.min(100, (localX / w) * 100));
+      setDragProgress(pct);
+    } else {
+      setDragProgress(liveProgress);
+    }
+  };
+
+  const updateDrag = (localX: number) => {
+    if (!isDraggingRef.current) return;
+    const w = barWidthRef.current;
+    if (w <= 0) return;
+    const pct = Math.max(0, Math.min(100, (localX / w) * 100));
+    setDragProgress(pct);
+  };
+
+  const commitDrag = (localX: number) => {
+    if (!isDraggingRef.current) return;
+    const w = barWidthRef.current;
+    const finalPct = w > 0 ? Math.max(0, Math.min(100, (localX / w) * 100)) : dragProgress;
+    const dur = durationRef.current;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+
+    if (dur > 0) {
+      const targetSec = (finalPct / 100) * dur;
+      try {
+        player.seekTo(targetSec);
+      } catch {}
+    }
+    // Start/resume playing only when user lets go
+    onRequestPlay();
+    try {
+      player.play();
+    } catch {}
+  };
+
+  const beginDragRef = useRef(beginDrag);
+  const updateDragRef = useRef(updateDrag);
+  const commitDragRef = useRef(commitDrag);
+  beginDragRef.current = beginDrag;
+  updateDragRef.current = updateDrag;
+  commitDragRef.current = commitDrag;
+
+  const scrubGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .minDistance(0)
+        .shouldCancelWhenOutside(false)
+        .onBegin((e) => {
+          beginDragRef.current(e.x);
+        })
+        .onUpdate((e) => {
+          updateDragRef.current(e.x);
+        })
+        .onFinalize((e) => {
+          commitDragRef.current(e.x);
+        }),
+    []
+  );
+
+  // Web pointer support for timeline drag
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const el = timelineRef.current as HTMLElement | null;
+    if (!el) return;
+
+    const getLocalX = (clientX: number) => {
+      const rect = el.getBoundingClientRect();
+      return clientX - rect.left;
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      beginDragRef.current(getLocalX(e.clientX));
+      const onMove = (ev: MouseEvent) => updateDragRef.current(getLocalX(ev.clientX));
+      const onUp = (ev: MouseEvent) => {
+        commitDragRef.current(getLocalX(ev.clientX));
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    };
+
+    el.addEventListener("mousedown", onMouseDown);
+    return () => el.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const timelineBar = (
+    <View
+      ref={timelineRef}
+      style={styles.timelineHitbox}
+      onLayout={(e) => {
+        barWidthRef.current = e.nativeEvent.layout.width;
+      }}
+    >
+      <View style={[styles.timeline, { backgroundColor: colors.border, height: isDragging ? 6 : 4 }]}>
+        <View style={[styles.timelineFill, { width: `${displayProgress}%` as any }]}>
+          <View style={[styles.timelineThumb, isDragging && styles.timelineThumbActive]} />
+        </View>
+      </View>
+    </View>
+  );
+
   return (
-    <View style={{ flex: 1, gap: 6 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+    <View style={{ flex: 1, gap: 8 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 34 }}>
         <Pressable
           onPress={onPlayToggle}
-          style={[styles.playBtn, { backgroundColor: isPlaying ? "#3B82F6" : colors.surface }]}
+          style={[styles.playBtn, { backgroundColor: isPlaying && !isDragging ? "#3B82F6" : colors.surface }]}
         >
-          {isPlaying ? <Pause size={14} color="#fff" /> : <Play size={14} color={colors.text} />}
+          {isPlaying && !isDragging ? <Pause size={14} color="#fff" /> : <Play size={14} color={colors.text} />}
         </Pressable>
         <View style={{ flex: 1, overflow: "hidden" }}>
           <Text numberOfLines={1} style={[styles.soundTitle, { color: colors.text }]}>{sound.title}</Text>
@@ -103,12 +243,16 @@ function AudioPreviewRow({ sound, isSelected, isPlaying, onPlayToggle, onEnded, 
           </View>
         )}
       </View>
-      {/* Timeline */}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 44 }}>
-        <Text style={[styles.timeText, { color: colors.textMuted }]}>{fmt(currentTime)}</Text>
-        <View style={[styles.timeline, { backgroundColor: colors.border }]}>
-          <View style={[styles.timelineFill, { width: `${Math.min(100, progress * 100)}%` as any }]} />
-        </View>
+      {/* Interactive draggable timeline + second counter (full card width) */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Text style={[styles.timeText, { color: isDragging ? "#3B82F6" : colors.textMuted }]}>
+          {fmt(displayTime)}
+        </Text>
+        {Platform.OS !== "web" ? (
+          <GestureDetector gesture={scrubGesture}>{timelineBar}</GestureDetector>
+        ) : (
+          timelineBar
+        )}
         <Text style={[styles.timeText, { color: colors.textMuted }]}>{fmt(duration)}</Text>
       </View>
     </View>
@@ -209,6 +353,7 @@ export function SoundPickerModal({
   return (
     <>
       <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.backdrop}>
           <View style={[styles.sheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
             {/* Header */}
@@ -292,6 +437,7 @@ export function SoundPickerModal({
                             isSelected={isSelected}
                             isPlaying={isPlayingThis}
                             onPlayToggle={() => setPlayingId((p) => (p === snd.id ? null : snd.id))}
+                            onRequestPlay={() => setPlayingId(snd.id)}
                             onEnded={() => setPlayingId(null)}
                             colors={colors}
                           />
@@ -380,6 +526,7 @@ export function SoundPickerModal({
             </ScrollView>
           </View>
         </View>
+        </GestureHandlerRootView>
       </Modal>
       <AppDialogRenderer {...dialogState} onHide={hide} />
     </>
@@ -397,6 +544,7 @@ const styles = StyleSheet.create({
   sheet: {
     width: "100%",
     maxWidth: 440,
+    height: "82%",
     maxHeight: "88%",
     borderRadius: 24,
     borderWidth: 1,
@@ -453,9 +601,9 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: "center", gap: 10, marginTop: 32, paddingVertical: 20 },
   emptyText: { fontSize: 14 },
   soundRow: {
+    position: "relative",
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderRadius: 12,
@@ -484,10 +632,39 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase",
   },
-  timeline: { flex: 1, height: 4, borderRadius: 2, overflow: "hidden" },
-  timelineFill: { height: "100%", backgroundColor: "#3B82F6", borderRadius: 2 },
-  timeText: { fontSize: 10, minWidth: 28 },
-  selectBtn: { padding: 4 },
+  timelineHitbox: {
+    flex: 1,
+    height: 24,
+    justifyContent: "center",
+    ...Platform.select({ web: { cursor: "pointer" } as any }),
+  },
+  timeline: { width: "100%", height: 4, borderRadius: 2, overflow: "visible" },
+  timelineFill: { height: "100%", backgroundColor: "#3B82F6", borderRadius: 2, overflow: "visible" },
+  timelineThumb: {
+    position: "absolute",
+    right: -5,
+    top: "50%" as any,
+    marginTop: -5,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#3B82F6",
+  },
+  timelineThumbActive: {
+    right: -7,
+    marginTop: -7,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  timeText: { fontSize: 11, minWidth: 32, fontVariant: ["tabular-nums"] },
+  selectBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    padding: 2,
+    zIndex: 10,
+  },
   // Upload tab
   uploadLabel: {
     fontSize: 11,

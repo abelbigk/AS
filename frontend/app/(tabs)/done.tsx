@@ -15,6 +15,7 @@ import { ArrowRight } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
+import { usePullToRefresh } from "../../src/hooks/usePullToRefresh";
 import { CategoryCard } from "../../src/components/CategoryCard";
 
 const DARK_BG =
@@ -57,8 +58,8 @@ export default function DoneScreen() {
     data: items = [],
     isLoading,
     refetch,
-    isRefetching,
   } = trpc.content.listByStatus.useQuery("done");
+  const { refreshControlProps } = usePullToRefresh(refetch);
 
   const { data: categories = [] } = trpc.categories.list.useQuery();
   const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery();
@@ -172,13 +173,7 @@ export default function DoneScreen() {
             paddingBottom: insets.bottom + 110,
           },
         ]}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={() => { refetch(); }}
-            tintColor={colors.accent}
-          />
-        }
+        refreshControl={<RefreshControl {...refreshControlProps} />}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>

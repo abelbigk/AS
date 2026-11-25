@@ -8,6 +8,7 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,6 +17,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
+import { usePullToRefresh } from "../../src/hooks/usePullToRefresh";
 import { uploadFile } from "../../src/lib/upload";
 import { EditCategoryModal } from "../../src/components/EditCategoryModal";
 import { CATEGORY_IMAGES } from "../../src/lib/constants";
@@ -43,7 +45,10 @@ export default function AddScreen() {
 
   const utils = trpc.useUtils();
 
-  const { data: categories = [] } = trpc.categories.list.useQuery();
+  const { data: categories = [], refetch: refetchCategories } = trpc.categories.list.useQuery();
+  const { refreshControlProps } = usePullToRefresh(async () => {
+    await Promise.all([refetchCategories(), utils.subcategories.list.invalidate()]);
+  });
 
   const createCategory = trpc.categories.create.useMutation();
 
@@ -161,6 +166,7 @@ export default function AddScreen() {
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl {...refreshControlProps} />}
       >
         <View style={styles.wrapper}>
           {/* Header */}

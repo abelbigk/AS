@@ -12,6 +12,7 @@ import {
   Linking,
 } from "react-native";
 import { Image } from "expo-image";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import {
@@ -52,6 +53,7 @@ export function AddContentModal({
   onContentAdded,
 }: AddContentModalProps) {
   const { colors, theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const utils = trpc.useUtils();
   const { dialogState, hide, showAlert } = useAppDialog();
   const { toastState, showToast } = useAppToast();
@@ -329,7 +331,16 @@ export function AddContentModal({
   return (
     <>
       <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <View style={[styles.container, { backgroundColor: theme === "dark" ? "#0A0A0A" : "#FFFFFF" }]}>
+      <View
+        style={[
+          styles.container,
+          {
+            backgroundColor: theme === "dark" ? "#0A0A0A" : "#FFFFFF",
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Add Content</Text>

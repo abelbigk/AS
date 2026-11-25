@@ -16,11 +16,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, ArrowLeft, X } from "lucide-react-native";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
+import { usePullToRefresh } from "../../src/hooks/usePullToRefresh";
 import { DARK_IMAGE, LIGHT_IMAGE } from "../../src/lib/constants";
 import { CategoryCard } from "../../src/components/CategoryCard";
 import { SubcategoryCard } from "../../src/components/SubcategoryCard";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
-import { ContentDetailModal } from "../../src/components/ContentDetailModal";
 import { EditCategoryModal } from "../../src/components/EditCategoryModal";
 import { EditContentModal } from "../../src/components/EditContentModal";
 
@@ -31,7 +31,6 @@ export default function HomeScreen() {
 
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
   const [activeEditItem, setActiveEditItem] = useState<ContentItem | null>(null);
   const [activeCategoryForEdit, setActiveCategoryForEdit] = useState<any | null>(null);
 
@@ -41,8 +40,8 @@ export default function HomeScreen() {
     data: categories = [],
     isLoading,
     refetch,
-    isRefetching,
   } = trpc.categories.list.useQuery();
+  const { refreshControlProps } = usePullToRefresh(refetch);
 
   const reorderMutation = trpc.categories.reorder.useMutation({
     onSuccess: () => {
@@ -134,16 +133,10 @@ export default function HomeScreen() {
           styles.scrollContent,
           {
             paddingTop: insets.top + (Platform.OS === "web" ? 32 : 16),
-            paddingBottom: 110,
+            paddingBottom: insets.bottom + 110,
           },
         ]}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={() => { refetch(); }}
-            tintColor={colors.accent}
-          />
-        }
+        refreshControl={<RefreshControl {...refreshControlProps} />}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>
@@ -259,7 +252,7 @@ export default function HomeScreen() {
                               <ContentCard
                                 key={item.id}
                                 item={item as any}
-                                onPress={() => setActiveItem(item as any)}
+                                onPress={() => router.push({ pathname: "/content/[id]", params: { id: String(item.id) } })}
                                 onEdit={() => setActiveEditItem(item as any)}
                               />
                             ))}
@@ -271,7 +264,7 @@ export default function HomeScreen() {
                               <ContentCard
                                 key={item.id}
                                 item={item as any}
-                                onPress={() => setActiveItem(item as any)}
+                                onPress={() => router.push({ pathname: "/content/[id]", params: { id: String(item.id) } })}
                                 onEdit={() => setActiveEditItem(item as any)}
                               />
                             ))}
@@ -354,13 +347,6 @@ export default function HomeScreen() {
           )}
         </View>
       </ScrollView>
-
-      {/* Content Detail Viewer Modal */}
-      <ContentDetailModal
-        item={activeItem}
-        visible={!!activeItem}
-        onClose={() => setActiveItem(null)}
-      />
 
       {/* Edit Content Modal */}
       <EditContentModal

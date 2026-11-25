@@ -29,6 +29,7 @@ import {
 import { format, subDays, addDays, parseISO } from "date-fns";
 import { trpc } from "../src/lib/trpc";
 import { useTheme } from "../src/contexts/ThemeContext";
+import { usePullToRefresh } from "../src/hooks/usePullToRefresh";
 import { TrackingMap, type LocationPoint } from "../src/components/TrackingMap";
 import { DatePickerModal } from "../src/components/DatePickerModal";
 
@@ -92,6 +93,7 @@ export default function LocationScreen() {
       refetchInterval: isCurrentDayToday ? 10000 : false,
     }
   );
+  const { refreshControlProps } = usePullToRefresh(refetch);
 
   // Date step handlers (computed with pure UTC+3 calendar arithmetic)
   const handlePrevDay = () => {
@@ -171,13 +173,7 @@ export default function LocationScreen() {
             paddingBottom: insets.bottom + 60,
           },
         ]}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={() => { refetch(); }}
-            tintColor={colors.accent}
-          />
-        }
+        refreshControl={<RefreshControl {...refreshControlProps} />}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>
@@ -458,7 +454,7 @@ export default function LocationScreen() {
         animationType="fade"
         onRequestClose={() => setIsMapFullscreen(false)}
       >
-        <View style={styles.fullscreenModalContainer}>
+        <View style={[styles.fullscreenModalContainer, { paddingBottom: insets.bottom }]}>
           <TrackingMap
             locations={locations as LocationPoint[]}
             username={username}

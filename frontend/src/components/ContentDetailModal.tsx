@@ -13,8 +13,10 @@ import {
   Image as RNImage,
   BackHandler,
   Animated,
+  RefreshControl,
 } from "react-native";
 import { Image } from "expo-image";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library/legacy";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -47,6 +49,7 @@ import { SoundControl } from "./SoundControl";
 import { SoundPickerModal } from "./SoundPickerModal";
 import { CustomVideoPlayer } from "./CustomVideoPlayer";
 import { SkeletonShimmer } from "./SkeletonShimmer";
+import { usePullToRefresh } from "../hooks/usePullToRefresh";
 import type { ContentItem } from "./ContentCard";
 
 interface ContentDetailModalProps {
@@ -100,16 +103,16 @@ function ModalMediaImage({
   );
 }
 
-export function ContentDetailModal({
+export function ContentDetailView({
   item,
-  visible,
+  visible = true,
   activeCategoryId,
   activeSubcategoryId,
   onClose,
   onDeleted,
   onRemoveFromCategory,
   onRemoveFromSubcategory,
-}: ContentDetailModalProps) {
+}: Omit<ContentDetailModalProps, "visible"> & { visible?: boolean }) {
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
   const { dialogState, hide, showConfirm } = useAppDialog();
@@ -129,36 +132,72 @@ export function ContentDetailModal({
   const [isVideoTimelineDragging, setIsVideoTimelineDragging] = useState(false);
   const [isScrolledPastMedia, setIsScrolledPastMedia] = useState(false);
   const [fullscreenMediaIndex, setFullscreenMediaIndex] = useState<number | null>(null);
-  const pinchStartDistRef = useRef<number | null>(null);
+  const [fullscreenWidth, setFullscreenWidth] = useState(SCREEN_WIDTH);
   const scrollViewRef = useRef<any>(null);
+  const fullscreenScrollRef = useRef<any>(null);
+  const inlinePinchHandledRef = useRef(false);
+  const fsPinchHandledRef = useRef(false);
+  const fsHeaderVisibleRef = useRef(false);
+  const fsHeaderOpacity = useRef(new Animated.Value(0)).current;
+  const [fsHeaderPointerEvents, setFsHeaderPointerEvents] = useState<"none" | "auto">("none");
+
+  const setFullscreenControlsVisible = useCallback((show: boolean) => {
+    fsHeaderVisibleRef.current = show;
+    fsHeaderOpacity.setValue(show ? 1 : 0);
+    setFsHeaderPointerEvents(show ? "auto" : "none");
+  }, [fsHeaderOpacity]);
+
+  const toggleFullscreenControls = useCallback(() => {
+    setFullscreenControlsVisible(!fsHeaderVisibleRef.current);
+  }, [setFullscreenControlsVisible]);
+
+  const openFullscreen = useCallback((index: number) => {
+    setFullscreenControlsVisible(false);
+    setFullscreenMediaIndex(index);
+  }, [setFullscreenControlsVisible]);
+
+  const closeFullscreen = useCallback(() => {
+    const targetIndex = fullscreenMediaIndex;
+    setFullscreenMediaIndex(null);
+    if (targetIndex !== null && sliderWidth > 0) {
+      setActiveMediaIndex(targetIndex);
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({
+          x: targetIndex * sliderWidth,
+          animated: false,
+        });
+      });
+    }
+  }, [fullscreenMediaIndex, sliderWidth]);
 
   // Android hardware Back button: exits fullscreen media viewer before modal
   useEffect(() => {
     if (fullscreenMediaIndex === null) return;
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      setFullscreenMediaIndex(null);
+      closeFullscreen();
       return true;
     });
     return () => sub.remove();
-  }, [fullscreenMediaIndex]);
+  }, [fullscreenMediaIndex, closeFullscreen]);
 
   // Web Escape key listener: exits fullscreen media viewer
   useEffect(() => {
     if (Platform.OS !== "web" || fullscreenMediaIndex === null) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setFullscreenMediaIndex(null);
+        closeFullscreen();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [fullscreenMediaIndex]);
+  }, [fullscreenMediaIndex, closeFullscreen]);
 
   // Single round-trip: fetch item + its media together so everything renders at once
-  const { data: freshData } = trpc.content.getByIdWithMedia.useQuery(
+  const { data: freshData, refetch } = trpc.content.getByIdWithMedia.useQuery(
     { itemId: item?.id || 0 },
     { enabled: !!item?.id && visible }
   );
+  const { refreshControlProps } = usePullToRefresh(refetch);
 
   // Guard against stale query cache from a previously opened item
   const freshItem = (freshData && freshData.id === item?.id) ? freshData : null;
@@ -239,6 +278,41 @@ export function ContentDetailModal({
     ? Math.min(activeMediaIndex, mediaItems.length - 1)
     : 0;
 
+  const displayMediaIndexRef = useRef(displayMediaIndex);
+  displayMediaIndexRef.current = displayMediaIndex;
+
+  const inlinePinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .runOnJS(true)
+        .onBegin(() => {
+          inlinePinchHandledRef.current = false;
+        })
+        .onUpdate((e) => {
+          if (!inlinePinchHandledRef.current && e.scale > 1.15) {
+            inlinePinchHandledRef.current = true;
+            openFullscreen(displayMediaIndexRef.current);
+          }
+        }),
+    [openFullscreen]
+  );
+
+  const fullscreenPinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .runOnJS(true)
+        .onBegin(() => {
+          fsPinchHandledRef.current = false;
+        })
+        .onUpdate((e) => {
+          if (!fsPinchHandledRef.current && e.scale < 0.85) {
+            fsPinchHandledRef.current = true;
+            closeFullscreen();
+          }
+        }),
+    [closeFullscreen]
+  );
+
   const hasLocation =
     !!(displayItem?.latitude && displayItem?.longitude) ||
     !!displayItem?.locationLinkUrl;
@@ -295,8 +369,17 @@ export function ContentDetailModal({
     setIsVideoPlaying(playing);
   }, []);
 
+  const handleVideoTimelineDraggingChange = useCallback((dragging: boolean) => {
+    try {
+      scrollViewRef.current?.setNativeProps?.({ scrollEnabled: !dragging });
+      fullscreenScrollRef.current?.setNativeProps?.({ scrollEnabled: !dragging });
+    } catch {}
+    setIsVideoTimelineDragging(dragging);
+  }, []);
+
   const handleDownloadCurrentMedia = async () => {
-    const current = mediaItems[displayMediaIndex];
+    const idx = fullscreenMediaIndex !== null ? fullscreenMediaIndex : displayMediaIndex;
+    const current = mediaItems[idx];
     if (!current?.url) return;
     try {
       if (Platform.OS === "web") {
@@ -482,22 +565,16 @@ export function ContentDetailModal({
 
   return (
     <>
-      <Modal
-        visible={visible}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={onClose}
+      <View
+        style={[
+          styles.container,
+          {
+            backgroundColor: theme === "dark" ? "#0A0A0A" : "#F8FAFC",
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        ]}
       >
-        <View
-          style={[
-            styles.container,
-            {
-              backgroundColor: theme === "dark" ? "#0A0A0A" : "#F8FAFC",
-              paddingTop: insets.top,
-              paddingBottom: insets.bottom,
-            },
-          ]}
-        >
           {/* Top Bar matching web */}
           <View style={[styles.topBar, { borderBottomColor: colors.border }]}>
             <Pressable onPress={onClose} style={styles.backBtn} hitSlop={8}>
@@ -552,6 +629,7 @@ export function ContentDetailModal({
             scrollEnabled={!isVideoTimelineDragging}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl {...refreshControlProps} />}
             scrollEventThrottle={50}
             onScroll={(e) => {
               setIsScrolledPastMedia(e.nativeEvent.contentOffset.y > 350);
@@ -604,7 +682,7 @@ export function ContentDetailModal({
                       sound={displaySound}
                       isParentVideoPlaying={
                         mediaItems[displayMediaIndex]?.type === "video"
-                          ? (!isVideoUserPaused || isVideoPlaying || isVideoBuffering || isVideoTimelineDragging)
+                          ? (isVideoPlaying || isVideoBuffering || isVideoTimelineDragging)
                           : false
                       }
                       onSoundClick={() => setSoundPickerOpen(true)}
@@ -633,14 +711,14 @@ export function ContentDetailModal({
               {mediaItems.length > 0 ? (
                 <View style={styles.mediaSection}>
                   <View style={styles.mediaSliderContainer}>
+                    <GestureDetector gesture={inlinePinchGesture}>
                     <ScrollView
                       ref={scrollViewRef}
                       horizontal
                       pagingEnabled={Platform.OS !== "web"}
-                      snapToInterval={sliderWidth}
-                      snapToAlignment="center"
-                      decelerationRate="fast"
-                      disableIntervalMomentum={true}
+                      snapToInterval={Platform.OS === "web" ? sliderWidth : undefined}
+                      snapToAlignment={Platform.OS === "web" ? "center" : undefined}
+                      disableIntervalMomentum={Platform.OS === "web"}
                       scrollEnabled={!isVideoTimelineDragging}
                       contentContainerStyle={{ alignItems: "center" }}
                       showsHorizontalScrollIndicator={false}
@@ -694,47 +772,16 @@ export function ContentDetailModal({
                             {m.type === "video" ? (
                               <CustomVideoPlayer
                                 uri={m.url}
-                                isActive={i === displayMediaIndex && !isScrolledPastMedia && visible}
+                                isActive={i === displayMediaIndex && !isScrolledPastMedia && visible && fullscreenMediaIndex === null}
                                 onPlayingChange={handleVideoPlayingChange}
                                 onBufferingChange={setIsVideoBuffering}
                                 onUserPausedChange={setIsVideoUserPaused}
-                                onDraggingChange={setIsVideoTimelineDragging}
-                                onFullscreenTrigger={() => setFullscreenMediaIndex(i)}
+                                onDraggingChange={handleVideoTimelineDraggingChange}
+                                onFullscreenTrigger={() => openFullscreen(i)}
                               />
                             ) : (
                               <Pressable
-                                onPress={() => setFullscreenMediaIndex(i)}
-                                onTouchStart={(e) => {
-                                  if (e.nativeEvent?.touches?.length === 2) {
-                                    const t1 = e.nativeEvent.touches[0];
-                                    const t2 = e.nativeEvent.touches[1];
-                                    pinchStartDistRef.current = Math.hypot(
-                                      t1.pageX - t2.pageX,
-                                      t1.pageY - t2.pageY
-                                    );
-                                  }
-                                }}
-                                onTouchMove={(e) => {
-                                  if (
-                                    e.nativeEvent?.touches?.length === 2 &&
-                                    pinchStartDistRef.current !== null
-                                  ) {
-                                    const t1 = e.nativeEvent.touches[0];
-                                    const t2 = e.nativeEvent.touches[1];
-                                    const curDist = Math.hypot(
-                                      t1.pageX - t2.pageX,
-                                      t1.pageY - t2.pageY
-                                    );
-                                    const delta = curDist - pinchStartDistRef.current;
-                                    if (delta > 35) {
-                                      setFullscreenMediaIndex(i);
-                                      pinchStartDistRef.current = null;
-                                    }
-                                  }
-                                }}
-                                onTouchEnd={() => {
-                                  pinchStartDistRef.current = null;
-                                }}
+                                onPress={() => openFullscreen(i)}
                                 style={[
                                   styles.imageFramelessWrapper,
                                   aspect
@@ -759,6 +806,7 @@ export function ContentDetailModal({
                         );
                       })}
                     </ScrollView>
+                    </GestureDetector>
 
                     {/* Pagination indicator dots and location button row */}
                     <View style={styles.paginationRow}>
@@ -932,7 +980,6 @@ export function ContentDetailModal({
             </View>
           </ScrollView>
         </View>
-      </Modal>
 
       {/* Edit Content Modal */}
       <EditContentModal
@@ -964,107 +1011,192 @@ export function ContentDetailModal({
         }}
       />
 
-      {/* ── Fullscreen Media Viewer ── */}
-      <Modal
-        visible={fullscreenMediaIndex !== null}
-        animationType="fade"
-        transparent={false}
-        onRequestClose={() => setFullscreenMediaIndex(null)}
-      >
-        <View
-          style={styles.fullscreenMediaBackdrop}
-          onTouchStart={(e) => {
-            if (e.nativeEvent?.touches?.length === 2) {
-              const t1 = e.nativeEvent.touches[0];
-              const t2 = e.nativeEvent.touches[1];
-              pinchStartDistRef.current = Math.hypot(
-                t1.pageX - t2.pageX,
-                t1.pageY - t2.pageY
-              );
-            }
-          }}
-          onTouchMove={(e) => {
-            if (
-              e.nativeEvent?.touches?.length === 2 &&
-              pinchStartDistRef.current !== null
-            ) {
-              const t1 = e.nativeEvent.touches[0];
-              const t2 = e.nativeEvent.touches[1];
-              const curDist = Math.hypot(
-                t1.pageX - t2.pageX,
-                t1.pageY - t2.pageY
-              );
-              const delta = curDist - pinchStartDistRef.current;
-              // Pinching in (closing fingers) exits fullscreen!
-              if (delta < -35) {
-                setFullscreenMediaIndex(null);
-                pinchStartDistRef.current = null;
-              }
-            }
-          }}
-          onTouchEnd={() => {
-            pinchStartDistRef.current = null;
-          }}
-        >
-          {/* Top Bar with Back Button */}
+      {/* ── Fullscreen Media Viewer (in-tree overlay for 0ms open lag) ── */}
+      {fullscreenMediaIndex !== null && mediaItems.length > 0 && (() => {
+        const fsOverlay = (
           <View
             style={[
-              styles.fullscreenMediaHeader,
-              { paddingTop: Math.max(insets.top, 16) + 8 },
+              styles.fullscreenMediaBackdrop,
+              StyleSheet.absoluteFill,
+              {
+                zIndex: 999,
+                paddingTop: insets.top,
+                paddingBottom: insets.bottom,
+                paddingLeft: insets.left,
+                paddingRight: insets.right,
+              },
             ]}
           >
-            <Pressable
-              onPress={() => setFullscreenMediaIndex(null)}
-              hitSlop={12}
-              style={styles.fullscreenBackBtn}
+            {/* Top Bar with Back Button, Counter, and Download — instant opacity toggle */}
+            <Animated.View
+              pointerEvents={fsHeaderPointerEvents}
+              style={[
+                styles.fullscreenMediaHeader,
+                {
+                  paddingTop: Math.max(insets.top, 16) + 8,
+                  opacity: fsHeaderOpacity,
+                },
+              ]}
             >
-              <ArrowLeft size={20} color="#FFFFFF" />
-              <Text style={styles.fullscreenBackBtnText}>Back</Text>
-            </Pressable>
+              <Pressable
+                onPress={closeFullscreen}
+                hitSlop={12}
+                style={styles.fullscreenBackBtn}
+              >
+                <ArrowLeft size={20} color="#FFFFFF" />
+                <Text style={styles.fullscreenBackBtnText}>Back</Text>
+              </Pressable>
 
-            {mediaItems.length > 1 && fullscreenMediaIndex !== null && (
-              <View style={styles.fullscreenCounterPill}>
-                <Text style={styles.fullscreenCounterText}>
-                  {fullscreenMediaIndex + 1} / {mediaItems.length}
-                </Text>
-              </View>
-            )}
+              {mediaItems.length > 1 && (
+                <View style={styles.fullscreenCounterPill}>
+                  <Text style={styles.fullscreenCounterText}>
+                    {fullscreenMediaIndex + 1} / {mediaItems.length}
+                  </Text>
+                </View>
+              )}
 
-            <Pressable
-              onPress={handleDownloadCurrentMedia}
-              hitSlop={12}
-              style={styles.fullscreenActionBtn}
+              <Pressable
+                onPress={handleDownloadCurrentMedia}
+                hitSlop={12}
+                style={styles.fullscreenActionBtn}
+              >
+                <Download size={18} color="#FFFFFF" />
+              </Pressable>
+            </Animated.View>
+
+            {/* Slidable Media Container */}
+            <View
+              style={styles.fullscreenMediaBody}
+              onLayout={(e) => {
+                const w = e.nativeEvent.layout.width;
+                if (w > 0 && Math.abs(w - fullscreenWidth) > 2) {
+                  setFullscreenWidth(w);
+                }
+                if (fullscreenMediaIndex !== null && w > 0) {
+                  fullscreenScrollRef.current?.scrollTo({
+                    x: fullscreenMediaIndex * w,
+                    animated: false,
+                  });
+                }
+              }}
             >
-              <Download size={18} color="#FFFFFF" />
-            </Pressable>
+              <ScrollView
+                ref={fullscreenScrollRef}
+                horizontal
+                pagingEnabled={Platform.OS !== "web"}
+                snapToInterval={Platform.OS === "web" ? fullscreenWidth : undefined}
+                snapToAlignment={Platform.OS === "web" ? "center" : undefined}
+                disableIntervalMomentum={Platform.OS === "web"}
+                scrollEnabled={!isVideoTimelineDragging}
+                showsHorizontalScrollIndicator={false}
+                contentOffset={{ x: fullscreenMediaIndex * fullscreenWidth, y: 0 }}
+                scrollEventThrottle={16}
+                onScroll={(e) => {
+                  if (fullscreenWidth > 0) {
+                    const page = Math.round(e.nativeEvent.contentOffset.x / fullscreenWidth);
+                    if (page >= 0 && page < mediaItems.length && page !== fullscreenMediaIndex) {
+                      setFullscreenMediaIndex(page);
+                      setActiveMediaIndex(page);
+                      scrollViewRef.current?.scrollTo({ x: page * sliderWidth, animated: false });
+                    }
+                  }
+                }}
+                onMomentumScrollEnd={(e) => {
+                  if (fullscreenWidth > 0) {
+                    const page = Math.round(e.nativeEvent.contentOffset.x / fullscreenWidth);
+                    if (page >= 0 && page < mediaItems.length) {
+                      setFullscreenMediaIndex(page);
+                      setActiveMediaIndex(page);
+                      scrollViewRef.current?.scrollTo({ x: page * sliderWidth, animated: false });
+                    }
+                  }
+                }}
+                style={[
+                  { width: fullscreenWidth, height: "100%" },
+                  Platform.select({
+                    web: {
+                      scrollSnapType: "x mandatory",
+                      overflowX: "auto",
+                    } as any,
+                  }),
+                ]}
+              >
+                {mediaItems.map((m, i) => (
+                  <View
+                    key={`fs-${m.id}`}
+                    style={[
+                      {
+                        width: fullscreenWidth,
+                        height: "100%",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      },
+                      Platform.select({
+                        web: {
+                          scrollSnapAlign: "center",
+                          scrollSnapStop: "always",
+                        } as any,
+                      }),
+                    ]}
+                  >
+                    {m.type === "video" ? (
+                      <View style={{ width: "100%", height: "100%" }}>
+                        <CustomVideoPlayer
+                          uri={m.url}
+                          isActive={i === fullscreenMediaIndex}
+                          onPlayingChange={handleVideoPlayingChange}
+                          onBufferingChange={setIsVideoBuffering}
+                          onUserPausedChange={setIsVideoUserPaused}
+                          onDraggingChange={handleVideoTimelineDraggingChange}
+                          onFullscreenExit={closeFullscreen}
+                        />
+                        <Pressable
+                          onPress={toggleFullscreenControls}
+                          style={{ position: "absolute", top: 0, left: 0, right: 0, height: 54 }}
+                        />
+                      </View>
+                    ) : (
+                      <Pressable
+                        onPress={toggleFullscreenControls}
+                        style={{ width: "100%", height: "100%" }}
+                      >
+                        <Image
+                          source={{ uri: m.url }}
+                          style={styles.fullscreenImage}
+                          contentFit="contain"
+                          cachePolicy="memory-disk"
+                          priority="high"
+                        />
+                      </Pressable>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
           </View>
+        );
 
-          {/* Media Container */}
-          <View style={styles.fullscreenMediaBody}>
-            {fullscreenMediaIndex !== null && mediaItems[fullscreenMediaIndex] && (
-              mediaItems[fullscreenMediaIndex].type === "video" ? (
-                <CustomVideoPlayer
-                  uri={mediaItems[fullscreenMediaIndex].url}
-                  isActive={true}
-                  onPlayingChange={handleVideoPlayingChange}
-                  onBufferingChange={setIsVideoBuffering}
-                  onUserPausedChange={setIsVideoUserPaused}
-                  onDraggingChange={setIsVideoTimelineDragging}
-                />
-              ) : (
-                <Image
-                  source={{ uri: mediaItems[fullscreenMediaIndex].url }}
-                  style={styles.fullscreenImage}
-                  contentFit="contain"
-                  cachePolicy="memory-disk"
-                  priority="high"
-                />
-              )
-            )}
-          </View>
-        </View>
-      </Modal>
+        return Platform.OS !== "web" ? (
+          <GestureDetector gesture={fullscreenPinchGesture}>{fsOverlay}</GestureDetector>
+        ) : (
+          fsOverlay
+        );
+      })()}
     </>
+  );
+}
+
+export function ContentDetailModal(props: ContentDetailModalProps) {
+  if (!props.visible || !props.item) return null;
+  return (
+    <Modal
+      visible={props.visible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={props.onClose}
+    >
+      <ContentDetailView {...props} />
+    </Modal>
   );
 }
 
@@ -1345,9 +1477,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   fullscreenMediaBackdrop: {
-    flex: 1,
     backgroundColor: "#000000",
-    position: "relative",
   },
   fullscreenMediaHeader: {
     position: "absolute",

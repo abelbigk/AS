@@ -7,7 +7,7 @@ import {
   Animated,
   Easing,
 } from "react-native";
-import { useAudioPlayer } from "expo-audio";
+import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from "expo-audio";
 import { Volume2, VolumeX, Music } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
 
@@ -51,8 +51,7 @@ interface SoundControlProps {
 export function SoundControl({ sound, isParentVideoPlaying, onSoundClick }: SoundControlProps) {
   const { colors } = useTheme();
   const [isMuted, setIsMuted] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const isPickerOpenRef = useRef(false);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
 
   // Animated bars for equalizer
   const bar1 = useRef(new Animated.Value(0.3)).current;
@@ -62,6 +61,7 @@ export function SoundControl({ sound, isParentVideoPlaying, onSoundClick }: Soun
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
   const player = useAudioPlayer(sound?.url ? { uri: sound.url } : null);
+  const status = useAudioPlayerStatus(player);
 
   const startEqualizer = useCallback(() => {
     animRef.current?.stop();
@@ -87,37 +87,60 @@ export function SoundControl({ sound, isParentVideoPlaying, onSoundClick }: Soun
   }, [bar1, bar2, bar3, bar4]);
 
   // Play/pause based on conditions
-  const shouldPlay = !isMuted && !isParentVideoPlaying && !isPickerOpenRef.current && !!sound?.url;
+  const shouldPlay = !isMuted && !isParentVideoPlaying && !isPickerOpen && !!sound?.url;
 
   useEffect(() => {
     if (!player || !sound?.url) return;
     try {
       player.loop = true;
       if (shouldPlay) {
+        setAudioModeAsync({
+          playsInSilentMode: true,
+          interruptionMode: "mixWithOthers",
+        }).catch(() => {});
+        player.muted = false;
+        player.volume = 1.0;
         player.play();
-        setIsPlaying(true);
-        startEqualizer();
       } else {
         player.pause();
-        setIsPlaying(false);
-        stopEqualizer();
       }
     } catch {}
   }, [shouldPlay, sound?.url, player]);
 
+  // Recover if Android AudioFocus paused expo-audio while a video was playing/buffering
+  useEffect(() => {
+    if (!player || !sound?.url || !shouldPlay) return;
+    if (status.isLoaded && !status.playing) {
+      const t = setTimeout(() => {
+        try {
+          player.muted = false;
+          player.volume = 1.0;
+          player.play();
+        } catch {}
+      }, 120);
+      return () => clearTimeout(t);
+    }
+  }, [shouldPlay, status.isLoaded, status.playing, player, sound?.url]);
+
+  // Drive equalizer strictly from actual playback state so animation never lies
+  const showAnimation = shouldPlay && status.playing;
+
+  useEffect(() => {
+    if (showAnimation) {
+      startEqualizer();
+    } else {
+      stopEqualizer();
+    }
+  }, [showAnimation, startEqualizer, stopEqualizer]);
+
   // Picker open/close events
   useEffect(() => {
     const handleOpen = () => {
-      isPickerOpenRef.current = true;
+      setIsPickerOpen(true);
       try { player?.pause(); } catch {}
-      setIsPlaying(false);
-      stopEqualizer();
     };
     const handleClose = () => {
-      isPickerOpenRef.current = false;
-      if (!isMuted && !isParentVideoPlaying && sound?.url) {
-        try { player?.play(); setIsPlaying(true); startEqualizer(); } catch {}
-      }
+      setIsPickerOpen(false);
     };
     soundPickerEvents.on("open", handleOpen);
     soundPickerEvents.on("close", handleClose);
@@ -125,7 +148,7 @@ export function SoundControl({ sound, isParentVideoPlaying, onSoundClick }: Soun
       soundPickerEvents.off("open", handleOpen);
       soundPickerEvents.off("close", handleClose);
     };
-  }, [isMuted, isParentVideoPlaying, sound?.url, player, startEqualizer, stopEqualizer]);
+  }, [player]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -137,7 +160,6 @@ export function SoundControl({ sound, isParentVideoPlaying, onSoundClick }: Soun
 
   if (!sound) return null;
 
-  const showAnimation = isPlaying && !isMuted && !isParentVideoPlaying;
   const barColor = colors.text + "CC";
   const dimBarColor = colors.text + "55";
 

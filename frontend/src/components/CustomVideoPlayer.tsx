@@ -18,7 +18,7 @@
  *  • VideoView uses flex:1 (never absoluteFill) → Android honours contentFit="contain".
  */
 
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   StyleSheet,
@@ -27,10 +27,13 @@ import {
   Platform,
   Animated as RNAnimated,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { VideoView, useVideoPlayer } from "expo-video";
+import Svg, { Path } from "react-native-svg";
 import { Play, MoreVertical, PictureInPicture2, Gauge } from "lucide-react-native";
 import { DropdownMenu, DropdownItem } from "./DropdownMenu";
 import { getOrCacheVideoUri } from "../lib/videoCache";
+import { useTheme } from "../contexts/ThemeContext";
 
 interface CustomVideoPlayerProps {
   uri: string;
@@ -40,6 +43,7 @@ interface CustomVideoPlayerProps {
   onBufferingChange?: (isBuffering: boolean) => void;
   onUserPausedChange?: (isUserPaused: boolean) => void;
   onFullscreenTrigger?: () => void;
+  onFullscreenExit?: () => void;
   style?: any;
 }
 
@@ -51,8 +55,10 @@ export function CustomVideoPlayer({
   onBufferingChange,
   onUserPausedChange,
   onFullscreenTrigger,
+  onFullscreenExit,
   style,
 }: CustomVideoPlayerProps) {
+  const { theme } = useTheme();
   // ─── React state (triggers re-render for display) ─────────────────────────
   const [playableUri,     setPlayableUri]     = useState(uri);
   const [isPlaying,       setIsPlaying]       = useState(false);
@@ -78,24 +84,25 @@ export function CustomVideoPlayer({
   const videoViewRef   = useRef<VideoView>(null);
   const pinchDistRef   = useRef<number | null>(null);
 
-  // ─── Animated values for bar expansion while dragging ────────────────────
-  const barHeight  = useRef(new RNAnimated.Value(3)).current;
-  const thumbScale = useRef(new RNAnimated.Value(1)).current;
-  const barOpacity = useRef(new RNAnimated.Value(1)).current; // visible while paused, fades out when playing
+  // ─── Animated values for bar expansion & zero-rerender progress ──────────
+  const barHeight       = useRef(new RNAnimated.Value(3)).current;
+  const thumbScale      = useRef(new RNAnimated.Value(1)).current;
+  const barOpacity      = useRef(new RNAnimated.Value(1)).current; // visible while paused or dragging
+  const controlsOpacity = useRef(new RNAnimated.Value(1)).current; // visible only when paused by user (not dragging)
+  const progressPctAnim = useRef(new RNAnimated.Value(0)).current; // 0-100 driven imperatively for 0-lag scrub
+  const lastTooltipSecRef = useRef(-1);
 
   const expandBar = (expand: boolean) => {
     RNAnimated.spring(barHeight,  { toValue: expand ? 7  : 3, useNativeDriver: false, tension: 200, friction: 12 }).start();
     RNAnimated.spring(thumbScale, { toValue: expand ? 1.9 : 1, useNativeDriver: true,  tension: 200, friction: 12 }).start();
   };
 
-  // Animate bar visibility: hidden while playing, visible when paused or dragging
+  // Sync bar & paused controls visibility instantaneously
   useEffect(() => {
-    const shouldShow = !isPlaying || isDragging;
-    RNAnimated.timing(barOpacity, {
-      toValue: shouldShow ? 1 : 0,
-      duration: 180,
-      useNativeDriver: false,
-    }).start();
+    barOpacity.stopAnimation();
+    controlsOpacity.stopAnimation();
+    barOpacity.setValue(!isPlaying || isDragging ? 1 : 0);
+    controlsOpacity.setValue(!isPlaying && !isDragging ? 1 : 0);
   }, [isPlaying, isDragging]);
 
   // ─── Player ───────────────────────────────────────────────────────────────
@@ -126,6 +133,12 @@ export function CustomVideoPlayer({
       isPlayingRef.current = e.isPlaying;
       onPlayingChange?.(e.isPlaying);
       if (e.isPlaying) setShowInitialPlay(false);
+      if (!isDraggingRef.current) {
+        barOpacity.stopAnimation();
+        controlsOpacity.stopAnimation();
+        barOpacity.setValue(e.isPlaying ? 0 : 1);
+        controlsOpacity.setValue(e.isPlaying ? 0 : 1);
+      }
 
       // When pausing or playing, immediately sync currentTime to current position
       if (!isDraggingRef.current) {
@@ -133,7 +146,11 @@ export function CustomVideoPlayer({
         const dur = durationRef.current || player.duration || 0;
         if (typeof cur === "number" && !isNaN(cur)) {
           setCurrentTime(cur);
-          if (dur > 0) currentProgressRef.current = (cur / dur) * 100;
+          if (dur > 0) {
+            const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
+            currentProgressRef.current = pct;
+            progressPctAnim.setValue(pct);
+          }
         }
       }
     });
@@ -142,7 +159,11 @@ export function CustomVideoPlayer({
       if (!isDraggingRef.current) {
         const dur = durationRef.current || player.duration || 0;
         setCurrentTime(e.currentTime);
-        if (dur > 0) currentProgressRef.current = (e.currentTime / dur) * 100;
+        if (dur > 0) {
+          const pct = Math.min(100, Math.max(0, (e.currentTime / dur) * 100));
+          currentProgressRef.current = pct;
+          progressPctAnim.setValue(pct);
+        }
       }
       if (player.duration && durationRef.current === 0) {
         setDuration(player.duration);
@@ -241,7 +262,7 @@ export function CustomVideoPlayer({
     };
   }, [uri]);
 
-  // Continuously track playback time at 60 FPS while playing so the hidden bar always follows the video
+  // Continuously track playback time at 60 FPS while playing without React re-renders
   useEffect(() => {
     let animId: number;
     let isRunning = true;
@@ -250,11 +271,10 @@ export function CustomVideoPlayer({
       if (isPlayingRef.current && !isDraggingRef.current) {
         const cur = player.currentTime;
         const dur = durationRef.current || player.duration || 0;
-        if (typeof cur === "number" && !isNaN(cur)) {
-          setCurrentTime(cur);
-          if (dur > 0) {
-            currentProgressRef.current = (cur / dur) * 100;
-          }
+        if (typeof cur === "number" && !isNaN(cur) && dur > 0) {
+          const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
+          currentProgressRef.current = pct;
+          progressPctAnim.setValue(pct);
         }
       }
       if (isRunning) {
@@ -268,40 +288,55 @@ export function CustomVideoPlayer({
       isRunning = false;
       cancelAnimationFrame(animId);
     };
-  }, [player]);
+  }, [player, progressPctAnim]);
 
   // Keep durationRef in sync with state
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
-  // Pause when slide becomes inactive
+  // Pause when slide becomes inactive (preserve current frame/second so returning resumes where left off)
   useEffect(() => {
     if (!isActive) {
       try {
         player.pause();
-        // Seek to beginning to fully stop audio
-        player.currentTime = 0;
         // Mute as a failsafe while inactive
         (player as any).muted = true;
       } catch {}
       setIsPlaying(false);
       isPlayingRef.current = false;
+      isBufferingRef.current = false;
+      onPlayingChange?.(false);
+      onBufferingChange?.(false);
+      setShowInitialPlay(true);
     } else {
       try {
         // Unmute when active again
         (player as any).muted = false;
       } catch {}
     }
-  }, [isActive, player]);
+  }, [isActive, player, onPlayingChange, onBufferingChange]);
 
   // Pause on unmount
-  useEffect(() => () => { try { player.pause(); } catch {} }, [player]);
+  useEffect(() => () => {
+    try { player.pause(); } catch {}
+    isPlayingRef.current = false;
+    isBufferingRef.current = false;
+    onPlayingChange?.(false);
+    onBufferingChange?.(false);
+  }, [player, onPlayingChange, onBufferingChange]);
 
   // ─── Toggle play / pause ──────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
     if (isDraggingRef.current) return;   // ignore taps during scrub
     if (isPlayingRef.current) {
-      player.pause();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      barOpacity.stopAnimation();
+      controlsOpacity.stopAnimation();
+      barOpacity.setValue(1);
+      controlsOpacity.setValue(1);
+      onPlayingChange?.(false);
       onUserPausedChange?.(true);
+      player.pause();
       const cur = player.currentTime;
       const dur = durationRef.current || player.duration || 0;
       if (typeof cur === "number" && !isNaN(cur)) {
@@ -309,39 +344,71 @@ export function CustomVideoPlayer({
         if (dur > 0) currentProgressRef.current = (cur / dur) * 100;
       }
     } else {
-      player.play();
+      isPlayingRef.current = true;
+      setIsPlaying(true);
       setShowInitialPlay(false);
+      barOpacity.stopAnimation();
+      controlsOpacity.stopAnimation();
+      barOpacity.setValue(0);
+      controlsOpacity.setValue(0);
+      onPlayingChange?.(true);
       onUserPausedChange?.(false);
+      player.play();
     }
-  }, [player, onUserPausedChange]);
+  }, [player, onPlayingChange, onUserPausedChange, barOpacity, controlsOpacity]);
 
   // ─── Seek helper ──────────────────────────────────────────────────────────
+  const lastSeekTimeRef = useRef(0);
+  const lastSeekPctRef  = useRef(-1);
+
   const seekTo = (pct: number) => {
     const dur = durationRef.current || player.duration || 0;
     if (dur <= 0) return;
+    lastSeekPctRef.current = pct;
     const target = (pct / 100) * dur;
-    setCurrentTime(target);
     try { player.currentTime = target; } catch {}
   };
 
   // ─── Drag lifecycle helpers (called from both native + web handlers) ──────
   const beginDrag = (pageX: number) => {
+    // Enable ExoPlayer native scrubbing optimizations & mute before pausing
+    // so frames update continuously while dragging with zero audio blip.
+    try {
+      (player as any).muted = true;
+      (player as any).scrubbingModeOptions = {
+        scrubbingModeEnabled: true,
+        increaseCodecOperatingRate: true,
+        enableDynamicScheduling: true,
+        useDecodeOnlyFlag: true,
+        allowSkippingMediaCodecFlush: true,
+      };
+      (player as any).seekTolerance = { toleranceBefore: 0.25, toleranceAfter: 0.25 };
+      player.pause();
+    } catch {}
+
     // Immediately sample current position from player so we start with the exact frame
     const cur = player.currentTime;
     const dur = durationRef.current || player.duration || 0;
     const currentPct = dur > 0 && typeof cur === "number" && !isNaN(cur)
-      ? (cur / dur) * 100
+      ? Math.min(100, Math.max(0, (cur / dur) * 100))
       : currentProgressRef.current;
 
     currentProgressRef.current   = currentPct;
     dragStartPageXRef.current    = pageX;
     dragStartProgressRef.current = currentPct;
+    lastSeekPctRef.current       = currentPct;
+    lastTooltipSecRef.current    = dur > 0 ? Math.floor((currentPct / 100) * dur) : -1;
     isDraggingRef.current        = true;
+    isPlayingRef.current         = false;
+    progressPctAnim.setValue(currentPct);
     setIsDragging(true);
+    setIsPlaying(false);
+    barOpacity.stopAnimation();
+    controlsOpacity.stopAnimation();
+    barOpacity.setValue(1);
+    controlsOpacity.setValue(0);
     setDragProgress(currentPct);  // show current pos, no jump
     onDraggingChange?.(true);
-    onUserPausedChange?.(true);
-    if (isPlayingRef.current) player.pause();
     expandBar(true);
   };
 
@@ -351,37 +418,109 @@ export function CustomVideoPlayer({
     const deltaPx  = pageX - dragStartPageXRef.current;
     const deltaPct = (deltaPx / barWidthRef.current) * 100;
     const newPct   = Math.max(0, Math.min(100, dragStartProgressRef.current + deltaPct));
-    setDragProgress(newPct);
-    seekTo(newPct);  // immediate — no rAF — for frame-accurate preview
+    // Update bar + thumb imperatively with ZERO React re-renders
+    progressPctAnim.setValue(newPct);
+    // Only re-render tooltip when the displayed second changes
+    const dur = durationRef.current || player.duration || 0;
+    if (dur > 0) {
+      const sec = Math.floor((newPct / 100) * dur);
+      if (sec !== lastTooltipSecRef.current) {
+        lastTooltipSecRef.current = sec;
+        setDragProgress(newPct);
+      }
+    }
+    seekTo(newPct);
   };
 
   const commitDrag = (pageX: number) => {
     if (!isDraggingRef.current) return;
-    updateDrag(pageX);             // ensure final position is committed
+    const deltaPx  = barWidthRef.current > 0 ? pageX - dragStartPageXRef.current : 0;
+    const deltaPct = barWidthRef.current > 0 ? (deltaPx / barWidthRef.current) * 100 : 0;
+    const finalPct = Math.max(0, Math.min(100, dragStartProgressRef.current + deltaPct));
+
+    // Disable scrubbing mode and restore exact seek tolerance before final seek + play
+    try {
+      (player as any).seekTolerance = { toleranceBefore: 0, toleranceAfter: 0 };
+      (player as any).scrubbingModeOptions = { scrubbingModeEnabled: false };
+    } catch {}
+
+    currentProgressRef.current = finalPct;
+    progressPctAnim.setValue(finalPct);
+    setDragProgress(finalPct);
+    seekTo(finalPct);
+
     isDraggingRef.current = false;
+    isPlayingRef.current  = true;
     setIsDragging(false);
+    setIsPlaying(true);
+    setShowInitialPlay(false);
+    barOpacity.stopAnimation();
+    controlsOpacity.stopAnimation();
+    barOpacity.setValue(0);
+    controlsOpacity.setValue(0);
+    // Notify playing BEFORE clearing dragging so parent never sees a false-pause gap
+    onPlayingChange?.(true);
     onDraggingChange?.(false);
     onUserPausedChange?.(false);
     expandBar(false);
-    try { player.play(); } catch {}
-    setIsPlaying(true);
-    setShowInitialPlay(false);
+    try {
+      (player as any).muted = false;
+      player.play();
+    } catch {}
   };
 
-  // ─── Native (Android / iOS) touch handlers ───────────────────────────────
-  // Attached via React Native props — no PanResponder (which fights ScrollView).
-  const onNativeTouchStart = (e: any) => {
-    e.stopPropagation?.();
-    beginDrag(e.nativeEvent.pageX);
-  };
-  const onNativeTouchMove = (e: any) => {
-    e.stopPropagation?.();
-    updateDrag(e.nativeEvent.pageX);
-  };
-  const onNativeTouchEnd = (e: any) => {
-    e.stopPropagation?.();
-    commitDrag(e.nativeEvent.pageX);
-  };
+  const pinchHandledRef = useRef(false);
+  const onFsTriggerRef  = useRef(onFullscreenTrigger);
+  const onFsExitRef     = useRef(onFullscreenExit);
+  onFsTriggerRef.current = onFullscreenTrigger;
+  onFsExitRef.current    = onFullscreenExit;
+
+  const videoPinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .runOnJS(true)
+        .onBegin(() => {
+          pinchHandledRef.current = false;
+        })
+        .onUpdate((e) => {
+          if (pinchHandledRef.current) return;
+          if (e.scale > 1.15 && onFsTriggerRef.current) {
+            pinchHandledRef.current = true;
+            onFsTriggerRef.current();
+          } else if (e.scale < 0.85 && onFsExitRef.current) {
+            pinchHandledRef.current = true;
+            onFsExitRef.current();
+          }
+        }),
+    []
+  );
+  // ─── Native (Android / iOS) Gesture Handler for timeline scrub ───────────
+  // Using RNGH Gesture.Pan() runs on the native UI thread and claims the gesture
+  // before any parent HorizontalScrollView can intercept and slide the media.
+  const beginDragRef  = useRef(beginDrag);
+  const updateDragRef = useRef(updateDrag);
+  const commitDragRef = useRef(commitDrag);
+  beginDragRef.current  = beginDrag;
+  updateDragRef.current = updateDrag;
+  commitDragRef.current = commitDrag;
+
+  const scrubGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .minDistance(0)
+        .shouldCancelWhenOutside(false)
+        .onBegin((e) => {
+          beginDragRef.current(e.absoluteX);
+        })
+        .onUpdate((e) => {
+          updateDragRef.current(e.absoluteX);
+        })
+        .onFinalize((e) => {
+          commitDragRef.current(e.absoluteX);
+        }),
+    []
+  );
 
   // ─── Web mouse & touch handlers ──────────────────────────────────────────
   // Attached imperatively so document-level move/up work (dragging outside
@@ -519,7 +658,7 @@ export function CustomVideoPlayer({
           el.style.height = "100%";
           el.style.maxWidth = "100%";
           el.style.maxHeight = "100%";
-          el.style.objectFit = "cover";
+          el.style.objectFit = "contain";
           el.style.borderRadius = "16px";
         }
       } catch {}
@@ -556,57 +695,21 @@ export function CustomVideoPlayer({
   ];
 
   // ─── Render ───────────────────────────────────────────────────────────────
-  const isLandscape = videoAspect ? videoAspect > 1 : false;
-
-  return (
+  const playerBody = (
     <View
       ref={containerRef}
       style={[styles.container, style]}
-      onTouchStart={(e) => {
-        if (Platform.OS !== "web" && e.nativeEvent?.touches?.length === 2) {
-          const t1 = e.nativeEvent.touches[0];
-          const t2 = e.nativeEvent.touches[1];
-          pinchDistRef.current = Math.hypot(t1.pageX - t2.pageX, t1.pageY - t2.pageY);
-        }
-      }}
-      onTouchMove={(e) => {
-        if (Platform.OS !== "web" && e.nativeEvent?.touches?.length === 2 && pinchDistRef.current !== null) {
-          const t1 = e.nativeEvent.touches[0];
-          const t2 = e.nativeEvent.touches[1];
-          const d = Math.hypot(t1.pageX - t2.pageX, t1.pageY - t2.pageY);
-          const delta = d - pinchDistRef.current;
-          if (delta > 35) {
-            if (onFullscreenTrigger) {
-              onFullscreenTrigger();
-            } else if (!isFullscreen) {
-              enterFullscreen();
-            }
-            pinchDistRef.current = d;
-          } else if (delta < -35 && isFullscreen) {
-            exitFullscreen();
-            pinchDistRef.current = d;
-          }
-        }
-      }}
-      onTouchEnd={() => { pinchDistRef.current = null; }}
     >
-      {/* ── Frameless Video Card sized to real aspect ratio ── */}
-      <View
-        style={[
-          styles.videoCard,
-          videoAspect
-            ? { width: "100%", aspectRatio: videoAspect, maxHeight: "100%" }
-            : { width: "100%", height: "100%" },
-        ]}
-      >
+      {/* ── Video Card fills container; VideoView contentFit="contain" handles letterboxing ── */}
+      <View style={styles.videoCard}>
         {/* ── Video ── */}
         <Pressable onPress={togglePlay} style={styles.videoFlex}>
           <VideoView
             ref={videoViewRef}
             player={player}
-            style={styles.videoFlex}
+            style={styles.videoView}
             nativeControls={false}
-            contentFit={isLandscape ? "contain" : "cover"}
+            contentFit="contain"
           />
         </Pressable>
 
@@ -621,9 +724,16 @@ export function CustomVideoPlayer({
           </Pressable>
         )}
 
-        {/* ── 3-dot menu (top-right, only when paused and NOT showing initial play) ── */}
-        {!isPlaying && !isDragging && !showInitialPlay && (
-          <View style={styles.menuContainer}>
+        {/* ── 3-dot menu (top-right, below Download button in fullscreen, synced instantaneously with bar) ── */}
+        {!showInitialPlay && (
+          <RNAnimated.View
+            style={[
+              styles.menuContainer,
+              onFullscreenExit ? { top: 64 } : null,
+              { opacity: controlsOpacity },
+            ]}
+            pointerEvents={!isPlaying && !isDragging ? "auto" : "none"}
+          >
             <DropdownMenu
               trigger={(open) => (
                 <Pressable onPress={open} style={styles.menuButton}>
@@ -633,7 +743,7 @@ export function CustomVideoPlayer({
               items={menuItems}
               align="right"
             />
-          </View>
+          </RNAnimated.View>
         )}
 
         {/* ── Time tooltip (only while actively dragging) ── */}
@@ -645,45 +755,89 @@ export function CustomVideoPlayer({
           </View>
         )}
 
-        {/* ── Progress bar (hidden while playing, visible when paused or dragging) ── */}
-        <View
-          ref={progressBarRef}
-          style={styles.progressHitbox}
-          onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
-          onStartShouldSetResponder={Platform.OS !== "web" ? () => true : undefined}
-          onStartShouldSetResponderCapture={Platform.OS !== "web" ? () => true : undefined}
-          onMoveShouldSetResponder={Platform.OS !== "web" ? () => true : undefined}
-          onMoveShouldSetResponderCapture={Platform.OS !== "web" ? () => true : undefined}
-          onResponderTerminationRequest={Platform.OS !== "web" ? () => false : undefined}
-          onResponderGrant={Platform.OS !== "web" ? onNativeTouchStart : undefined}
-          onResponderMove={Platform.OS !== "web" ? onNativeTouchMove : undefined}
-          onResponderRelease={Platform.OS !== "web" ? onNativeTouchEnd : undefined}
-          onResponderTerminate={Platform.OS !== "web" ? onNativeTouchEnd : undefined}
-          onTouchStart={Platform.OS !== "web" ? onNativeTouchStart : undefined}
-          onTouchMove={Platform.OS  !== "web" ? onNativeTouchMove  : undefined}
-          onTouchEnd={Platform.OS   !== "web" ? onNativeTouchEnd   : undefined}
-        >
-          {/* Animated track: height expands 3px -> 7px on drag, fades in when paused/dragging */}
-          <RNAnimated.View style={[styles.track, { height: barHeight, opacity: barOpacity }]}>
-            {/* Elapsed fill — grows from left */}
-            <View
-              style={[
-                styles.elapsed,
-                { width: `${Math.max(0, Math.min(100, displayProgress))}%` as any },
-              ]}
+        {/* ── Fullscreen / Minimizer button above the bar at the right edge (synced instantaneously with bar) ── */}
+        {(onFullscreenTrigger || onFullscreenExit) && (() => {
+          const iconColor = theme === "dark" ? "#FFFFFF" : "#000000";
+          return (
+            <RNAnimated.View
+              style={[styles.fullscreenToggleBtn, { opacity: controlsOpacity }]}
+              pointerEvents={!isPlaying && !isDragging ? "auto" : "none"}
             >
-              {/* Thumb dot at right edge of elapsed fill, scales up while dragging */}
-              <RNAnimated.View
-                style={[
-                  styles.thumb,
-                  { transform: [{ scale: thumbScale }] },
-                ]}
-              />
+              <Pressable
+                onPress={onFullscreenTrigger ?? onFullscreenExit}
+                hitSlop={{ top: 10, right: 10, bottom: 0, left: 10 }}
+              >
+                <Svg width={20} height={20} viewBox="0 0 24 24">
+                  {onFullscreenExit ? (
+                    <>
+                      <Path d="M4 9 H9 V4" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                      <Path d="M20 9 H15 V4" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                      <Path d="M4 15 H9 V20" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                      <Path d="M20 15 H15 V20" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                    </>
+                  ) : (
+                    <>
+                      <Path d="M4 9 V4 H9" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                      <Path d="M15 4 H20 V9" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                      <Path d="M4 15 V20 H9" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                      <Path d="M15 20 H20 V15" stroke={iconColor} strokeWidth={2.5} strokeLinecap="square" strokeLinejoin="miter" fill="none" />
+                    </>
+                  )}
+                </Svg>
+              </Pressable>
+            </RNAnimated.View>
+          );
+        })()}
+
+        {/* ── Progress bar (hidden while playing, visible when paused or dragging) ── */}
+        {(() => {
+          const barContent = (
+            <View
+              ref={progressBarRef}
+              style={styles.progressHitbox}
+              onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
+            >
+              {/* Animated track: height expands 3px -> 7px on drag, fades in when paused/dragging */}
+              <RNAnimated.View style={[styles.track, { height: barHeight, opacity: barOpacity }]}>
+                {/* Elapsed fill — driven by progressPctAnim for 0-rerender 60-120fps scrubbing */}
+                <RNAnimated.View
+                  style={[
+                    styles.elapsed,
+                    {
+                      width: progressPctAnim.interpolate({
+                        inputRange: [0, 100],
+                        outputRange: ["0%", "100%"],
+                        extrapolate: "clamp",
+                      }),
+                    },
+                  ]}
+                >
+                  {/* Thumb dot at right edge of elapsed fill, scales up while dragging */}
+                  <RNAnimated.View
+                    style={[
+                      styles.thumb,
+                      { transform: [{ scale: thumbScale }] },
+                    ]}
+                  />
+                </RNAnimated.View>
+              </RNAnimated.View>
             </View>
-          </RNAnimated.View>
-        </View>
+          );
+
+          return Platform.OS !== "web" ? (
+            <GestureDetector gesture={scrubGesture}>{barContent}</GestureDetector>
+          ) : (
+            barContent
+          );
+        })()}
       </View>
     </View>
+  );
+
+  return Platform.OS !== "web" ? (
+    <GestureDetector gesture={videoPinchGesture}>{playerBody}</GestureDetector>
+  ) : (
+    playerBody
   );
 }
 
@@ -699,19 +853,24 @@ const styles = StyleSheet.create({
   },
 
   videoCard: {
+    flex: 1,
+    width: "100%",
     borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "transparent",
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
-    maxHeight: "100%",
-    maxWidth: "100%",
   },
 
   videoFlex: {
+    flex: 1,
     width: "100%",
-    height: "100%",
+  },
+
+  videoView: {
+    flex: 1,
+    width: "100%",
   },
 
   centerPlayOverlay: {
@@ -723,7 +882,9 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: "rgba(255,255,255,0.35)",
+    backgroundColor: "rgba(0, 0, 0, 0.52)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.28)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -741,6 +902,15 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.45)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  fullscreenToggleBtn: {
+    position: "absolute",
+    bottom: 26,
+    right: 6,
+    padding: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 95,
   },
 
   timeTooltip: {
@@ -760,13 +930,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // Tall invisible hitbox — easy for a finger to land on
+  // Tall invisible hitbox — easy for a finger to land on, without overlapping fullscreenToggleBtn (bottom: 26+)
   progressHitbox: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    height: 36,
+    height: 24,
     justifyContent: "flex-end",
     paddingBottom: 5,
     zIndex: 90,

@@ -1,8 +1,11 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 import { View, Text, StyleSheet, Platform } from "react-native";
 import { WebView } from "react-native-webview";
 import { MapPin } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
+
+// Persist selected map layer across coordinate updates & inline/fullscreen switches
+let savedMapLayer: "street" | "sat" = "street";
 
 export interface LocationPoint {
   id: number;
@@ -31,10 +34,18 @@ export function TrackingMap({
   style,
 }: TrackingMapProps) {
   const { theme, colors } = useTheme();
+  const webViewRef = useRef<any>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const latestLocationsRef = useRef(locations);
+  const latestSelectedIdRef = useRef(selectedPointId);
+  latestLocationsRef.current = locations;
+  latestSelectedIdRef.current = selectedPointId;
 
   const htmlContent = useMemo(() => {
     const isDark = theme === "dark";
-    const safeLocations = JSON.stringify(locations);
+    const initialLocations = JSON.stringify(latestLocationsRef.current);
+    const initialTargetId = latestSelectedIdRef.current != null ? latestSelectedIdRef.current : "null";
+    const initialLayer = savedMapLayer;
 
     return `
       <!DOCTYPE html>
@@ -266,22 +277,23 @@ export function TrackingMap({
       <body>
         <div id="map"></div>
         <div class="layer-switch-container">
-          <button id="btnStreet" class="layer-btn active" onclick="switchLayer('street')">
+          <button id="btnStreet" class="layer-btn${initialLayer === "street" ? " active" : ""}" onclick="switchLayer('street')">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
             Street
           </button>
-          <button id="btnSat" class="layer-btn" onclick="switchLayer('sat')">
+          <button id="btnSat" class="layer-btn${initialLayer === "sat" ? " active" : ""}" onclick="switchLayer('sat')">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
             Satellite
           </button>
         </div>
 
         <script>
-          const points = ${safeLocations};
-          const targetId = ${selectedPointId != null ? selectedPointId : "null"};
+          let points = ${initialLocations};
+          let targetId = ${initialTargetId};
           const markerMap = {};
           const map = L.map('map', { zoomControl: false });
           L.control.zoom({ position: 'topright' }).addTo(map);
+          const routeGroup = L.layerGroup().addTo(map);
 
           // Tile Layers: Street (OSM) & Satellite (Esri World Imagery)
           const streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -296,8 +308,12 @@ export function TrackingMap({
             maxZoom: 19
           });
 
-          streetLayer.addTo(map);
-          let currentLayerType = 'street';
+          let currentLayerType = '${initialLayer}';
+          if (currentLayerType === 'sat') {
+            satLayer.addTo(map);
+          } else {
+            streetLayer.addTo(map);
+          }
 
           window.switchLayer = function(layerType) {
             if (layerType === currentLayerType) return;
@@ -314,6 +330,11 @@ export function TrackingMap({
               document.getElementById('btnStreet').classList.add('active');
               currentLayerType = 'street';
             }
+            try {
+              const msg = JSON.stringify({ type: 'layerChange', layer: currentLayerType });
+              if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(msg);
+              if (window.parent && window.parent !== window) window.parent.postMessage(msg, '*');
+            } catch(e) {}
           };
 
           function computeBearing(p1, p2) {
@@ -380,7 +401,14 @@ export function TrackingMap({
             }
           };
 
-          if (points && points.length > 0) {
+          let hasInitialViewport = false;
+          window.renderRoute = function(newPoints, newTargetId, preserveViewport) {
+            points = newPoints || [];
+            targetId = newTargetId != null ? newTargetId : null;
+            routeGroup.clearLayers();
+            movingPointsList = [];
+            for (const k in markerMap) { delete markerMap[k]; }
+            if (points && points.length > 0) {
             // Check if all recorded points for this date are within a 35m indoor stationary cluster
             var maxSpread = 0;
             var origin = points[0];
@@ -415,7 +443,7 @@ export function TrackingMap({
                 iconAnchor: [20, 20]
               });
               const marker = L.marker([pt.latitude, pt.longitude], { icon: singleIcon })
-                .addTo(map)
+                .addTo(routeGroup)
                 .bindPopup(buildPopupContent(0, 'Current Position: ${username || "User"}', 'Live (Stationary)', ''), { className: 'custom-popup' })
                 .openPopup();
 
@@ -435,7 +463,7 @@ export function TrackingMap({
                 opacity: 0.6,
                 lineJoin: 'round',
                 lineCap: 'round'
-              }).addTo(map);
+              }).addTo(routeGroup);
 
               const polyline = L.polyline(pathCoords, {
                 color: '#3B82F6',
@@ -443,7 +471,7 @@ export function TrackingMap({
                 opacity: 0.95,
                 lineJoin: 'round',
                 lineCap: 'round'
-              }).addTo(map);
+              }).addTo(routeGroup);
 
               // 1. Add starting marker
               const startPoint = movingPoints[0];
@@ -454,7 +482,7 @@ export function TrackingMap({
                 iconAnchor: [7, 7]
               });
               const startMarker = L.marker([startPoint.latitude, startPoint.longitude], { icon: startIcon })
-                .addTo(map)
+                .addTo(routeGroup)
                 .bindPopup(buildPopupContent(0, 'Trip Start', 'Start', ''), { className: 'custom-popup' });
               markerMap[startPoint.id] = startMarker;
 
@@ -476,7 +504,7 @@ export function TrackingMap({
                   iconAnchor: [8, 8]
                 });
 
-                const wpMarker = L.marker([pt.latitude, pt.longitude], { icon: waypointIcon }).addTo(map);
+                const wpMarker = L.marker([pt.latitude, pt.longitude], { icon: waypointIcon }).addTo(routeGroup);
 
                 var extraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + heading + '&deg; (' + getCompassName(heading) + ')</b></div>' +
                                 '<div class="popup-info-row"><span>Speed:</span> <b>' + speedStr + '</b></div>';
@@ -514,7 +542,7 @@ export function TrackingMap({
               });
 
               const lastSpeedStr = lastPoint.speed != null ? Math.round(lastPoint.speed * 3.6) + ' km/h' : 'N/A';
-              const lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: avatarIcon }).addTo(map);
+              const lastMarker = L.marker([lastPoint.latitude, lastPoint.longitude], { icon: avatarIcon }).addTo(routeGroup);
               var lastExtraRows = '<div class="popup-info-row"><span>Direction:</span> <b>' + lastHeading + '&deg; (' + getCompassName(lastHeading) + ')</b></div>' +
                                   '<div class="popup-info-row"><span>Speed:</span> <b>' + lastSpeedStr + '</b></div>';
 
@@ -548,31 +576,72 @@ export function TrackingMap({
                 const m = markerMap[targetId];
                 map.setView(m.getLatLng(), 18);
                 m.openPopup();
-              } else {
+              } else if (!preserveViewport || !hasInitialViewport) {
                 lastMarker.openPopup();
                 map.fitBounds(polyline.getBounds(), { padding: [40, 40], maxZoom: 18 });
               }
+              hasInitialViewport = true;
             }
+          } else {
+            if (!hasInitialViewport) {
+              // Default center if no coordinates
+              map.setView([9.02, 38.74], 12);
+              hasInitialViewport = true;
+            }
+          }
+          };
+
+          window.renderRoute(points, targetId, false);
 
             window.addEventListener('message', function(e) {
               try {
                 const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-                if (data && data.focusPointId && markerMap[data.focusPointId]) {
+                if (data && data.type === 'updateRoute') {
+                  window.renderRoute(data.locations, data.selectedPointId, true);
+                } else if (data && data.focusPointId && markerMap[data.focusPointId]) {
                   const m = markerMap[data.focusPointId];
                   map.flyTo(m.getLatLng(), 18, { duration: 0.8 });
                   m.openPopup();
                 }
               } catch(err) {}
             });
-          } else {
-            // Default center if no coordinates
-            map.setView([9.02, 38.74], 12);
-          }
         </script>
       </body>
       </html>
     `;
-  }, [locations, theme, username, selectedPointId]);
+  }, [theme, username]);
+
+  // Push new coordinates / selected point in-place without reloading WebView (preserves Satellite layer!)
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      try {
+        iframeRef.current?.contentWindow?.postMessage(
+          JSON.stringify({ type: "updateRoute", locations, selectedPointId: selectedPointId ?? null }),
+          "*"
+        );
+      } catch {}
+    } else if (webViewRef.current) {
+      const payload = JSON.stringify(locations);
+      const target = selectedPointId != null ? selectedPointId : "null";
+      webViewRef.current.injectJavaScript(
+        `window.renderRoute && window.renderRoute(${payload}, ${target}, true); true;`
+      );
+    }
+  }, [locations, selectedPointId]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const onMsg = (e: MessageEvent) => {
+      try {
+        const data = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+        if (data?.type === "layerChange" && (data.layer === "street" || data.layer === "sat")) {
+          savedMapLayer = data.layer;
+        }
+      } catch {}
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
 
   if (locations.length === 0) {
     return (
@@ -596,6 +665,7 @@ export function TrackingMap({
         ]}
       >
         <iframe
+          ref={iframeRef}
           srcDoc={htmlContent}
           style={{
             width: "100%",
@@ -618,12 +688,21 @@ export function TrackingMap({
       ]}
     >
       <WebView
+        ref={webViewRef}
         originWhitelist={["*"]}
         source={{ html: htmlContent }}
         style={styles.webView}
         scrollEnabled={false}
         javaScriptEnabled={true}
         domStorageEnabled={true}
+        onMessage={(event: any) => {
+          try {
+            const data = JSON.parse(event.nativeEvent.data);
+            if (data?.type === "layerChange" && (data.layer === "street" || data.layer === "sat")) {
+              savedMapLayer = data.layer;
+            }
+          } catch {}
+        }}
       />
     </View>
   );

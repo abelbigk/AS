@@ -767,6 +767,9 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role === "admin") {
+          return { success: true };
+        }
         const fallbackTimestamp = new Date(Date.now() + 3 * 3600 * 1000).toISOString().replace("Z", "+03:00");
         await recordUserLocation({
           userId: ctx.user.id,

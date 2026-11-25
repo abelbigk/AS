@@ -46,6 +46,7 @@ function RootNavigation() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="category/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="subcategory/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="content/[id]" options={{ headerShown: false, animation: "slide_from_right" }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="loc" options={{ headerShown: false }} />
       </Stack>

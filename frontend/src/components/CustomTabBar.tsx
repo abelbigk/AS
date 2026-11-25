@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Home, Clock, CheckCircle2, Plus, Settings } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
 
@@ -28,9 +29,16 @@ export function CustomTabBar({
   navigateToTab,
 }: CustomTabBarProps) {
   const { colors, theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={styles.outerContainer} pointerEvents="box-none">
+    <View
+      style={[
+        styles.outerContainer,
+        { bottom: Math.max(insets.bottom, Platform.OS === "ios" ? 20 : 12) + 4 },
+      ]}
+      pointerEvents="box-none"
+    >
       <View
         style={[
           styles.pillContainer,

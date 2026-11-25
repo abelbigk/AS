@@ -27,10 +27,10 @@ import {
 } from "lucide-react-native";
 import { trpc } from "../../src/lib/trpc";
 import { useTheme } from "../../src/contexts/ThemeContext";
+import { usePullToRefresh } from "../../src/hooks/usePullToRefresh";
 import { CATEGORY_IMAGES } from "../../src/lib/constants";
 import { ContentCard, type ContentItem } from "../../src/components/ContentCard";
 import { SubcategoryCard } from "../../src/components/SubcategoryCard";
-import { ContentDetailModal } from "../../src/components/ContentDetailModal";
 import { EditCategoryModal } from "../../src/components/EditCategoryModal";
 import { EditSubcategoryModal } from "../../src/components/EditSubcategoryModal";
 import { EditContentModal } from "../../src/components/EditContentModal";
@@ -120,7 +120,6 @@ export default function CategoryDetailScreen() {
   const [activeSubcategoryForEdit, setActiveSubcategoryForEdit] = useState<any | null>(null);
 
   // Content detail viewer state
-  const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
   const [activeEditItem, setActiveEditItem] = useState<ContentItem | null>(null);
 
   // Queries
@@ -140,8 +139,8 @@ export default function CategoryDetailScreen() {
     data: items = [],
     isLoading: itemsLoading,
     refetch,
-    isRefetching,
   } = trpc.content.listByCategory.useQuery({ categoryId });
+  const { refreshControlProps } = usePullToRefresh(refetch);
 
   // Mutations
   const deleteCategory = trpc.categories.delete.useMutation({
@@ -413,13 +412,7 @@ export default function CategoryDetailScreen() {
             paddingBottom: insets.bottom + 120,
           },
         ]}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={() => { refetch(); }}
-            tintColor={colors.accent}
-          />
-        }
+        refreshControl={<RefreshControl {...refreshControlProps} />}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>
@@ -657,7 +650,13 @@ export default function CategoryDetailScreen() {
                                   else newSet.add(item.id);
                                   setSelectedContentIds(newSet);
                                 } else {
-                                  setActiveItem(item as any);
+                                  router.push({
+                                    pathname: "/content/[id]",
+                                    params: {
+                                      id: String(item.id),
+                                      activeCategoryId: String(categoryId),
+                                    },
+                                  });
                                 }
                               }}
                               onUpdateStatus={(newStatus) =>
@@ -700,7 +699,13 @@ export default function CategoryDetailScreen() {
                                   else newSet.add(item.id);
                                   setSelectedContentIds(newSet);
                                 } else {
-                                  setActiveItem(item as any);
+                                  router.push({
+                                    pathname: "/content/[id]",
+                                    params: {
+                                      id: String(item.id),
+                                      activeCategoryId: String(categoryId),
+                                    },
+                                  });
                                 }
                               }}
                               onUpdateStatus={(newStatus) =>
@@ -825,17 +830,6 @@ export default function CategoryDetailScreen() {
           </View>
         </View>
       )}
-
-      {/* Full-Screen Content Detail Viewer Modal */}
-      <ContentDetailModal
-        item={activeItem}
-        visible={!!activeItem}
-        activeCategoryId={categoryId}
-        onClose={() => setActiveItem(null)}
-        onRemoveFromCategory={() => {
-          if (activeItem) handleRemoveItemFromCategory(activeItem);
-        }}
-      />
 
       {/* Edit Content Modal - opened from card 3-dot menu */}
       <EditContentModal
