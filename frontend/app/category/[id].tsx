@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -38,6 +38,8 @@ import { AddSubcategoryModal } from "../../src/components/AddSubcategoryModal";
 import { AddContentModal } from "../../src/components/AddContentModal";
 import { DropdownMenu } from "../../src/components/DropdownMenu";
 import { AppDialogRenderer, useAppDialog } from "../../src/components/AppDialog";
+import { DraggableList } from "../../src/components/DraggableList";
+import { ReorderBar } from "../../src/components/ReorderBar";
 
 const DEFAULT_BG =
   "https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=80";
@@ -122,6 +124,16 @@ export default function CategoryDetailScreen() {
   // Content detail viewer state
   const [activeEditItem, setActiveEditItem] = useState<ContentItem | null>(null);
 
+  // Reorder state – subcategories
+  const [isSubReordering, setIsSubReordering] = useState(false);
+  const [localSubcategories, setLocalSubcategories] = useState<any[]>([]);
+  const pendingSubOrder = useRef<any[]>([]);
+
+  // Reorder state – content
+  const [isContentReordering, setIsContentReordering] = useState(false);
+  const [localItems, setLocalItems] = useState<any[]>([]);
+  const pendingContentOrder = useRef<any[]>([]);
+
   // Queries
   const { data: category, isLoading: catLoading } =
     trpc.categories.getById.useQuery({ categoryId });
@@ -141,6 +153,15 @@ export default function CategoryDetailScreen() {
     refetch,
   } = trpc.content.listByCategory.useQuery({ categoryId });
   const { refreshControlProps } = usePullToRefresh(refetch);
+
+  // Sync local reorder lists when server data changes (but not mid-drag)
+  useEffect(() => {
+    if (!isSubReordering) setLocalSubcategories(subcategories);
+  }, [subcategories, isSubReordering]);
+
+  useEffect(() => {
+    if (!isContentReordering) setLocalItems(items);
+  }, [items, isContentReordering]);
 
   // Mutations
   const deleteCategory = trpc.categories.delete.useMutation({
@@ -211,6 +232,53 @@ export default function CategoryDetailScreen() {
         },
       }
     );
+  };
+
+  // Drag-reorder save/cancel handlers
+  const handleSaveSubOrder = () => {
+    const ordered = pendingSubOrder.current;
+    if (!ordered.length) return;
+    reorderSubMutation.mutate(
+      { categoryId, subcategoryIds: ordered.map((s) => s.id) },
+      {
+        onSuccess: () => {
+          utils.subcategories.list.invalidate({ categoryId });
+          setIsSubReordering(false);
+        },
+        onError: () => {
+          setLocalSubcategories(subcategories);
+          setIsSubReordering(false);
+        },
+      }
+    );
+  };
+
+  const handleCancelSubReorder = () => {
+    setLocalSubcategories(subcategories);
+    setIsSubReordering(false);
+  };
+
+  const handleSaveContentOrder = () => {
+    const ordered = pendingContentOrder.current;
+    if (!ordered.length) return;
+    reorderContentMutation.mutate(
+      { categoryId, contentIds: ordered.map((it) => it.id) },
+      {
+        onSuccess: () => {
+          utils.content.listByCategory.invalidate({ categoryId });
+          setIsContentReordering(false);
+        },
+        onError: () => {
+          setLocalItems(items);
+          setIsContentReordering(false);
+        },
+      }
+    );
+  };
+
+  const handleCancelContentReorder = () => {
+    setLocalItems(items);
+    setIsContentReordering(false);
   };
 
   const updateStatus = trpc.content.updateStatus.useMutation({
@@ -524,88 +592,42 @@ export default function CategoryDetailScreen() {
                   <Text style={[styles.sectionHeading, { color: colors.textSubtle }]}>
                     SUBCATEGORIES
                   </Text>
-                  <View style={styles.twoColumnGrid}>
-                    {/* Left Column */}
-                    <View style={styles.gridColumn}>
-                      {displayedSubcategories
-                        .filter((_, i) => i % 2 === 0)
-                        .map((sub) => (
-                          <View
-                            key={sub.id}
-                            {...({ "data-item-id": sub.id, "data-item-type": "subcategory" } as any)}
-                          >
-                            <SubcategoryCard
-                              subcategory={sub}
-                              count={subcategoryCounts?.[sub.id] || 0}
-                              isSelectMode={isSubcategorySelectMode}
-                              selected={selectedSubcategoryIds.has(sub.id)}
-                              onPress={() => {
-                                if (isSubcategorySelectMode) {
-                                  const newSet = new Set(selectedSubcategoryIds);
-                                  if (newSet.has(sub.id)) newSet.delete(sub.id);
-                                  else newSet.add(sub.id);
-                                  setSelectedSubcategoryIds(newSet);
-                                } else {
-                                  router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
-                                }
-                              }}
-                              onEdit={() => setActiveSubcategoryForEdit(sub)}
-                              onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
-                              onMoveUp={
-                                subcategories.findIndex((s) => s.id === sub.id) > 0
-                                  ? () => handleMoveSubcategory(sub.id, "up")
-                                  : undefined
-                              }
-                              onMoveDown={
-                                subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
-                                  ? () => handleMoveSubcategory(sub.id, "down")
-                                  : undefined
-                              }
-                            />
-                          </View>
-                        ))}
-                    </View>
-                    {/* Right Column */}
-                    <View style={styles.gridColumn}>
-                      {displayedSubcategories
-                        .filter((_, i) => i % 2 === 1)
-                        .map((sub) => (
-                          <View
-                            key={sub.id}
-                            {...({ "data-item-id": sub.id, "data-item-type": "subcategory" } as any)}
-                          >
-                            <SubcategoryCard
-                              subcategory={sub}
-                              count={subcategoryCounts?.[sub.id] || 0}
-                              isSelectMode={isSubcategorySelectMode}
-                              selected={selectedSubcategoryIds.has(sub.id)}
-                              onPress={() => {
-                                if (isSubcategorySelectMode) {
-                                  const newSet = new Set(selectedSubcategoryIds);
-                                  if (newSet.has(sub.id)) newSet.delete(sub.id);
-                                  else newSet.add(sub.id);
-                                  setSelectedSubcategoryIds(newSet);
-                                } else {
-                                  router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
-                                }
-                              }}
-                              onEdit={() => setActiveSubcategoryForEdit(sub)}
-                              onDelete={() => deleteSubcategory.mutate({ subcategoryId: sub.id })}
-                              onMoveUp={
-                                subcategories.findIndex((s) => s.id === sub.id) > 0
-                                  ? () => handleMoveSubcategory(sub.id, "up")
-                                  : undefined
-                              }
-                              onMoveDown={
-                                subcategories.findIndex((s) => s.id === sub.id) < subcategories.length - 1
-                                  ? () => handleMoveSubcategory(sub.id, "down")
-                                  : undefined
-                              }
-                            />
-                          </View>
-                        ))}
-                    </View>
-                  </View>
+                  <DraggableList
+                    data={localSubcategories.length ? localSubcategories : displayedSubcategories}
+                    layout="grid"
+                    isReordering={isSubReordering}
+                    onReorder={(newData) => {
+                      setLocalSubcategories(newData);
+                      pendingSubOrder.current = newData;
+                    }}
+                    renderItem={(sub) => (
+                      <Pressable
+                        onLongPress={() => setIsSubReordering(true)}
+                        delayLongPress={500}
+                        {...({ "data-item-id": sub.id, "data-item-type": "subcategory" } as any)}
+                      >
+                        <SubcategoryCard
+                          subcategory={sub}
+                          count={subcategoryCounts?.[sub.id] || 0}
+                          isSelectMode={isSubcategorySelectMode && !isSubReordering}
+                          selected={selectedSubcategoryIds.has(sub.id)}
+                          onPress={() => {
+                            if (isSubReordering) return;
+                            if (isSubcategorySelectMode) {
+                              const newSet = new Set(selectedSubcategoryIds);
+                              if (newSet.has(sub.id)) newSet.delete(sub.id);
+                              else newSet.add(sub.id);
+                              setSelectedSubcategoryIds(newSet);
+                            } else {
+                              router.push(`/subcategory/${sub.id}${statusFilter ? `?status=${statusFilter}` : ""}`);
+                            }
+                          }}
+                          onEdit={isSubReordering ? undefined : () => setActiveSubcategoryForEdit(sub)}
+                          onDelete={isSubReordering ? undefined : () => deleteSubcategory.mutate({ subcategoryId: sub.id })}
+                        />
+                      </Pressable>
+                    )}
+                  />
                 </View>
               )}
 
@@ -629,106 +651,51 @@ export default function CategoryDetailScreen() {
                     />
                   </View>
 
-                  <View style={styles.twoColumnGrid}>
-                    {/* Left Column */}
-                    <View style={styles.gridColumn}>
-                      {displayedContent
-                        .filter((_, i) => i % 2 === 0)
-                        .map((item) => (
-                          <View
-                            key={item.id}
-                            {...({ "data-item-id": item.id, "data-item-type": "content" } as any)}
-                          >
-                            <ContentCard
-                              item={item as any}
-                              isSelectMode={isSelectMode}
-                              selected={selectedContentIds.has(item.id)}
-                              onPress={() => {
-                                if (isSelectMode) {
-                                  const newSet = new Set(selectedContentIds);
-                                  if (newSet.has(item.id)) newSet.delete(item.id);
-                                  else newSet.add(item.id);
-                                  setSelectedContentIds(newSet);
-                                } else {
-                                  router.push({
-                                    pathname: "/content/[id]",
-                                    params: {
-                                      id: String(item.id),
-                                      activeCategoryId: String(categoryId),
-                                    },
-                                  });
-                                }
-                              }}
-                              onUpdateStatus={(newStatus) =>
-                                updateStatus.mutate({ itemId: item.id, status: newStatus })
-                              }
-                              onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
-                              onEdit={() => setActiveEditItem(item as any)}
-                              onDelete={() => deleteItem.mutate({ itemId: item.id })}
-                              onMoveUp={
-                                items.findIndex((it) => it.id === item.id) > 0
-                                  ? () => handleMoveContent(item.id, "up")
-                                  : undefined
-                              }
-                              onMoveDown={
-                                items.findIndex((it) => it.id === item.id) < items.length - 1
-                                  ? () => handleMoveContent(item.id, "down")
-                                  : undefined
-                              }
-                            />
-                          </View>
-                        ))}
-                    </View>
-                    {/* Right Column */}
-                    <View style={styles.gridColumn}>
-                      {displayedContent
-                        .filter((_, i) => i % 2 === 1)
-                        .map((item) => (
-                          <View
-                            key={item.id}
-                            {...({ "data-item-id": item.id, "data-item-type": "content" } as any)}
-                          >
-                            <ContentCard
-                              item={item as any}
-                              isSelectMode={isSelectMode}
-                              selected={selectedContentIds.has(item.id)}
-                              onPress={() => {
-                                if (isSelectMode) {
-                                  const newSet = new Set(selectedContentIds);
-                                  if (newSet.has(item.id)) newSet.delete(item.id);
-                                  else newSet.add(item.id);
-                                  setSelectedContentIds(newSet);
-                                } else {
-                                  router.push({
-                                    pathname: "/content/[id]",
-                                    params: {
-                                      id: String(item.id),
-                                      activeCategoryId: String(categoryId),
-                                    },
-                                  });
-                                }
-                              }}
-                              onUpdateStatus={(newStatus) =>
-                                updateStatus.mutate({ itemId: item.id, status: newStatus })
-                              }
-                              onRemoveFromCategory={() => handleRemoveItemFromCategory(item as any)}
-                              onEdit={() => setActiveEditItem(item as any)}
-                              onDelete={() => deleteItem.mutate({ itemId: item.id })}
-                              onMoveUp={
-                                items.findIndex((it) => it.id === item.id) > 0
-                                  ? () => handleMoveContent(item.id, "up")
-                                  : undefined
-                              }
-                              onMoveDown={
-                                items.findIndex((it) => it.id === item.id) < items.length - 1
-                                  ? () => handleMoveContent(item.id, "down")
-                                  : undefined
-                              }
-                            />
-                          </View>
-                        ))}
-                    </View>
-                  </View>
+                  <DraggableList
+                    data={localItems.length ? localItems : displayedContent}
+                    layout="grid"
+                    isReordering={isContentReordering}
+                    onReorder={(newData) => {
+                      setLocalItems(newData);
+                      pendingContentOrder.current = newData;
+                    }}
+                    renderItem={(item) => (
+                      <Pressable
+                        onLongPress={() => setIsContentReordering(true)}
+                        delayLongPress={500}
+                        {...({ "data-item-id": item.id, "data-item-type": "content" } as any)}
+                      >
+                        <ContentCard
+                          item={item as any}
+                          isSelectMode={isSelectMode && !isContentReordering}
+                          selected={selectedContentIds.has(item.id)}
+                          onPress={() => {
+                            if (isContentReordering) return;
+                            if (isSelectMode) {
+                              const newSet = new Set(selectedContentIds);
+                              if (newSet.has(item.id)) newSet.delete(item.id);
+                              else newSet.add(item.id);
+                              setSelectedContentIds(newSet);
+                            } else {
+                              router.push({
+                                pathname: "/content/[id]",
+                                params: {
+                                  id: String(item.id),
+                                  activeCategoryId: String(categoryId),
+                                },
+                              });
+                            }
+                          }}
+                          onUpdateStatus={isContentReordering ? undefined : (newStatus) =>
+                            updateStatus.mutate({ itemId: item.id, status: newStatus })
+                          }
+                          onRemoveFromCategory={isContentReordering ? undefined : () => handleRemoveItemFromCategory(item as any)}
+                          onEdit={isContentReordering ? undefined : () => setActiveEditItem(item as any)}
+                          onDelete={isContentReordering ? undefined : () => deleteItem.mutate({ itemId: item.id })}
+                        />
+                      </Pressable>
+                    )}
+                  />
                 </View>
               ) : (
                 <View style={styles.emptyContainer}>
@@ -872,6 +839,24 @@ export default function CategoryDetailScreen() {
       />
 
       <AppDialogRenderer {...dialogState} onHide={hide} />
+
+      {/* Subcategory Reorder Bar */}
+      {isSubReordering && (
+        <ReorderBar
+          onSave={handleSaveSubOrder}
+          onCancel={handleCancelSubReorder}
+          saving={reorderSubMutation.isPending}
+        />
+      )}
+
+      {/* Content Reorder Bar */}
+      {isContentReordering && (
+        <ReorderBar
+          onSave={handleSaveContentOrder}
+          onCancel={handleCancelContentReorder}
+          saving={reorderContentMutation.isPending}
+        />
+      )}
     </View>
   );
 }
