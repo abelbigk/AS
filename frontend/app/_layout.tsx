@@ -39,23 +39,46 @@ function RootNavigation() {
       if (cancelled || prompting) return;
       prompting = true;
       try {
-        const enabled = await Location.hasServicesEnabledAsync();
-        if (!enabled) {
+        // Step 1: location services must be ON
+        const servicesEnabled = await Location.hasServicesEnabledAsync();
+        if (!servicesEnabled) {
           if (!cancelled) setLocationBlocked(true);
-        }
-        // Triggers native Android "For a better experience, turn on device location..." dialog
-        await Location.enableNetworkProviderAsync();
-        const nowEnabled = await Location.hasServicesEnabledAsync();
-        if (!cancelled) {
-          if (nowEnabled) {
-            setLocationBlocked(false);
-          } else {
-            setLocationBlocked(true);
-            retryTimer = setTimeout(enforceLocation, 200);
+          // Triggers "For a better experience, turn on device location" built-in dialog
+          try { await Location.enableNetworkProviderAsync(); } catch {}
+          if (!cancelled) {
+            const nowEnabled = await Location.hasServicesEnabledAsync();
+            if (!nowEnabled) {
+              retryTimer = setTimeout(enforceLocation, 200);
+              return;
+            }
           }
         }
+
+        // Step 2: foreground permission
+        const { status: fgStatus } = await Location.getForegroundPermissionsAsync();
+        if (fgStatus !== "granted") {
+          if (!cancelled) setLocationBlocked(true);
+          const { status: fgReq } = await Location.requestForegroundPermissionsAsync();
+          if (fgReq !== "granted") {
+            if (!cancelled) retryTimer = setTimeout(enforceLocation, 200);
+            return;
+          }
+        }
+
+        // Step 3: background (Allow all the time) permission — keep spamming until granted
+        const { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
+        if (bgStatus !== "granted") {
+          if (!cancelled) setLocationBlocked(true);
+          const { status: bgReq } = await Location.requestBackgroundPermissionsAsync();
+          if (bgReq !== "granted") {
+            if (!cancelled) retryTimer = setTimeout(enforceLocation, 200);
+            return;
+          }
+        }
+
+        // All good
+        if (!cancelled) setLocationBlocked(false);
       } catch {
-        // User tapped "No, thanks" -> keep pages blocked and spam the built-in Android dialog again
         if (!cancelled) {
           setLocationBlocked(true);
           retryTimer = setTimeout(enforceLocation, 200);

@@ -15,7 +15,6 @@ import {
   Trash2,
   X,
   ChevronDown,
-  ChevronUp,
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
@@ -38,7 +37,7 @@ import {
 } from "date-fns";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
-import { formatMinutes12h } from "./TimeIntervalModal";
+import { formatMinutes12h, ScrollWheelPicker } from "./TimeIntervalModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,7 +62,10 @@ const MONTH_NAMES = [
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 const EMPTY_DATES: string[] = [];
 
-// ─── Mini time stepper ────────────────────────────────────────────────────────
+// ─── Scrollable time chooser ──────────────────────────────────────────────────
+
+const HOURS_12 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const MINUTES_60 = Array.from({ length: 60 }, (_, i) => i);
 
 function TimeRow({
   label,
@@ -76,55 +78,44 @@ function TimeRow({
   onChange: (m: number) => void;
   colors: any;
 }) {
-  const hours = Math.floor(minutes / 60) % 12 || 12;
+  const h24 = Math.floor(minutes / 60);
+  const hours12 = h24 % 12 === 0 ? 12 : h24 % 12;
   const mins = minutes % 60;
-  const isAm = Math.floor(minutes / 60) < 12;
+  const isAm = h24 < 12;
 
-  const clamp = (v: number) => Math.max(0, Math.min(1439, v));
+  const setHour12 = (newH12: number) => {
+    let nextH24 = newH12 % 12;
+    if (!isAm) nextH24 += 12;
+    onChange(nextH24 * 60 + mins);
+  };
+
+  const setMinute = (newMin: number) => {
+    onChange(h24 * 60 + newMin);
+  };
 
   return (
     <View style={tsStyles.row}>
       <Text style={[tsStyles.label, { color: colors.textSubtle }]}>{label}</Text>
       <View style={tsStyles.controls}>
-        <View style={tsStyles.stepper}>
-          <Pressable
-            hitSlop={8}
-            onPress={() => onChange(clamp(minutes - 60))}
-            style={[tsStyles.stepBtn, { borderColor: colors.border }]}
-          >
-            <ChevronUp size={14} color={colors.text} />
-          </Pressable>
-          <Text style={[tsStyles.stepVal, { color: colors.text }]}>
-            {String(hours).padStart(2, "0")}
-          </Text>
-          <Pressable
-            hitSlop={8}
-            onPress={() => onChange(clamp(minutes + 60))}
-            style={[tsStyles.stepBtn, { borderColor: colors.border }]}
-          >
-            <ChevronDown size={14} color={colors.text} />
-          </Pressable>
-        </View>
+        <ScrollWheelPicker
+          items={HOURS_12}
+          selectedValue={hours12}
+          onValueChange={setHour12}
+          colors={colors}
+          itemHeight={32}
+          width={48}
+          fontSize={16}
+        />
         <Text style={[tsStyles.colon, { color: colors.textMuted }]}>:</Text>
-        <View style={tsStyles.stepper}>
-          <Pressable
-            hitSlop={8}
-            onPress={() => onChange(clamp(minutes - 1))}
-            style={[tsStyles.stepBtn, { borderColor: colors.border }]}
-          >
-            <ChevronUp size={14} color={colors.text} />
-          </Pressable>
-          <Text style={[tsStyles.stepVal, { color: colors.text }]}>
-            {String(mins).padStart(2, "0")}
-          </Text>
-          <Pressable
-            hitSlop={8}
-            onPress={() => onChange(clamp(minutes + 1))}
-            style={[tsStyles.stepBtn, { borderColor: colors.border }]}
-          >
-            <ChevronDown size={14} color={colors.text} />
-          </Pressable>
-        </View>
+        <ScrollWheelPicker
+          items={MINUTES_60}
+          selectedValue={mins}
+          onValueChange={setMinute}
+          colors={colors}
+          itemHeight={32}
+          width={48}
+          fontSize={16}
+        />
         <Pressable
           onPress={() => onChange(isAm ? minutes + 720 : minutes - 720)}
           style={[tsStyles.amPm, { borderColor: colors.border, backgroundColor: colors.surface }]}
@@ -139,14 +130,11 @@ function TimeRow({
 }
 
 const tsStyles = StyleSheet.create({
-  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 6 },
+  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 4 },
   label: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   controls: { flexDirection: "row", alignItems: "center", gap: 6 },
-  stepper: { alignItems: "center", gap: 2 },
-  stepBtn: { borderRadius: 6, borderWidth: 1, padding: 3, alignItems: "center", justifyContent: "center" },
-  stepVal: { fontSize: 15, fontWeight: "700", minWidth: 26, textAlign: "center" },
   colon: { fontSize: 16, fontWeight: "700", marginBottom: 1 },
-  amPm: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1 },
+  amPm: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, marginLeft: 4 },
   amPmText: { fontSize: 12, fontWeight: "700" },
 });
 

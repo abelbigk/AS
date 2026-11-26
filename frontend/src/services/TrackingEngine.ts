@@ -1,4 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
+import * as Location from "expo-location";
 import { trpcVanillaClient } from "../lib/trpcVanillaClient";
 
 export interface CoordinatePayload {
@@ -46,6 +48,7 @@ let lastHeartbeatSentMs = 0;
 let lastHeartbeatPayload: CoordinatePayload | null = null;
 let heartbeatInFlight = false;
 let isDeviceOnline = true; // Updated by heartbeat & ping network results
+let cachedLocationEnabled: boolean = true; // Updated before every heartbeat send
 
 function hasSignificantHeartbeatChange(prev: CoordinatePayload | null, next: CoordinatePayload): boolean {
   if (!prev) return true;
@@ -71,6 +74,8 @@ function sendLiveHeartbeatThrottled(payload: CoordinatePayload, nowMs: number): 
   lastHeartbeatPayload = payload;
   heartbeatInFlight = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // Snapshot locationEnabled at send time (async check would be stale by the time we send)
+  const locEnabled = cachedLocationEnabled;
   Promise.race([
     trpcVanillaClient.tracking.liveHeartbeat.mutate({
       latitude: payload.latitude,
@@ -79,6 +84,7 @@ function sendLiveHeartbeatThrottled(payload: CoordinatePayload, nowMs: number): 
       speed: payload.speed ?? null,
       heading: payload.heading ?? null,
       timestamp: payload.timestamp,
+      locationEnabled: locEnabled,
     }),
     new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("Heartbeat timeout")), 3000);
@@ -313,6 +319,10 @@ export function flushOfflineQueue(): Promise<void> {
     }
   })();
   return flushPromise;
+}
+
+export function setLocationServicesEnabled(enabled: boolean): void {
+  cachedLocationEnabled = enabled;
 }
 
 export function pingLivePresenceFromBackground(fallbackLat?: number, fallbackLng?: number): void {

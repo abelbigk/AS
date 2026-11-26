@@ -10,6 +10,7 @@ import {
   pingLivePresenceFromBackground,
   clearTrackingState,
   flushOfflineQueue,
+  setLocationServicesEnabled,
 } from "./TrackingEngine";
 
 const { TrackingServiceModule } = NativeModules;
@@ -40,6 +41,11 @@ if (Platform.OS !== "web") {
           for (const loc of locations) {
             // Skip stale OS cached fixes (>15s) for DB recording, but keep online live heartbeat alive
             if (loc.timestamp && Date.now() - loc.timestamp > 15000) {
+              pingLivePresenceFromBackground(loc.coords.latitude, loc.coords.longitude);
+              continue;
+            }
+            // Skip inaccurate fixes (GPS still warming up) — only stream live heartbeat, no false trail waypoints
+            if (loc.coords.accuracy != null && loc.coords.accuracy > 25) {
               pingLivePresenceFromBackground(loc.coords.latitude, loc.coords.longitude);
               continue;
             }
@@ -90,9 +96,23 @@ export function LocationTracker() {
     let isMounted = true;
     let foregroundTimer: any = null;
     let jsAliveTimer: any = null;
+    let locationEnabledTimer: any = null;
     let watchSubscription: Location.LocationSubscription | null = null;
     let headingSubscription: Location.LocationSubscription | null = null;
     let latestCompassHeading: number | null = null;
+
+    // Poll location services every 5s and tell TrackingEngine so heartbeats carry correct locationEnabled
+    if (Platform.OS !== "web") {
+      const checkLocEnabled = async () => {
+        if (!isMounted) return;
+        try {
+          const enabled = await Location.hasServicesEnabledAsync();
+          setLocationServicesEnabled(enabled);
+        } catch {}
+      };
+      checkLocEnabled();
+      locationEnabledTimer = setInterval(checkLocEnabled, 5000);
+    }
 
     async function initTracking() {
       try {
@@ -208,6 +228,12 @@ export function LocationTracker() {
             async (loc) => {
               if (!isMounted || !isAuthRef.current) return;
               if (loc.timestamp && Date.now() - loc.timestamp > 15000) return;
+              const acc = loc.coords.accuracy;
+              // During GPS warmup (accuracy > 25m), only send live heartbeat — don't record waypoints or leave a false trail
+              if (acc != null && acc > 25) {
+                pingLivePresenceFromBackground(loc.coords.latitude, loc.coords.longitude);
+                return;
+              }
               const gpsSpeed = loc.coords.speed ?? 0;
               const gpsHeading = loc.coords.heading;
               const effectiveHeading =
@@ -237,6 +263,7 @@ export function LocationTracker() {
       isMounted = false;
       if (foregroundTimer) clearInterval(foregroundTimer);
       if (jsAliveTimer) clearInterval(jsAliveTimer);
+      if (locationEnabledTimer) clearInterval(locationEnabledTimer);
       if (watchSubscription) {
         try {
           watchSubscription.remove();

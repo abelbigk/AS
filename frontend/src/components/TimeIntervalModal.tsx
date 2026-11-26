@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Modal,
   View,
@@ -6,9 +6,12 @@ import {
   Pressable,
   StyleSheet,
   ScrollView,
+  Platform,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { X, RotateCcw, Clock, Check, ChevronUp, ChevronDown } from "lucide-react-native";
+import { X, RotateCcw, Clock, Check } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
 
 export function formatMinutes12h(totalMinutes: number): string {
@@ -43,6 +46,125 @@ function partsToMinutes(parts: TimeParts): number {
   return h24 * 60 + parts.minute;
 }
 
+const HOURS_12 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const MINUTES_60 = Array.from({ length: 60 }, (_, i) => i);
+
+export function ScrollWheelPicker({
+  items,
+  selectedValue,
+  onValueChange,
+  colors,
+  itemHeight = 38,
+  width = 58,
+  fontSize = 20,
+}: {
+  items: number[];
+  selectedValue: number;
+  onValueChange: (val: number) => void;
+  colors: any;
+  itemHeight?: number;
+  width?: number;
+  fontSize?: number;
+}) {
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const isDraggingRef = useRef(false);
+
+  const selectedIndex = Math.max(0, items.indexOf(selectedValue));
+
+  useEffect(() => {
+    if (isDraggingRef.current) return;
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: selectedIndex * itemHeight, animated: false });
+    }, 20);
+    return () => clearTimeout(timer);
+  }, [selectedIndex, itemHeight]);
+
+  const commitOffset = (offsetY: number) => {
+    const idx = Math.max(0, Math.min(items.length - 1, Math.round(offsetY / itemHeight)));
+    const nextVal = items[idx];
+    if (nextVal !== undefined && nextVal !== selectedValue) {
+      onValueChange(nextVal);
+    }
+  };
+
+  const handleScrollEndDrag = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const vy = e.nativeEvent.velocity?.y ?? 0;
+    const y = e.nativeEvent.contentOffset.y;
+    if (Math.abs(vy) < 0.05) {
+      isDraggingRef.current = false;
+      commitOffset(y);
+    }
+  };
+
+  const handleMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    isDraggingRef.current = false;
+    commitOffset(e.nativeEvent.contentOffset.y);
+  };
+
+  return (
+    <View style={{ width, height: itemHeight * 3, position: "relative", overflow: "hidden" }}>
+      {/* Center selection highlight band */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          top: itemHeight,
+          left: 2,
+          right: 2,
+          height: itemHeight,
+          borderRadius: 10,
+          backgroundColor: colors.accent + "1A",
+          borderWidth: 1,
+          borderColor: colors.accent + "45",
+        }}
+      />
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+        snapToInterval={itemHeight}
+        decelerationRate="fast"
+        onScrollBeginDrag={() => {
+          isDraggingRef.current = true;
+        }}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        contentContainerStyle={{ paddingVertical: itemHeight }}
+      >
+        {items.map((item, idx) => {
+          const isSelected = item === selectedValue;
+          return (
+            <Pressable
+              key={item}
+              onPress={() => {
+                scrollRef.current?.scrollTo({ y: idx * itemHeight, animated: true });
+                if (item !== selectedValue) onValueChange(item);
+              }}
+              style={{
+                height: itemHeight,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: isSelected ? fontSize : fontSize - 4,
+                  fontWeight: isSelected ? "800" : "500",
+                  color: isSelected ? colors.text : colors.textMuted,
+                  opacity: isSelected ? 1 : 0.48,
+                  fontVariant: ["tabular-nums"],
+                }}
+              >
+                {item.toString().padStart(2, "0")}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
 function TimeStepper({
   label,
   minutes,
@@ -58,16 +180,12 @@ function TimeStepper({
 }) {
   const parts = minutesToParts(minutes);
 
-  const stepHour = (delta: number) => {
-    const curH24 = Math.floor(minutes / 60);
-    const nextH24 = (curH24 + delta + 24) % 24;
-    onChange(nextH24 * 60 + parts.minute);
+  const setHour12 = (h12: number) => {
+    onChange(partsToMinutes({ ...parts, hour12: h12 }));
   };
 
-  const stepMinute = (delta: number) => {
-    const nextMin = (parts.minute + delta + 60) % 60;
-    const h24 = Math.floor(minutes / 60);
-    onChange(h24 * 60 + nextMin);
+  const setMinute = (min: number) => {
+    onChange(partsToMinutes({ ...parts, minute: min }));
   };
 
   const togglePeriod = (pm: boolean) => {
@@ -89,33 +207,23 @@ function TimeStepper({
     >
       <Text style={[styles.stepperLabel, { color: colors.textMuted }]}>{label}</Text>
       <View style={styles.stepperRow}>
-        {/* Hour */}
-        <View style={styles.wheelCol}>
-          <Pressable onPress={() => stepHour(1)} hitSlop={8} style={styles.stepIconBtn}>
-            <ChevronUp size={18} color={colors.text} />
-          </Pressable>
-          <Text style={[styles.wheelValue, { color: colors.text }]}>
-            {parts.hour12.toString().padStart(2, "0")}
-          </Text>
-          <Pressable onPress={() => stepHour(-1)} hitSlop={8} style={styles.stepIconBtn}>
-            <ChevronDown size={18} color={colors.text} />
-          </Pressable>
-        </View>
+        {/* Scrollable Hour */}
+        <ScrollWheelPicker
+          items={HOURS_12}
+          selectedValue={parts.hour12}
+          onValueChange={setHour12}
+          colors={colors}
+        />
 
         <Text style={[styles.colonText, { color: colors.textMuted }]}>:</Text>
 
-        {/* Minute */}
-        <View style={styles.wheelCol}>
-          <Pressable onPress={() => stepMinute(5)} hitSlop={8} style={styles.stepIconBtn}>
-            <ChevronUp size={18} color={colors.text} />
-          </Pressable>
-          <Text style={[styles.wheelValue, { color: colors.text }]}>
-            {parts.minute.toString().padStart(2, "0")}
-          </Text>
-          <Pressable onPress={() => stepMinute(-5)} hitSlop={8} style={styles.stepIconBtn}>
-            <ChevronDown size={18} color={colors.text} />
-          </Pressable>
-        </View>
+        {/* Scrollable Minute */}
+        <ScrollWheelPicker
+          items={MINUTES_60}
+          selectedValue={parts.minute}
+          onValueChange={setMinute}
+          colors={colors}
+        />
 
         {/* AM / PM */}
         <View style={styles.periodCol}>
@@ -229,13 +337,20 @@ export function TimeIntervalModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
+      <View
+        style={[
+          styles.backdrop,
+          Platform.OS === "web"
+            ? ({ backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" } as any)
+            : null,
+        ]}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View
           style={[
             styles.card,
             {
-              backgroundColor: colors.surface,
+              backgroundColor: colors.bg,
               borderColor: colors.border,
               marginBottom: Math.max(insets.bottom, 16),
             },
@@ -407,7 +522,7 @@ export function TimeIntervalModal({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
+    backgroundColor: Platform.OS === "web" ? "rgba(0,0,0,0.58)" : "rgba(0,0,0,0.8)",
     justifyContent: "center",
     alignItems: "center",
     padding: 16,
