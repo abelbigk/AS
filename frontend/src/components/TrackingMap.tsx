@@ -505,36 +505,30 @@ export function TrackingMap({
               }
               cleaned.push(cur);
             }
+            // 4. If first point was a blurry stationary lock (>=15m) and the next point is a sharp lock (<=10m) within its accuracy circle, drop the blurry start
+            if (
+              cleaned.length >= 2 &&
+              cleaned[0].accuracy != null &&
+              cleaned[0].accuracy >= 15 &&
+              cleaned[1].accuracy != null &&
+              cleaned[1].accuracy <= 10 &&
+              (cleaned[0].speed == null || cleaned[0].speed < 0.6) &&
+              getDistanceM(cleaned[0], cleaned[1]) <= cleaned[0].accuracy
+            ) {
+              cleaned.shift();
+            }
             return cleaned;
           }
 
           function extractMovingWaypoints(cleaned) {
             if (!cleaned || cleaned.length === 0) return [];
-            // Step >= 15m between waypoints to prevent indoor GPS drift from creating star/spiderweb clusters
+            // Step >= 15m between consecutive waypoints (preserves A -> B -> C round trips when B is >= 15m away)
             var moving = [cleaned[0]];
             for (var i = 1; i < cleaned.length; i++) {
               var d = getDistanceM(moving[moving.length - 1], cleaned[i]);
               if (d >= 15) {
                 moving.push(cleaned[i]);
               }
-            }
-            // Collapse quick ping-pong bounces (A -> B -> A within 15m of A and < 2 mins)
-            if (moving.length >= 3) {
-              var collapsed = [moving[0]];
-              for (var j = 1; j < moving.length; j++) {
-                if (collapsed.length >= 2) {
-                  var prev2 = collapsed[collapsed.length - 2];
-                  var prev1 = collapsed[collapsed.length - 1];
-                  var cur = moving[j];
-                  var dt = Math.abs(new Date(cur.timestamp).getTime() - new Date(prev2.timestamp).getTime());
-                  if (getDistanceM(prev2, cur) < 15 && getDistanceM(prev1, cur) < 50 && dt < 120000) {
-                    collapsed.pop();
-                    continue;
-                  }
-                }
-                collapsed.push(moving[j]);
-              }
-              moving = collapsed;
             }
             // Always ensure the very latest point is represented if >= 15m from start
             var lastRaw = cleaned[cleaned.length - 1];

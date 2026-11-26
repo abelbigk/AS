@@ -21,6 +21,7 @@ interface PendingDeparture {
 interface TrackingStationaryState {
   lastRecordedCoord: { latitude: number; longitude: number } | null;
   lastRecordedTimestamp?: number | null;
+  lastRecordedAccuracy?: number | null;
   lastSeenTimestamp?: number | null;
   lastStationaryUpdateMs?: number | null;
   stationaryAnchor: { latitude: number; longitude: number } | null;
@@ -420,6 +421,7 @@ async function processAndSendCoordinateInner(
         longitude: smoothedLng,
       };
       state.lastRecordedTimestamp = payloadMs;
+      state.lastRecordedAccuracy = payload.accuracy ?? null;
       state.lastStationaryUpdateMs = payloadMs;
       state.stationaryAnchor = {
         latitude: smoothedLat,
@@ -462,8 +464,17 @@ async function processAndSendCoordinateInner(
       // ONLINE MODE:
       // - Live green drop already shows wandering & turning in real time (no DB write).
       // - Stepping >= 10m from lastRecordedCoord (confirmed by speed >= 0.6 or 2 consecutive fixes >= 10m) writes to DB.
+      // - If stationary and previous fix was blurry (> 12m), require > lastRecordedAccuracy before breaking away.
       // - Every 5 minutes while stationary, refine exact position if shifted >= 2m.
-      if (distFromLast < 10) {
+      const isMovingOutward =
+        !!state.pendingDeparture &&
+        payloadMs - state.pendingDeparture.timestampMs <= 90000 &&
+        distFromLast >= state.pendingDeparture.distFromAnchor + 3;
+      const onlineStepThreshold =
+        isStationarySpeed && !isMovingOutward && (state.lastRecordedAccuracy ?? 0) > 12
+          ? Math.max(10, state.lastRecordedAccuracy ?? 10)
+          : 10;
+      if (distFromLast < onlineStepThreshold) {
         state.pendingDeparture = null;
         const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
         if (isStationarySpeed && payloadMs - lastStatMs >= STATIONARY_REFINE_INTERVAL_MS) {
@@ -471,6 +482,7 @@ async function processAndSendCoordinateInner(
           if (distFromLast >= 2) {
             state.lastRecordedCoord = { latitude: smoothedLat, longitude: smoothedLng };
             state.lastRecordedTimestamp = payloadMs;
+            state.lastRecordedAccuracy = payload.accuracy ?? null;
             state.stationaryAnchor = { latitude: smoothedLat, longitude: smoothedLng };
             await saveState(state);
             try {
@@ -661,6 +673,7 @@ async function processAndSendCoordinateInner(
       longitude: smoothedLng,
     };
     state.lastRecordedTimestamp = payloadMs;
+    state.lastRecordedAccuracy = payload.accuracy ?? null;
     state.lastStationaryUpdateMs = payloadMs;
     if (isStationarySpeed) {
       state.stationaryAnchor = {
