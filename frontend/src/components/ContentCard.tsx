@@ -15,7 +15,7 @@ import {
 } from "lucide-react-native";
 import { DropdownMenu } from "./DropdownMenu";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
-import { SkeletonShimmer } from "./SkeletonShimmer";
+import { CroppedImage } from "./CroppedImage";
 
 export interface ContentItem {
   id: number;
@@ -66,8 +66,16 @@ export function ContentCard({
   onMoveDown,
 }: ContentCardProps) {
   const { colors, theme } = useTheme();
-  const [aspectRatio, setAspectRatio] = useState<number>(3 / 4);
-  const imageSkeletonOpacity = useRef(new Animated.Value(1)).current;
+  const initialAspect = (() => {
+    if (item.posterCropData) {
+      try {
+        const parsed = JSON.parse(item.posterCropData);
+        if (parsed?.aspectRatio) return parsed.aspectRatio;
+      } catch {}
+    }
+    return 3 / 4;
+  })();
+  const [aspectRatio, setAspectRatio] = useState<number>(initialAspect);
   const { dialogState, hide, showConfirm } = useAppDialog();
   const lastMenuActionTime = useRef(0);
 
@@ -266,22 +274,11 @@ export function ContentCard({
       {/* Poster Image Container */}
       {item.posterImageUrl ? (
         <View style={[styles.imageWrapper, aspectRatio ? { aspectRatio } : undefined]}>
-          <Image
-            source={{ uri: item.posterImageUrl }}
-            style={aspectRatio ? StyleSheet.absoluteFill : styles.naturalImage}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            priority="high"
-            onLoad={(e) => {
-              Animated.timing(imageSkeletonOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start();
-              if (e.source.width && e.source.height) {
-                setAspectRatio(e.source.width / e.source.height);
-              }
-            }}
+          <CroppedImage
+            src={item.posterImageUrl}
+            cropData={item.posterCropData}
+            onAspectRatioDetected={(ratio) => setAspectRatio(ratio)}
           />
-          <Animated.View style={[StyleSheet.absoluteFill, { opacity: imageSkeletonOpacity }]} pointerEvents="none">
-            <SkeletonShimmer style={StyleSheet.absoluteFill} />
-          </Animated.View>
 
           {/* Status badge on image */}
           {!isSelectMode && item.status !== "default" && (

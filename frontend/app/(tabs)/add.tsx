@@ -99,6 +99,7 @@ export default function AddScreen() {
         description: description.trim() || undefined,
         coverImageUrl: coverUrl,
         coverImageKey: coverKey,
+        coverCropData: coverImage?.cropData ? JSON.stringify(coverImage.cropData) : undefined,
       });
 
       utils.categories.list.invalidate();
@@ -126,8 +127,8 @@ export default function AddScreen() {
   } as const;
 
   const inputStyle = {
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: theme === "dark" ? "rgba(255,255,255,0.08)" : "#FFFFFF",
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 12,
     color: colors.text,
@@ -187,7 +188,7 @@ export default function AddScreen() {
               <Text style={styles.infoBannerTitle}>
                 Tip: Adding items &amp; subcategories
               </Text>
-              <Text style={styles.infoBannerText}>
+              <Text style={[styles.infoBannerText, { color: theme === "dark" ? "#93C5FD" : "#1D4ED8" }]}>
                 To add subcategories or content, open the category page you
                 created and add them directly. This automatically links them to
                 the correct category!
@@ -238,21 +239,27 @@ export default function AddScreen() {
             <ImagePickerToggle
               label="Cover Image (optional)"
               currentImageUrl={coverImage?.uri}
+              currentCropData={coverImage?.cropData ? JSON.stringify(coverImage.cropData) : null}
+              naturalRatio={false}
+              frameHeight={112}
               onImageSelected={setCoverImage}
             />
 
             <Pressable
               style={({ pressed }) => [
                 styles.submitButton,
+                { backgroundColor: theme === "dark" ? "#FFFFFF" : "#111827" },
                 { opacity: pressed || isSubmitting ? 0.75 : 1 },
               ]}
               onPress={handleSubmit}
               disabled={isSubmitting}
             >
               {isSubmitting ? (
-                <ActivityIndicator color="#000000" size="small" />
+                <ActivityIndicator color={theme === "dark" ? "#000000" : "#FFFFFF"} size="small" />
               ) : (
-                <Text style={styles.submitButtonText}>Create Category</Text>
+                <Text style={[styles.submitButtonText, { color: theme === "dark" ? "#000000" : "#FFFFFF" }]}>
+                  Create Category
+                </Text>
               )}
             </Pressable>
           </View>
@@ -303,7 +310,10 @@ export default function AddScreen() {
                     <View style={styles.existingActions}>
                       <Pressable
                         onPress={() => setActiveCategoryForEdit(cat)}
-                        style={styles.existingActionBtn}
+                        style={[
+                          styles.existingActionBtn,
+                          { backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.05)" },
+                        ]}
                         hitSlop={8}
                       >
                         <Pencil size={15} color={colors.textMuted} />
@@ -319,7 +329,10 @@ export default function AddScreen() {
                               deleteCategory.mutate({ categoryId: cat.id }),
                           });
                         }}
-                        style={styles.existingActionBtn}
+                        style={[
+                          styles.existingActionBtn,
+                          { backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.05)" },
+                        ]}
                         hitSlop={8}
                       >
                         <Trash2 size={15} color="#EF4444" />

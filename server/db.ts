@@ -588,7 +588,14 @@ export async function deleteMediaItem(mediaId: number, _userId?: number) {
 export async function searchContentItems(_userId: number, query: string) {
   const db = getDb();
   const trimmed = query.trim();
-  if (!trimmed) return [];
+  if (!trimmed) {
+    const recentItems = await db
+      .select()
+      .from(contentItems)
+      .orderBy(desc(contentItems.createdAt))
+      .limit(200);
+    return await attachCategoryAndSubcategoryIds(recentItems);
+  }
 
   // Use FTS5 full-text index when possible for O(log N) search; fall back to LIKE for mid-word/special chars
   const tokens = trimmed

@@ -5,69 +5,99 @@ import {
   Pressable,
   TextInput,
   StyleSheet,
-  ActivityIndicator,
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { ImagePlus, Link, Trash2, Check, Camera } from "lucide-react-native";
+import { ImagePlus, Link, X, Camera, Crop } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
+import { CroppedImage } from "./CroppedImage";
+import { ImageCropperModal, type CropData } from "./ImageCropperModal";
 
 export interface ImageValue {
   uri: string;
   isUrl: boolean;
   asset: ImagePicker.ImagePickerAsset | null;
+  cropData?: CropData | null;
 }
 
 interface ImagePickerToggleProps {
   label?: string;
   currentImageUrl?: string | null;
+  currentCropData?: string | null;
   onImageSelected: (value: ImageValue | null) => void;
   naturalRatio?: boolean;
+  frameHeight?: number;
 }
 
 export function ImagePickerToggle({
   label = "Cover Image",
   currentImageUrl,
+  currentCropData,
   onImageSelected,
   naturalRatio = true,
+  frameHeight = 160,
 }: ImagePickerToggleProps) {
   const { colors, theme } = useTheme();
 
   const [tab, setTab] = useState<"file" | "camera" | "url">("file");
   const [urlInput, setUrlInput] = useState("");
-  // Old/existing cover (displayed at top)
-  const [existingCoverUrl, setExistingCoverUrl] = useState<string | null>(currentImageUrl ?? null);
-  // Newly chosen replacement cover (displayed below)
-  const [newCover, setNewCover] = useState<ImageValue | null>(null);
-
-  // Aspect ratios for natural display
-  const [existingAspectRatio, setExistingAspectRatio] = useState<number | undefined>(undefined);
-  const [newAspectRatio, setNewAspectRatio] = useState<number | undefined>(undefined);
+  const [previewUri, setPreviewUri] = useState<string | null>(currentImageUrl ?? null);
+  const [currentAsset, setCurrentAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [cropData, setCropData] = useState<CropData | null>(() => {
+    if (currentCropData) {
+      try {
+        return JSON.parse(currentCropData);
+      } catch {}
+    }
+    return null;
+  });
+  const [aspectRatio, setAspectRatio] = useState<number | undefined>(undefined);
+  const [cropperVisible, setCropperVisible] = useState(false);
+  const [cropSrc, setCropSrc] = useState("");
 
   useEffect(() => {
-    setExistingCoverUrl(currentImageUrl ?? null);
+    setPreviewUri(currentImageUrl ?? null);
+    if (currentImageUrl && currentImageUrl.startsWith("http")) {
+      setUrlInput(currentImageUrl);
+    } else if (!currentImageUrl) {
+      setUrlInput("");
+      setCurrentAsset(null);
+    }
   }, [currentImageUrl]);
+
+  useEffect(() => {
+    if (currentCropData) {
+      try {
+        const parsed = JSON.parse(currentCropData);
+        setCropData(parsed);
+      } catch {}
+    } else {
+      setCropData(null);
+    }
+  }, [currentCropData]);
 
   const handlePickFile = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        allowsEditing: false, // keep original size and aspect ratio
+        allowsEditing: false,
         quality: 1,
       });
 
       if (!res.canceled && res.assets[0]) {
         const asset = res.assets[0];
         if (asset.width && asset.height) {
-          setNewAspectRatio(asset.width / asset.height);
+          setAspectRatio(asset.width / asset.height);
         }
-        const val: ImageValue = {
+        setPreviewUri(asset.uri);
+        setCurrentAsset(asset);
+        setCropData(null);
+        onImageSelected({
           uri: asset.uri,
           isUrl: false,
           asset,
-        };
-        setNewCover(val);
-        onImageSelected(val);
+          cropData: null,
+        });
       }
     } catch (err) {
       console.error("Failed to pick image:", err);
@@ -86,15 +116,17 @@ export function ImagePickerToggle({
       if (!res.canceled && res.assets[0]) {
         const asset = res.assets[0];
         if (asset.width && asset.height) {
-          setNewAspectRatio(asset.width / asset.height);
+          setAspectRatio(asset.width / asset.height);
         }
-        const val: ImageValue = {
+        setPreviewUri(asset.uri);
+        setCurrentAsset(asset);
+        setCropData(null);
+        onImageSelected({
           uri: asset.uri,
           isUrl: false,
           asset,
-        };
-        setNewCover(val);
-        onImageSelected(val);
+          cropData: null,
+        });
       }
     } catch (err) {
       console.error("Failed to take photo:", err);
@@ -103,59 +135,76 @@ export function ImagePickerToggle({
 
   const handleApplyUrl = () => {
     const trimmed = urlInput.trim();
-    if (!trimmed) return;
-    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+    if (!trimmed || (!trimmed.startsWith("http://") && !trimmed.startsWith("https://"))) {
       return;
     }
-    const val: ImageValue = {
+    setPreviewUri(trimmed);
+    setCurrentAsset(null);
+    setCropData(null);
+    onImageSelected({
       uri: trimmed,
       isUrl: true,
       asset: null,
-    };
-    setNewCover(val);
-    onImageSelected(val);
+      cropData: null,
+    });
   };
 
-  const handleClearExisting = () => {
-    setExistingCoverUrl(null);
-    if (!newCover) {
-      onImageSelected(null);
-    }
-  };
-
-  const handleClearNew = () => {
-    setNewCover(null);
+  const handleClear = () => {
+    setPreviewUri(null);
+    setCurrentAsset(null);
+    setCropData(null);
+    setAspectRatio(undefined);
     setUrlInput("");
-    if (existingCoverUrl) {
-      onImageSelected({
-        uri: existingCoverUrl,
-        isUrl: true,
-        asset: null,
-      });
-    } else {
-      onImageSelected(null);
-    }
+    onImageSelected(null);
   };
+
+  const openCropperFor = (uri: string) => {
+    setCropSrc(uri);
+    setCropperVisible(true);
+  };
+
+  const serializedCrop = cropData ? JSON.stringify(cropData) : null;
 
   return (
     <View style={styles.container}>
-      {/* 1. Existing Old Cover Image at original size */}
-      {existingCoverUrl ? (
+      {/* Single Current Cover Preview (with Crop + Clear buttons + Replace below banner) */}
+      {previewUri ? (
         <View style={styles.sectionBlock}>
-          <View style={[styles.imageCard, existingAspectRatio ? { aspectRatio: existingAspectRatio } : styles.fallbackHeight]}>
-            <Image
-              source={{ uri: existingCoverUrl }}
-              style={StyleSheet.absoluteFill}
-              contentFit="contain"
-              onLoad={(e) => {
-                if (e.source.width && e.source.height) {
-                  setExistingAspectRatio(e.source.width / e.source.height);
+          <View
+            style={[
+              styles.imageCard,
+              naturalRatio
+                ? aspectRatio
+                  ? { aspectRatio }
+                  : { height: frameHeight }
+                : { height: frameHeight },
+            ]}
+          >
+            <CroppedImage
+              src={previewUri}
+              cropData={serializedCrop}
+              onAspectRatioDetected={(r) => {
+                if (naturalRatio) {
+                  setAspectRatio(r);
                 }
               }}
             />
-            <Pressable onPress={handleClearExisting} style={styles.removeBtn} hitSlop={8}>
-              <Trash2 size={14} color="#FFFFFF" />
-            </Pressable>
+            <View style={styles.topRightActions}>
+              <Pressable
+                onPress={() => openCropperFor(previewUri)}
+                style={styles.actionCircleBtn}
+                hitSlop={8}
+              >
+                <Crop size={14} color="#FFFFFF" />
+              </Pressable>
+              <Pressable
+                onPress={handleClear}
+                style={styles.actionCircleBtn}
+                hitSlop={8}
+              >
+                <X size={14} color="#FFFFFF" />
+              </Pressable>
+            </View>
             <View style={styles.replaceBanner}>
               <Text style={styles.replaceBannerText}>Replace below ↓</Text>
             </View>
@@ -163,7 +212,7 @@ export function ImagePickerToggle({
         </View>
       ) : null}
 
-      {/* 2. Switcher for Replace with File or Replace with URL */}
+      {/* Switcher */}
       <View
         style={[
           styles.tabBar,
@@ -178,13 +227,10 @@ export function ImagePickerToggle({
           onPress={() => setTab("file")}
           style={[
             styles.tabItem,
-            tab === "file" && [
-              styles.tabItemActive,
-              {
-                backgroundColor:
-                  theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
-              },
-            ],
+            tab === "file" && {
+              backgroundColor:
+                theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
+            },
           ]}
         >
           <ImagePlus
@@ -194,12 +240,10 @@ export function ImagePickerToggle({
           <Text
             style={[
               styles.tabText,
-              {
-                color: tab === "file" ? "#FFFFFF" : colors.textMuted,
-              },
+              { color: tab === "file" ? "#FFFFFF" : colors.textMuted },
             ]}
           >
-            {existingCoverUrl ? "File" : "Upload"}
+            {previewUri ? "Replace with file" : "Upload"}
           </Text>
         </Pressable>
 
@@ -207,13 +251,10 @@ export function ImagePickerToggle({
           onPress={() => setTab("camera")}
           style={[
             styles.tabItem,
-            tab === "camera" && [
-              styles.tabItemActive,
-              {
-                backgroundColor:
-                  theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
-              },
-            ],
+            tab === "camera" && {
+              backgroundColor:
+                theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
+            },
           ]}
         >
           <Camera
@@ -223,9 +264,7 @@ export function ImagePickerToggle({
           <Text
             style={[
               styles.tabText,
-              {
-                color: tab === "camera" ? "#FFFFFF" : colors.textMuted,
-              },
+              { color: tab === "camera" ? "#FFFFFF" : colors.textMuted },
             ]}
           >
             Camera
@@ -236,13 +275,10 @@ export function ImagePickerToggle({
           onPress={() => setTab("url")}
           style={[
             styles.tabItem,
-            tab === "url" && [
-              styles.tabItemActive,
-              {
-                backgroundColor:
-                  theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
-              },
-            ],
+            tab === "url" && {
+              backgroundColor:
+                theme === "dark" ? "rgba(255, 255, 255, 0.15)" : "#0F172A",
+            },
           ]}
         >
           <Link
@@ -252,17 +288,15 @@ export function ImagePickerToggle({
           <Text
             style={[
               styles.tabText,
-              {
-                color: tab === "url" ? "#FFFFFF" : colors.textMuted,
-              },
+              { color: tab === "url" ? "#FFFFFF" : colors.textMuted },
             ]}
           >
-            {existingCoverUrl ? "URL" : "URL"}
+            {previewUri ? "Replace with URL" : "URL"}
           </Text>
         </Pressable>
       </View>
 
-      {/* 3. Input controls for file / camera / url */}
+      {/* Input controls */}
       {tab === "file" ? (
         <Pressable
           onPress={handlePickFile}
@@ -277,7 +311,7 @@ export function ImagePickerToggle({
         >
           <ImagePlus size={24} color={colors.textSubtle} />
           <Text style={[styles.dropzoneText, { color: colors.textMuted }]}>
-            {existingCoverUrl ? "Choose replacement image file" : label}
+            {label}
           </Text>
         </Pressable>
       ) : tab === "camera" ? (
@@ -299,72 +333,97 @@ export function ImagePickerToggle({
         </Pressable>
       ) : (
         <View style={styles.urlInputBlock}>
-          <View style={styles.urlInputRow}>
-            <TextInput
-              style={[
-                styles.urlInput,
-                {
-                  color: colors.text,
-                  borderColor: colors.border,
-                  backgroundColor:
-                    theme === "dark" ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)",
-                },
-              ]}
-              placeholder="https://i.pinimg.com/... or image URL"
-              placeholderTextColor={colors.textSubtle}
-              value={urlInput}
-              onChangeText={(txt) => {
-                setUrlInput(txt);
-                if (txt.trim().startsWith("http://") || txt.trim().startsWith("https://")) {
-                  const val: ImageValue = {
-                    uri: txt.trim(),
-                    isUrl: true,
-                    asset: null,
-                  };
-                  setNewCover(val);
-                  onImageSelected(val);
-                }
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+          <TextInput
+            style={[
+              styles.urlInput,
+              {
+                color: colors.text,
+                borderColor: colors.border,
+                backgroundColor:
+                  theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
+              },
+            ]}
+            placeholder="https://i.pinimg.com/... or image URL"
+            placeholderTextColor={colors.textSubtle}
+            value={urlInput}
+            onChangeText={(txt) => {
+              setUrlInput(txt);
+              const trimmed = txt.trim();
+              if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                setPreviewUri(trimmed);
+                setCurrentAsset(null);
+                onImageSelected({
+                  uri: trimmed,
+                  isUrl: true,
+                  asset: null,
+                  cropData,
+                });
+              }
+            }}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <View style={styles.urlBtnRow}>
             <Pressable
               onPress={handleApplyUrl}
+              disabled={urlInput.trim().length <= 7}
               style={[
-                styles.urlApplyBtn,
+                styles.urlActionBtn,
                 {
-                  backgroundColor: colors.accent,
+                  backgroundColor: theme === "dark" ? "rgba(255,255,255,0.2)" : "#111827",
                   opacity: urlInput.trim().length > 7 ? 1 : 0.5,
                 },
               ]}
-              disabled={urlInput.trim().length <= 7}
             >
-              <Check size={16} color="#FFFFFF" />
+              <Text style={styles.urlActionBtnText}>Add</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                const trimmed = urlInput.trim();
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                  openCropperFor(trimmed);
+                }
+              }}
+              disabled={urlInput.trim().length <= 7}
+              style={[
+                styles.urlActionBtn,
+                {
+                  backgroundColor: theme === "dark" ? "rgba(255,255,255,0.1)" : "#F1F5F9",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  opacity: urlInput.trim().length > 7 ? 1 : 0.5,
+                },
+              ]}
+            >
+              <Text style={[styles.urlActionBtnText, { color: colors.text }]}>Crop</Text>
             </Pressable>
           </View>
         </View>
       )}
 
-      {/* 4. Replacement New Cover Image Viewer (below) at original size */}
-      {newCover ? (
-        <View style={styles.sectionBlock}>
-          <View style={[styles.imageCard, newAspectRatio ? { aspectRatio: newAspectRatio } : styles.fallbackHeight]}>
-            <Image
-              source={{ uri: newCover.uri }}
-              style={StyleSheet.absoluteFill}
-              contentFit="contain"
-              onLoad={(e) => {
-                if (e.source.width && e.source.height) {
-                  setNewAspectRatio(e.source.width / e.source.height);
-                }
-              }}
-            />
-            <Pressable onPress={handleClearNew} style={styles.removeBtn} hitSlop={8}>
-              <Trash2 size={14} color="#FFFFFF" />
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
+      {/* Crop Modal */}
+      <ImageCropperModal
+        visible={cropperVisible}
+        src={cropSrc}
+        frameHeight={frameHeight}
+        naturalRatio={naturalRatio}
+        initialCropData={cropData}
+        onConfirm={(nextCrop) => {
+          setCropData(nextCrop);
+          const activeUri = cropSrc || previewUri;
+          if (activeUri) {
+            setPreviewUri(activeUri);
+            onImageSelected({
+              uri: activeUri,
+              isUrl: !currentAsset,
+              asset: currentAsset,
+              cropData: nextCrop,
+            });
+          }
+          setCropperVisible(false);
+        }}
+        onCancel={() => setCropperVisible(false)}
+      />
     </View>
   );
 }
@@ -386,32 +445,33 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.12)",
     backgroundColor: "rgba(0, 0, 0, 0.2)",
   },
-  fallbackHeight: {
-    height: 200,
-  },
-  removeBtn: {
+  topRightActions: {
     position: "absolute",
     top: 8,
     right: 8,
-    backgroundColor: "rgba(239, 68, 68, 0.85)",
+    flexDirection: "row",
+    gap: 6,
+    zIndex: 10,
+  },
+  actionCircleBtn: {
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
     width: 28,
     height: 28,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 10,
   },
   replaceBanner: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
     paddingVertical: 5,
     paddingHorizontal: 12,
   },
   replaceBannerText: {
-    color: "rgba(255, 255, 255, 0.85)",
+    color: "rgba(255, 255, 255, 0.75)",
     fontSize: 11,
     fontWeight: "600",
   },
@@ -427,13 +487,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingVertical: 8,
+    gap: 5,
+    paddingVertical: 7,
     borderRadius: 8,
   },
-  tabItemActive: {},
   tabText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
   },
   dropzone: {
@@ -452,24 +511,27 @@ const styles = StyleSheet.create({
   urlInputBlock: {
     gap: 8,
   },
-  urlInputRow: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-  },
   urlInput: {
-    flex: 1,
     height: 42,
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     fontSize: 13,
   },
-  urlApplyBtn: {
-    height: 42,
-    width: 42,
+  urlBtnRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  urlActionBtn: {
+    flex: 1,
+    height: 38,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  urlActionBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

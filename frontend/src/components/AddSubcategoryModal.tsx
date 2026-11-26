@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -8,18 +8,20 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { Image } from "expo-image";
-import * as ImagePicker from "expo-image-picker";
-import { X, ImagePlus, Trash2 } from "lucide-react-native";
+import { X, Pencil, ImagePlus } from "lucide-react-native";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
 import { uploadFile } from "../lib/upload";
 import { AppDialogRenderer, useAppDialog } from "./AppDialog";
 import { ImagePickerToggle, type ImageValue } from "./ImagePickerToggle";
+import { EditSubcategoryModal } from "./EditSubcategoryModal";
 
 interface AddSubcategoryModalProps {
   categoryId: number;
+  categoryName?: string;
   visible: boolean;
   onClose: () => void;
   onSubcategoryCreated?: () => void;
@@ -27,20 +29,36 @@ interface AddSubcategoryModalProps {
 
 export function AddSubcategoryModal({
   categoryId,
+  categoryName,
   visible,
   onClose,
   onSubcategoryCreated,
 }: AddSubcategoryModalProps) {
   const { colors, theme } = useTheme();
   const utils = trpc.useUtils();
-  const { dialogState, hide, showAlert } = useAppDialog();
+  const { dialogState, hide, showAlert, showConfirm } = useAppDialog();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingSubcategory, setEditingSubcategory] = useState<any | null>(null);
 
-  const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery();
+  const { data: categories = [] } = trpc.categories.list.useQuery(undefined, {
+    enabled: visible && !categoryName,
+  });
+  const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery(undefined, {
+    enabled: visible,
+  });
+  const { data: subcategories = [] } = trpc.subcategories.list.useQuery(
+    { categoryId },
+    { enabled: visible && !!categoryId }
+  );
+
+  const resolvedCategoryName = useMemo(() => {
+    if (categoryName) return categoryName;
+    return categories.find((c) => c.id === categoryId)?.name;
+  }, [categoryName, categories, categoryId]);
 
   const similar =
     name.trim().length > 1
@@ -50,8 +68,11 @@ export function AddSubcategoryModal({
       : [];
 
   const createSubcategoryMutation = trpc.subcategories.create.useMutation();
-
-
+  const deleteSubcategoryMutation = trpc.subcategories.delete.useMutation({
+    onSuccess: () => {
+      utils.subcategories.list.invalidate({ categoryId });
+    },
+  });
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -86,6 +107,9 @@ export function AddSubcategoryModal({
         description: description.trim() || undefined,
         coverImageUrl: coverUrl,
         coverImageKey: coverKey,
+        coverCropData: coverImage?.cropData
+          ? JSON.stringify(coverImage.cropData)
+          : undefined,
       });
 
       utils.subcategories.list.invalidate({ categoryId });
@@ -101,193 +125,296 @@ export function AddSubcategoryModal({
     }
   };
 
+  const inputBg = theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC";
+
   return (
     <>
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
-        <View style={[styles.modalSheet, { backgroundColor: colors.glassBg, borderColor: colors.border }]}>
-          <View style={styles.modalHeader}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Add Subcategory</Text>
-            <Pressable onPress={onClose} hitSlop={10}>
-              <X size={20} color={colors.textMuted} />
-            </Pressable>
-          </View>
+        <View
+          style={[
+            styles.modalBackdrop,
+            Platform.OS === "web"
+              ? ({ backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" } as any)
+              : null,
+          ]}
+        >
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <View style={[styles.modalSheet, { backgroundColor: colors.bg, borderColor: colors.border }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Add Subcategory</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                  {resolvedCategoryName
+                    ? `Create a new sub-grouping within ${resolvedCategoryName}`
+                    : "Create a new sub-grouping"}
+                </Text>
+              </View>
+              <Pressable onPress={onClose} hitSlop={10}>
+                <X size={20} color={colors.textMuted} />
+              </Pressable>
+            </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Name *</Text>
-              <TextInput
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <View
                 style={[
-                  styles.input,
-                  {
-                    color: colors.text,
-                    borderColor: colors.border,
-                    backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
-                  },
+                  styles.formCard,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
                 ]}
-                value={name}
-                onChangeText={setName}
-                placeholder="Subcategory name"
-                placeholderTextColor={colors.textSubtle}
-              />
-              {similar.length > 0 && (
-                <View style={[styles.similarBanner, { borderColor: colors.border }]}>
-                  {similar.map((s) => (
-                    <View key={s.id} style={styles.similarRow}>
-                      <View style={styles.similarDot} />
-                      <Text style={[styles.similarText, { color: colors.textMuted }]}>
-                        Already exists:{" "}
-                        <Text style={[styles.similarName, { color: colors.text }]}>{s.name}</Text>
-                      </Text>
+              >
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>Subcategory Name</Text>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      { color: colors.text, borderColor: colors.border, backgroundColor: inputBg },
+                    ]}
+                    value={name}
+                    onChangeText={setName}
+                    placeholder="e.g., Fantasy"
+                    placeholderTextColor={colors.textSubtle}
+                  />
+                  {similar.length > 0 && (
+                    <View style={[styles.similarBanner, { borderColor: colors.border }]}>
+                      {similar.map((s) => (
+                        <View key={s.id} style={styles.similarRow}>
+                          <View style={styles.similarDot} />
+                          <Text style={[styles.similarText, { color: colors.textMuted }]}>
+                            Already exists:{" "}
+                            <Text style={[styles.similarName, { color: colors.text }]}>{s.name}</Text>
+                          </Text>
+                        </View>
+                      ))}
                     </View>
-                  ))}
+                  )}
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>
+                    Description (Optional)
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      styles.multilineInput,
+                      { color: colors.text, borderColor: colors.border, backgroundColor: inputBg },
+                    ]}
+                    value={description}
+                    onChangeText={setDescription}
+                    placeholder="Add a description..."
+                    placeholderTextColor={colors.textSubtle}
+                    multiline
+                    numberOfLines={2}
+                  />
+                </View>
+
+                {/* Cover Image */}
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
+                  <ImagePickerToggle
+                    label="Cover Image"
+                    currentImageUrl={coverImage?.uri}
+                    currentCropData={
+                      coverImage?.cropData ? JSON.stringify(coverImage.cropData) : null
+                    }
+                    naturalRatio={true}
+                    frameHeight={160}
+                    onImageSelected={setCoverImage}
+                  />
+                </View>
+
+                <Pressable
+                  onPress={handleSubmit}
+                  disabled={isSubmitting}
+                  style={[
+                    styles.submitBtn,
+                    { backgroundColor: theme === "dark" ? "#FFFFFF" : "#111827" },
+                    isSubmitting && { opacity: 0.6 },
+                  ]}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator
+                      color={theme === "dark" ? "#000000" : "#FFFFFF"}
+                      size="small"
+                    />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.submitBtnText,
+                        { color: theme === "dark" ? "#000000" : "#FFFFFF" },
+                      ]}
+                    >
+                      {`Create Subcategory${coverImage ? " ✓ image ready" : ""}`}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* SUBCATEGORIES IN THIS CATEGORY section matching screenshot */}
+              {subcategories.length > 0 && (
+                <View style={styles.existingSection}>
+                  <Text style={[styles.existingHeader, { color: colors.textMuted }]}>
+                    SUBCATEGORIES IN THIS CATEGORY
+                  </Text>
+                  <View style={styles.existingList}>
+                    {subcategories.map((sub) => (
+                      <View
+                        key={sub.id}
+                        style={[
+                          styles.existingRow,
+                          { backgroundColor: colors.surface, borderColor: colors.border },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.existingThumb,
+                            { backgroundColor: inputBg },
+                          ]}
+                        >
+                          {sub.coverImageUrl ? (
+                            <Image
+                              source={{ uri: sub.coverImageUrl }}
+                              style={StyleSheet.absoluteFill}
+                              contentFit="cover"
+                            />
+                          ) : (
+                            <View style={styles.existingThumbFallback}>
+                              <ImagePlus size={14} color={colors.textSubtle} />
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.existingInfo}>
+                          <Text
+                            style={[styles.existingName, { color: colors.text }]}
+                            numberOfLines={1}
+                          >
+                            {sub.name}
+                          </Text>
+                          {sub.description ? (
+                            <Text
+                              style={[styles.existingDesc, { color: colors.textMuted }]}
+                              numberOfLines={1}
+                            >
+                              {sub.description}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Pressable
+                          onPress={() => setEditingSubcategory(sub)}
+                          style={styles.existingIconBtn}
+                          hitSlop={8}
+                        >
+                          <Pencil size={15} color={colors.textMuted} />
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            showConfirm({
+                              title: "Delete this subcategory?",
+                              message:
+                                "This action cannot be undone. This will permanently delete the subcategory.",
+                              confirmText: "Delete",
+                              destructive: true,
+                              onConfirm: () =>
+                                deleteSubcategoryMutation.mutate({ subcategoryId: sub.id }),
+                            });
+                          }}
+                          style={styles.existingIconBtn}
+                          hitSlop={8}
+                        >
+                          <X size={15} color={colors.textMuted} />
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
                 </View>
               )}
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Description</Text>
-              <TextInput
-                style={[styles.input, styles.multilineInput, { color: colors.text, borderColor: colors.border }]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Description (optional)"
-                placeholderTextColor={colors.textSubtle}
-                multiline
-                numberOfLines={3}
-              />
-            </View>
-
-            {/* Cover Image */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
-              <ImagePickerToggle
-                label="Attach Cover Image (optional)"
-                currentImageUrl={coverImage?.uri}
-                onImageSelected={setCoverImage}
-              />
-            </View>
-
-            <Pressable
-              onPress={handleSubmit}
-              disabled={isSubmitting}
-              style={[styles.submitBtn, isSubmitting && { opacity: 0.6 }]}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#000000" size="small" />
-              ) : (
-                <Text style={styles.submitBtnText}>Create Subcategory</Text>
-              )}
-            </Pressable>
-          </ScrollView>
+            </ScrollView>
+          </View>
         </View>
-      </View>
-    </Modal>
-    <AppDialogRenderer {...dialogState} onHide={hide} />
-  </>
-);
+      </Modal>
+
+      <EditSubcategoryModal
+        subcategory={editingSubcategory}
+        visible={!!editingSubcategory}
+        onClose={() => setEditingSubcategory(null)}
+        onSaved={() => {
+          utils.subcategories.list.invalidate({ categoryId });
+        }}
+      />
+
+      <AppDialogRenderer {...dialogState} onHide={hide} />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    backgroundColor: Platform.OS === "web" ? "rgba(0, 0, 0, 0.58)" : "rgba(0, 0, 0, 0.8)",
     justifyContent: "flex-end",
   },
   modalSheet: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     borderWidth: 1,
-    padding: 24,
-    paddingBottom: 40,
-    maxHeight: "85%",
+    padding: 22,
+    paddingBottom: 34,
+    maxHeight: "90%",
   },
   modalHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    marginBottom: 20,
+    marginBottom: 16,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "700",
   },
+  modalSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  formCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+  },
   fieldGroup: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   label: {
     fontSize: 12,
     fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
     marginBottom: 6,
   },
   input: {
-    height: 46,
+    height: 44,
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    fontSize: 15,
+    fontSize: 14,
   },
   multilineInput: {
-    height: 75,
+    height: 70,
     paddingTop: 10,
     textAlignVertical: "top",
   },
-  coverPreviewContainer: {
-    width: "100%",
-    height: 140,
-    borderRadius: 12,
-    overflow: "hidden",
-    position: "relative",
-  },
-  coverPreview: {
-    width: "100%",
-    height: "100%",
-  },
-  removeCoverBtn: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: "rgba(239, 68, 68, 0.85)",
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  uploadDropzone: {
-    height: 80,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  uploadDropzoneText: {
-    fontSize: 12,
-    fontWeight: "500",
-  },
   submitBtn: {
-    backgroundColor: "#FFFFFF",
     height: 46,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 8,
+    marginTop: 4,
   },
   submitBtnText: {
-    color: "#000000",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
   },
   similarBanner: {
     borderRadius: 10,
     borderWidth: 1,
     padding: 10,
-    marginTop: 6,
-    marginBottom: 4,
+    marginTop: 8,
     backgroundColor: "rgba(234, 179, 8, 0.1)",
     gap: 6,
   },
@@ -307,5 +434,51 @@ const styles = StyleSheet.create({
   },
   similarName: {
     fontWeight: "600",
+  },
+  existingSection: {
+    marginTop: 22,
+    gap: 10,
+  },
+  existingHeader: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+  },
+  existingList: {
+    gap: 8,
+  },
+  existingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  existingThumb: {
+    width: 40,
+    height: 52,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  existingThumbFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  existingInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  existingName: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  existingDesc: {
+    fontSize: 11,
+  },
+  existingIconBtn: {
+    padding: 6,
+    borderRadius: 8,
   },
 });

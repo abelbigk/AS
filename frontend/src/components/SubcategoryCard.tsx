@@ -2,9 +2,8 @@ import React, { useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform, Animated } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { CheckCircle2 } from "lucide-react-native";
-import { Image } from "expo-image";
 import { useTheme } from "../contexts/ThemeContext";
-import { SkeletonShimmer } from "./SkeletonShimmer";
+import { CroppedImage } from "./CroppedImage";
 
 interface SubcategoryCardProps {
   subcategory: {
@@ -33,8 +32,16 @@ export function SubcategoryCard({
   onPress,
 }: SubcategoryCardProps) {
   const { colors, theme } = useTheme();
-  const [aspectRatio, setAspectRatio] = useState<number>(4 / 3);
-  const imageSkeletonOpacity = useRef(new Animated.Value(1)).current;
+  const initialAspect = (() => {
+    if (subcategory.coverCropData) {
+      try {
+        const parsed = JSON.parse(subcategory.coverCropData);
+        if (parsed?.aspectRatio) return parsed.aspectRatio;
+      } catch {}
+    }
+    return 4 / 3;
+  })();
+  const [aspectRatio, setAspectRatio] = useState<number>(initialAspect);
 
   return (
     <Pressable
@@ -76,25 +83,11 @@ export function SubcategoryCard({
 
       {subcategory.coverImageUrl ? (
         <View style={[styles.imageWrapper, { aspectRatio }]}>
-          <Image
-            source={{ uri: subcategory.coverImageUrl }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            priority="high"
-            onLoad={(e) => {
-              Animated.timing(imageSkeletonOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start();
-              if (e.source.width && e.source.height) {
-                // Constrain aspect ratio between 0.65 and 1.8 for balanced masonry layout
-                const rawRatio = e.source.width / e.source.height;
-                const clamped = Math.max(0.65, Math.min(1.8, rawRatio));
-                setAspectRatio(clamped);
-              }
-            }}
+          <CroppedImage
+            src={subcategory.coverImageUrl}
+            cropData={subcategory.coverCropData}
+            onAspectRatioDetected={(ratio) => setAspectRatio(ratio)}
           />
-          <Animated.View style={[StyleSheet.absoluteFill, { opacity: imageSkeletonOpacity }]} pointerEvents="none">
-            <SkeletonShimmer style={StyleSheet.absoluteFill} />
-          </Animated.View>
           <LinearGradient
             colors={["transparent", "rgba(0, 0, 0, 0.2)", "rgba(0, 0, 0, 0.85)"]}
             style={StyleSheet.absoluteFill}

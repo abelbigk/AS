@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -9,25 +9,22 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
-  Linking,
 } from "react-native";
 import { Image } from "expo-image";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import {
   X,
-  Plus,
   ImagePlus,
   Film,
   Check,
-  Search,
-  Link,
-  Upload,
   Camera,
   MapPin,
   Navigation,
   Link2,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react-native";
 import { trpc } from "../lib/trpc";
 import { useTheme } from "../contexts/ThemeContext";
@@ -53,18 +50,16 @@ export function AddContentModal({
   onContentAdded,
 }: AddContentModalProps) {
   const { colors, theme } = useTheme();
-  const insets = useSafeAreaInsets();
   const utils = trpc.useUtils();
   const { dialogState, hide, showAlert } = useAppDialog();
   const { toastState, showToast } = useAppToast();
-
-  const [activeTab, setActiveTab] = useState<"create" | "link">("create");
 
   // Create form state
   const [heading, setHeading] = useState("");
   const [description, setDescription] = useState("");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<number[]>([]);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
 
   const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [mediaAssets, setMediaAssets] = useState<
@@ -76,7 +71,9 @@ export function AddContentModal({
   const [uploadPct, setUploadPct] = useState(0);
   const [uploadLoadedBytes, setUploadLoadedBytes] = useState(0);
   const [uploadTotalBytes, setUploadTotalBytes] = useState(0);
-  const [uploadStage, setUploadStage] = useState<"idle" | "cover" | "saving_entry" | "media" | "processing">("idle");
+  const [uploadStage, setUploadStage] = useState<
+    "idle" | "cover" | "saving_entry" | "media" | "processing"
+  >("idle");
   const [currentUploadFileName, setCurrentUploadFileName] = useState("Media file");
 
   // Location state
@@ -87,15 +84,42 @@ export function AddContentModal({
   const [locationLinkInput, setLocationLinkInput] = useState("");
   const [showLocationLinkField, setShowLocationLinkField] = useState(false);
 
-  // Search existing state for link tab
+  // Link Existing Content state (20 items initial, load more on scroll; full search when query non-empty)
   const [searchQuery, setSearchQuery] = useState("");
+  const [visibleLinkCount, setVisibleLinkCount] = useState(20);
+
+  const linkEnabled = visible && !!(initialCategoryId || initialSubcategoryId);
   const { data: searchResults = [], isLoading: searchLoading } =
     trpc.content.search.useQuery(
       { query: searchQuery.trim() },
-      { enabled: visible && activeTab === "link" && searchQuery.trim().length > 0 }
+      { enabled: linkEnabled }
     );
 
-  const linkMutation = trpc.content.update.useMutation();
+  // Fallback list when server search returns [] for empty query
+  const { data: defaultItems = [] } = trpc.content.listByStatus.useQuery("default", {
+    enabled: linkEnabled && searchQuery.trim().length === 0,
+  });
+  const { data: queuedItems = [] } = trpc.content.listByStatus.useQuery("queued", {
+    enabled: linkEnabled && searchQuery.trim().length === 0,
+  });
+  const { data: doneItems = [] } = trpc.content.listByStatus.useQuery("done", {
+    enabled: linkEnabled && searchQuery.trim().length === 0,
+  });
+
+  const allExistingCandidates = useMemo(() => {
+    if (searchQuery.trim().length > 0 || searchResults.length > 0) {
+      return searchResults;
+    }
+    const merged = [...defaultItems, ...queuedItems, ...doneItems];
+    const seen = new Set<number>();
+    return merged.filter((item: any) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  }, [searchQuery, searchResults, defaultItems, queuedItems, doneItems]);
+
+  const linkMutation = trpc.content.create.useMutation();
   const createMutation = trpc.content.create.useMutation();
   const addMediaMutation = trpc.media.add.useMutation();
 
@@ -105,6 +129,41 @@ export function AddContentModal({
   const { data: allSubcategories = [] } = trpc.subcategories.listAll.useQuery(undefined, {
     enabled: visible,
   });
+  const { data: existingContent } = trpc.content.searchExisting.useQuery(
+    { heading: heading.trim() },
+    { enabled: visible && heading.trim().length > 2 }
+  );
+
+  const sortedCategories = useMemo(() => {
+    return [...categories].sort((a, b) => a.id - b.id);
+  }, [categories]);
+
+  const activeSubcategories = useMemo(() => {
+    const catSet = new Set(selectedCategoryIds);
+    if (initialCategoryId) catSet.add(initialCategoryId);
+    return allSubcategories.filter(
+      (s) => catSet.has(s.categoryId) || selectedSubcategoryIds.includes(s.id)
+    );
+  }, [allSubcategories, selectedCategoryIds, initialCategoryId, selectedSubcategoryIds]);
+
+  const availableSearchResults = useMemo(() => {
+    return allExistingCandidates.filter((item: any) => {
+      // When inside a subcategory, check ONLY that subcategory (not parent category)
+      const isLinked = initialSubcategoryId
+        ? item.subcategoryIds?.includes(initialSubcategoryId)
+        : initialCategoryId
+          ? item.categoryIds?.includes(initialCategoryId)
+          : false;
+      return !isLinked;
+    });
+  }, [allExistingCandidates, initialCategoryId, initialSubcategoryId]);
+
+  const displayedLinkResults = useMemo(() => {
+    if (searchQuery.trim().length > 0) {
+      return availableSearchResults;
+    }
+    return availableSearchResults.slice(0, visibleLinkCount);
+  }, [availableSearchResults, searchQuery, visibleLinkCount]);
 
   useEffect(() => {
     if (visible) {
@@ -112,12 +171,13 @@ export function AddContentModal({
       setDescription("");
       setSelectedCategoryIds(initialCategoryId ? [initialCategoryId] : []);
       setSelectedSubcategoryIds(initialSubcategoryId ? [initialSubcategoryId] : []);
+      setCategoriesOpen(false);
       setCoverImage(null);
       setMediaAssets([]);
       setIsSubmitting(false);
       setUploadStatus("");
       setSearchQuery("");
-      setActiveTab("create");
+      setVisibleLinkCount(20);
       setLatitude(null);
       setLongitude(null);
       setLocationLinkUrl(null);
@@ -134,9 +194,16 @@ export function AddContentModal({
   };
 
   const toggleSubcategory = (subId: number) => {
+    const isChecking = !selectedSubcategoryIds.includes(subId);
     setSelectedSubcategoryIds((prev) =>
-      prev.includes(subId) ? prev.filter((id) => id !== subId) : [...prev, subId]
+      isChecking ? [...prev, subId] : prev.filter((id) => id !== subId)
     );
+    if (isChecking) {
+      const sub = allSubcategories.find((s) => s.id === subId);
+      if (sub) {
+        setSelectedCategoryIds((prev) => prev.filter((id) => id !== sub.categoryId));
+      }
+    }
   };
 
   const handlePickMedia = async (source: "gallery" | "camera" = "gallery") => {
@@ -196,99 +263,112 @@ export function AddContentModal({
   };
 
   const handleCreateSubmit = async () => {
+    if (selectedCategoryIds.length === 0 && selectedSubcategoryIds.length === 0) {
+      showAlert("Validation", "Please select at least one category or subcategory");
+      return;
+    }
     if (!heading.trim()) {
       showAlert("Validation", "Heading is required");
       return;
     }
 
     setIsSubmitting(true);
-    setUploadStatus("Creating content...");
-    setUploadStage("cover");
+    setUploadStatus(existingContent ? "Linking content..." : "Creating content...");
+    setUploadStage(existingContent ? "saving_entry" : "cover");
 
     try {
-      let posterUrl: string | undefined = undefined;
-      let posterKey: string | undefined = undefined;
+      if (existingContent) {
+        await createMutation.mutateAsync({
+          heading: heading.trim(),
+          categoryIds: selectedCategoryIds,
+          subcategoryIds: selectedSubcategoryIds,
+        });
+      } else {
+        let posterUrl: string | undefined = undefined;
+        let posterKey: string | undefined = undefined;
 
-      if (coverImage) {
-        if (coverImage.isUrl) {
-          posterUrl = coverImage.uri;
-        } else if (coverImage.asset) {
-          setUploadStage("cover");
-          const fName = coverImage.asset.fileName || `cover_${Date.now()}.jpg`;
-          setCurrentUploadFileName(fName);
-          setUploadStatus("Uploading cover image...");
-          const res = await uploadFile(
-            coverImage.asset.uri,
-            fName,
-            coverImage.asset.mimeType || "image/jpeg",
-            (loaded, total) => {
-              setUploadLoadedBytes(loaded);
-              setUploadTotalBytes(total);
-              setUploadPct(Math.round((loaded / total) * 100));
+        if (coverImage) {
+          if (coverImage.isUrl) {
+            posterUrl = coverImage.uri;
+          } else if (coverImage.asset) {
+            setUploadStage("cover");
+            const fName = coverImage.asset.fileName || `cover_${Date.now()}.jpg`;
+            setCurrentUploadFileName(fName);
+            setUploadStatus("Uploading cover image...");
+            const res = await uploadFile(
+              coverImage.asset.uri,
+              fName,
+              coverImage.asset.mimeType || "image/jpeg",
+              (loaded, total) => {
+                setUploadLoadedBytes(loaded);
+                setUploadTotalBytes(total);
+                setUploadPct(Math.round((loaded / total) * 100));
+              }
+            );
+            if (res) {
+              posterUrl = res.url;
+              posterKey = res.key;
             }
-          );
-          if (res) {
-            posterUrl = res.url;
-            posterKey = res.key;
           }
         }
-      }
 
-      setUploadStage("saving_entry");
-      setUploadStatus("Saving details...");
-      const finalLocationLink = locationLinkUrl || (locationLinkInput.trim() || undefined);
-      const newItem = await createMutation.mutateAsync({
-        heading: heading.trim(),
-        description: description.trim() || undefined,
-        categoryIds: selectedCategoryIds,
-        subcategoryIds: selectedSubcategoryIds,
-        posterImageUrl: posterUrl,
-        posterImageKey: posterKey,
-        latitude: latitude ?? undefined,
-        longitude: longitude ?? undefined,
-        locationLinkUrl: finalLocationLink,
-      });
+        setUploadStage("saving_entry");
+        setUploadStatus("Saving details...");
+        const finalLocationLink = locationLinkUrl || (locationLinkInput.trim() || undefined);
+        const newItem = await createMutation.mutateAsync({
+          heading: heading.trim(),
+          description: description.trim() || undefined,
+          categoryIds: selectedCategoryIds,
+          subcategoryIds: selectedSubcategoryIds,
+          posterImageUrl: posterUrl,
+          posterImageKey: posterKey,
+          posterCropData: coverImage?.cropData ? JSON.stringify(coverImage.cropData) : undefined,
+          latitude: latitude ?? undefined,
+          longitude: longitude ?? undefined,
+          locationLinkUrl: finalLocationLink,
+        });
 
-      if (newItem && mediaAssets.length > 0) {
-        setUploadStage("media");
-        for (let i = 0; i < mediaAssets.length; i++) {
-          const itemMedia = mediaAssets[i];
-          const ext = itemMedia.type === "video" ? "mp4" : "jpg";
-          let mName = itemMedia.asset.fileName || `media_${Date.now()}_${i}.${ext}`;
-          if (!mName.includes(".")) mName = `${mName}.${ext}`;
-          setCurrentUploadFileName(mName);
-          setUploadPct(0);
-          setUploadStatus(`Uploading media ${i + 1} of ${mediaAssets.length}...`);
-          const res = await uploadFile(
-            itemMedia.asset.uri,
-            mName,
-            itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg"),
-            (loaded, total) => {
-              setUploadLoadedBytes(loaded);
-              setUploadTotalBytes(total);
-              setUploadPct(Math.round((loaded / total) * 100));
+        if (newItem && mediaAssets.length > 0) {
+          setUploadStage("media");
+          for (let i = 0; i < mediaAssets.length; i++) {
+            const itemMedia = mediaAssets[i];
+            const ext = itemMedia.type === "video" ? "mp4" : "jpg";
+            let mName = itemMedia.asset.fileName || `media_${Date.now()}_${i}.${ext}`;
+            if (!mName.includes(".")) mName = `${mName}.${ext}`;
+            setCurrentUploadFileName(mName);
+            setUploadPct(0);
+            setUploadStatus(`Uploading media ${i + 1} of ${mediaAssets.length}...`);
+            const res = await uploadFile(
+              itemMedia.asset.uri,
+              mName,
+              itemMedia.asset.mimeType || (itemMedia.type === "video" ? "video/mp4" : "image/jpeg"),
+              (loaded, total) => {
+                setUploadLoadedBytes(loaded);
+                setUploadTotalBytes(total);
+                setUploadPct(Math.round((loaded / total) * 100));
+              }
+            );
+
+            if (res) {
+              await addMediaMutation.mutateAsync({
+                contentItemId: newItem.id,
+                url: res.url,
+                key: res.key,
+                type: itemMedia.type,
+                order: i,
+              });
             }
-          );
-
-          if (res) {
-            await addMediaMutation.mutateAsync({
-              contentItemId: newItem.id,
-              url: res.url,
-              key: res.key,
-              type: itemMedia.type,
-              order: i,
-            });
           }
         }
       }
 
       setUploadStage("idle");
-
       if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
       if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
       utils.content.listByStatus.invalidate();
       utils.content.listUncategorized.invalidate();
 
+      showToast("Content added!", "success");
       onContentAdded?.();
       onClose();
     } catch (err: any) {
@@ -300,27 +380,25 @@ export function AddContentModal({
   };
 
   const handleLinkItem = async (existingItem: any) => {
+    if (selectedCategoryIds.length === 0 && selectedSubcategoryIds.length === 0) {
+      showAlert("Validation", "Please select at least one category or subcategory");
+      return;
+    }
     try {
       setIsSubmitting(true);
-      const catIds = new Set<number>((existingItem.categoryIds || []) as number[]);
-      const subIds = new Set<number>((existingItem.subcategoryIds || []) as number[]);
-
-      if (initialCategoryId) catIds.add(initialCategoryId);
-      if (initialSubcategoryId) subIds.add(initialSubcategoryId);
-
       await linkMutation.mutateAsync({
-        itemId: existingItem.id,
-        categoryIds: Array.from(catIds),
-        subcategoryIds: Array.from(subIds),
+        categoryIds: selectedCategoryIds,
+        subcategoryIds: selectedSubcategoryIds,
+        heading: existingItem.heading,
       });
 
       if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
       if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
       utils.content.listByStatus.invalidate();
+      utils.content.search.invalidate();
 
-      showToast("Content linked successfully", "success");
+      showToast("Content linked!", "success");
       onContentAdded?.();
-      onClose();
     } catch (err: any) {
       showToast(err?.message || "Failed to link content", "error");
     } finally {
@@ -328,554 +406,600 @@ export function AddContentModal({
     }
   };
 
+  const handleScroll = (e: any) => {
+    if (searchQuery.trim().length > 0) return;
+    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+    const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 120;
+    if (isNearBottom && visibleLinkCount < availableSearchResults.length) {
+      setVisibleLinkCount((prev) => prev + 20);
+    }
+  };
+
+  const inputBg = theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC";
+
   return (
     <>
-      <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <View
-        style={[
-          styles.container,
-          {
-            backgroundColor: theme === "dark" ? "#0A0A0A" : "#FFFFFF",
-            paddingTop: insets.top,
-            paddingBottom: insets.bottom,
-          },
-        ]}
-      >
-        {/* Header */}
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Add Content</Text>
-          <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={10}>
-            <X size={20} color={colors.textMuted} />
-          </Pressable>
-        </View>
-
-        {/* Tab switcher: Create New vs Link Existing */}
-        <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-          <Pressable
-            onPress={() => setActiveTab("create")}
-            style={[
-              styles.tabItem,
-              activeTab === "create" && { borderBottomColor: colors.text, borderBottomWidth: 2 },
-            ]}
-          >
-            <Upload size={14} color={activeTab === "create" ? colors.text : colors.textSubtle} />
-            <Text
-              style={[
-                styles.tabText,
-                { color: activeTab === "create" ? colors.text : colors.textSubtle },
-              ]}
-            >
-              Create New
-            </Text>
-          </Pressable>
-
-          <Pressable
-            onPress={() => setActiveTab("link")}
-            style={[
-              styles.tabItem,
-              activeTab === "link" && { borderBottomColor: colors.text, borderBottomWidth: 2 },
-            ]}
-          >
-            <Link size={14} color={activeTab === "link" ? colors.text : colors.textSubtle} />
-            <Text
-              style={[
-                styles.tabText,
-                { color: activeTab === "link" ? colors.text : colors.textSubtle },
-              ]}
-            >
-              Link Existing
-            </Text>
-          </Pressable>
-        </View>
-
-        {activeTab === "create" ? (
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Heading */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Heading *</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    color: colors.text,
-                    borderColor: colors.border,
-                    backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
-                  },
-                ]}
-                value={heading}
-                onChangeText={setHeading}
-                placeholder="Content heading"
-                placeholderTextColor={colors.textSubtle}
-              />
-            </View>
-
-            {/* Description */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Description</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.multilineInput,
-                  {
-                    color: colors.text,
-                    borderColor: colors.border,
-                    backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
-                  },
-                ]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Description (optional)"
-                placeholderTextColor={colors.textSubtle}
-                multiline
-                numberOfLines={3}
-              />
-            </View>
-
-            {/* Cover Poster Image */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
-              <ImagePickerToggle
-                label="Attach Cover Image"
-                currentImageUrl={coverImage?.uri}
-                onImageSelected={setCoverImage}
-              />
-            </View>
-
-            {/* Categories Multi-Select — hidden when initialCategoryId is preset */}
-            {!initialCategoryId && categories.length > 0 && (
-              <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { color: colors.textMuted }]}>Categories</Text>
-                <View style={styles.checkboxGroup}>
-                  {categories.map((cat) => {
-                    const isChecked = selectedCategoryIds.includes(cat.id);
-                    return (
-                      <Pressable
-                        key={cat.id}
-                        onPress={() => toggleCategory(cat.id)}
-                        style={[
-                          styles.chipOption,
-                          isChecked
-                            ? { backgroundColor: "rgba(59, 130, 246, 0.2)", borderColor: "#3B82F6" }
-                            : { backgroundColor: colors.surface, borderColor: colors.border },
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.checkboxSquare,
-                            isChecked ? { backgroundColor: "#3B82F6", borderColor: "#3B82F6" } : { borderColor: colors.textSubtle },
-                          ]}
-                        >
-                          {isChecked && <Check size={12} color="#FFFFFF" />}
-                        </View>
-                        <Text
-                          style={[
-                            styles.chipOptionText,
-                            { color: isChecked ? "#3B82F6" : colors.text },
-                          ]}
-                        >
-                          {cat.name}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
-
-            {/* Subcategories — hidden when initialSubcategoryId is preset; label omits "Optional" when inside a subcategory context */}
-            {!initialSubcategoryId && allSubcategories.length > 0 && (
-              <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { color: colors.textMuted }]}>
-                  {initialCategoryId ? "Subcategory" : "Subcategories (Optional)"}
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <View
+          style={[
+            styles.modalBackdrop,
+            Platform.OS === "web"
+              ? ({ backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" } as any)
+              : null,
+          ]}
+        >
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <View style={[styles.modalSheet, { backgroundColor: colors.bg, borderColor: colors.border }]}>
+            {/* Header matching Add Content screenshot */}
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Add Content</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                  Upload photos, videos or link existing items
                 </Text>
-                <View style={styles.checkboxGroup}>
-                  {allSubcategories.map((sub) => {
-                    const isChecked = selectedSubcategoryIds.includes(sub.id);
-                    return (
-                      <Pressable
-                        key={sub.id}
-                        onPress={() => toggleSubcategory(sub.id)}
-                        style={[
-                          styles.chipOption,
-                          isChecked
-                            ? { backgroundColor: "rgba(59, 130, 246, 0.2)", borderColor: "#3B82F6" }
-                            : { backgroundColor: colors.surface, borderColor: colors.border },
-                        ]}
-                      >
-                        <View
+              </View>
+              <Pressable onPress={onClose} hitSlop={10}>
+                <X size={20} color={colors.textMuted} />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              onScroll={handleScroll}
+              scrollEventThrottle={150}
+            >
+              {/* Categories Dropdown (hidden when initialCategoryId is preset) */}
+              {!initialCategoryId && sortedCategories.length > 0 && (
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>Categories</Text>
+                  <Pressable
+                    onPress={() => setCategoriesOpen((v) => !v)}
+                    style={[
+                      styles.dropdownTrigger,
+                      { borderColor: colors.border, backgroundColor: inputBg },
+                    ]}
+                  >
+                    <Text style={[styles.dropdownTriggerText, { color: colors.text }]}>
+                      {selectedCategoryIds.length === 0
+                        ? "Select categories..."
+                        : `${selectedCategoryIds.length} selected`}
+                    </Text>
+                    {categoriesOpen ? (
+                      <ChevronUp size={16} color={colors.textMuted} />
+                    ) : (
+                      <ChevronDown size={16} color={colors.textMuted} />
+                    )}
+                  </Pressable>
+                  {categoriesOpen && (
+                    <View
+                      style={[
+                        styles.dropdownMenu,
+                        { borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                    >
+                      <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
+                        {sortedCategories.map((cat) => {
+                          const isChecked = selectedCategoryIds.includes(cat.id);
+                          return (
+                            <Pressable
+                              key={cat.id}
+                              onPress={() => toggleCategory(cat.id)}
+                              style={[
+                                styles.dropdownItem,
+                                isChecked && { backgroundColor: "rgba(59, 130, 246, 0.12)" },
+                              ]}
+                            >
+                              <View
+                                style={[
+                                  styles.checkboxSquare,
+                                  isChecked
+                                    ? { backgroundColor: theme === "dark" ? "#FFFFFF" : "#111827", borderColor: "transparent" }
+                                    : { borderColor: colors.textSubtle },
+                                ]}
+                              >
+                                {isChecked && (
+                                  <Check size={12} color={theme === "dark" ? "#000000" : "#FFFFFF"} />
+                                )}
+                              </View>
+                              <Text style={[styles.dropdownItemText, { color: colors.text }]}>
+                                {cat.name}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Subcategories pills */}
+              {!initialSubcategoryId && activeSubcategories.length > 0 && (
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>
+                    Subcategories (Optional)
+                  </Text>
+                  <View style={styles.checkboxGroup}>
+                    {activeSubcategories.map((sub) => {
+                      const isChecked = selectedSubcategoryIds.includes(sub.id);
+                      return (
+                        <Pressable
+                          key={sub.id}
+                          onPress={() => toggleSubcategory(sub.id)}
                           style={[
-                            styles.checkboxSquare,
-                            isChecked ? { backgroundColor: "#3B82F6", borderColor: "#3B82F6" } : { borderColor: colors.textSubtle },
+                            styles.badgePill,
+                            isChecked
+                              ? { backgroundColor: "rgba(59, 130, 246, 0.2)", borderColor: "#3B82F6" }
+                              : { backgroundColor: colors.surface, borderColor: colors.border },
                           ]}
                         >
-                          {isChecked && <Check size={12} color="#FFFFFF" />}
-                        </View>
-                        <Text
-                          style={[
-                            styles.chipOptionText,
-                            { color: isChecked ? "#3B82F6" : colors.text },
-                          ]}
-                        >
-                          {sub.name}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
+                          <Text
+                            style={[
+                              styles.badgePillText,
+                              { color: isChecked ? "#3B82F6" : colors.textMuted },
+                            ]}
+                          >
+                            {sub.name}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
 
-            {/* Media Attachments Section */}
-            <View style={styles.fieldGroup}>
-              <View style={styles.mediaHeaderRow}>
-                <Text style={[styles.label, { color: colors.textMuted, marginBottom: 0 }]}>
-                  Media Gallery ({mediaAssets.length})
-                </Text>
-                <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
-                  <Pressable onPress={() => handlePickMedia("camera")} style={styles.addMediaSmallBtn}>
-                    <Camera size={14} color="#3B82F6" />
-                    <Text style={styles.addMediaSmallBtnText}>Camera</Text>
-                  </Pressable>
-                  <Pressable onPress={() => handlePickMedia("gallery")} style={styles.addMediaSmallBtn}>
-                    <Plus size={14} color="#3B82F6" />
-                    <Text style={styles.addMediaSmallBtnText}>Add Media</Text>
-                  </Pressable>
-                </View>
+              {/* Heading */}
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.textMuted }]}>Heading</Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    { color: colors.text, borderColor: colors.border, backgroundColor: inputBg },
+                  ]}
+                  value={heading}
+                  onChangeText={setHeading}
+                  placeholder="e.g., Inception"
+                  placeholderTextColor={colors.textSubtle}
+                />
+                {existingContent && (
+                  <View style={styles.existingBanner}>
+                    <AlertCircle size={16} color="#3B82F6" />
+                    <Text style={styles.existingBannerText}>
+                      Existing content found. We&apos;ll link it to the selected categories.
+                    </Text>
+                  </View>
+                )}
               </View>
 
-              {mediaAssets.length > 0 && (
-                <View style={styles.mediaGrid}>
-                  {mediaAssets.map((item, idx) => (
-                    <View key={`media-${idx}`} style={styles.mediaThumbnailWrapper}>
-                      <Image source={{ uri: item.asset.uri }} style={styles.mediaThumbnail} contentFit="cover" />
-                      {item.type === "video" && (
-                        <View style={styles.videoBadge}>
-                          <Film size={12} color="#FFFFFF" />
-                        </View>
-                      )}
+              {!existingContent && (
+                <>
+                  {/* Description */}
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.textMuted }]}>
+                      Description (Optional)
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        styles.multilineInput,
+                        { color: colors.text, borderColor: colors.border, backgroundColor: inputBg },
+                      ]}
+                      value={description}
+                      onChangeText={setDescription}
+                      placeholder="Add notes..."
+                      placeholderTextColor={colors.textSubtle}
+                      multiline
+                      numberOfLines={2}
+                    />
+                  </View>
+
+                  {/* Cover Image */}
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.textMuted }]}>Cover Image</Text>
+                    <ImagePickerToggle
+                      label="Cover Image"
+                      currentImageUrl={coverImage?.uri}
+                      currentCropData={
+                        coverImage?.cropData ? JSON.stringify(coverImage.cropData) : null
+                      }
+                      naturalRatio={true}
+                      frameHeight={180}
+                      onImageSelected={setCoverImage}
+                    />
+                  </View>
+
+                  {/* Photos & Videos grid matching screenshot */}
+                  <View style={styles.fieldGroup}>
+                    <View style={styles.mediaHeaderRow}>
+                      <Text style={[styles.label, { color: colors.textMuted, marginBottom: 0 }]}>
+                        Photos &amp; Videos
+                      </Text>
                       <Pressable
-                        onPress={() => handleRemoveMedia(idx)}
-                        style={styles.deleteMediaThumbnailBtn}
+                        onPress={() => handlePickMedia("camera")}
+                        style={styles.cameraSmallBtn}
                       >
-                        <X size={12} color="#FFFFFF" />
+                        <Camera size={14} color="#3B82F6" />
+                        <Text style={styles.cameraSmallBtnText}>Camera</Text>
                       </Pressable>
                     </View>
-                  ))}
-                </View>
-              )}
-            </View>
+                    <View style={styles.mediaGrid}>
+                      {mediaAssets.map((item, idx) => (
+                        <View key={`media-${idx}`} style={styles.mediaThumbnailWrapper}>
+                          <Image
+                            source={{ uri: item.asset.uri }}
+                            style={styles.mediaThumbnail}
+                            contentFit="cover"
+                          />
+                          {item.type === "video" && (
+                            <View style={styles.videoBadge}>
+                              <Film size={12} color="#FFFFFF" />
+                            </View>
+                          )}
+                          <Pressable
+                            onPress={() => handleRemoveMedia(idx)}
+                            style={styles.deleteMediaThumbnailBtn}
+                          >
+                            <X size={12} color="#FFFFFF" />
+                          </Pressable>
+                        </View>
+                      ))}
+                      <Pressable
+                        onPress={() => handlePickMedia("gallery")}
+                        style={[
+                          styles.addMediaDashedBox,
+                          { borderColor: colors.border },
+                        ]}
+                      >
+                        <ImagePlus size={22} color={colors.textSubtle} />
+                      </Pressable>
+                    </View>
+                  </View>
 
-            {/* Location Section */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Location</Text>
-              {(latitude && longitude) || locationLinkUrl ? (
-                <View style={[styles.locationCard, { backgroundColor: theme === "dark" ? colors.surface : "#F1F5F9", borderColor: colors.border }]}>
-                  <MapPin size={16} color="#10B981" />
-                  <Text style={[styles.locationCardText, { color: colors.text }]} numberOfLines={2}>
-                    {latitude && longitude ? `📍 Coordinates: ${latitude}, ${longitude}` : `🔗 ${locationLinkUrl}`}
-                  </Text>
-                  <Pressable
-                    onPress={() => {
-                      setLatitude(null);
-                      setLongitude(null);
-                      setLocationLinkUrl(null);
-                      setLocationLinkInput("");
-                    }}
-                    hitSlop={8}
-                  >
-                    <X size={16} color={colors.textMuted} />
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={styles.locationBtnRow}>
-                  <Pressable
-                    onPress={handleGetLocation}
-                    disabled={isLocating}
-                    style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: theme === "dark" ? colors.surface : "#FFFFFF" }]}
-                  >
-                    {isLocating ? (
-                      <ActivityIndicator size="small" color={colors.text} />
+                  {/* Location Section */}
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.textMuted }]}>Location (Optional)</Text>
+                    {(latitude && longitude) || locationLinkUrl ? (
+                      <View
+                        style={[
+                          styles.locationCard,
+                          {
+                            backgroundColor: theme === "dark" ? colors.surface : "#F1F5F9",
+                            borderColor: colors.border,
+                          },
+                        ]}
+                      >
+                        <MapPin size={16} color="#10B981" />
+                        <Text style={[styles.locationCardText, { color: colors.text }]} numberOfLines={2}>
+                          {latitude && longitude
+                            ? `📍 Coordinates: ${latitude}, ${longitude}`
+                            : `🔗 ${locationLinkUrl}`}
+                        </Text>
+                        <Pressable
+                          onPress={() => {
+                            setLatitude(null);
+                            setLongitude(null);
+                            setLocationLinkUrl(null);
+                            setLocationLinkInput("");
+                          }}
+                          hitSlop={8}
+                        >
+                          <X size={16} color={colors.textMuted} />
+                        </Pressable>
+                      </View>
                     ) : (
-                      <Navigation size={14} color={colors.text} />
-                    )}
-                    <Text style={[styles.locationBtnText, { color: colors.text }]}>
-                      {isLocating ? "Getting location..." : "Use Current Location"}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setShowLocationLinkField((v) => !v)}
-                    style={[styles.locationBtn, { borderColor: colors.border, backgroundColor: theme === "dark" ? colors.surface : "#FFFFFF" }]}
-                  >
-                    <Link2 size={14} color={colors.text} />
-                    <Text style={[styles.locationBtnText, { color: colors.text }]}>Paste Link</Text>
-                  </Pressable>
-                </View>
-              )}
-              {showLocationLinkField && !latitude && !locationLinkUrl && (
-                <View style={[styles.locationLinkRow, { borderColor: colors.border }]}>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      {
-                        color: colors.text,
-                        borderColor: colors.border,
-                        backgroundColor: theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#F8FAFC",
-                        flex: 1,
-                      },
-                    ]}
-                    value={locationLinkInput}
-                    onChangeText={setLocationLinkInput}
-                    placeholder="Paste a maps link..."
-                    placeholderTextColor={colors.textSubtle}
-                    autoCapitalize="none"
-                  />
-                  <Pressable
-                    onPress={() => {
-                      const link = locationLinkInput.trim();
-                      if (link) {
-                        setLocationLinkUrl(link);
-                        // Auto-extract coordinates if in URL
-                        const m = link.match(/(?:search\/|@|q=|\?q=|destination=)([+-]?\d+(?:\.\d+)?)[,\s+]+([+-]?\d+(?:\.\d+)?)/);
-                        if (m && m[1] && m[2]) {
-                          setLatitude(m[1]);
-                          setLongitude(m[2]);
-                        } else {
-                          setLatitude(null);
-                          setLongitude(null);
-                        }
-                        setShowLocationLinkField(false);
-                      }
-                    }}
-                    style={styles.locationLinkSaveBtn}
-                  >
-                    <Text style={styles.locationLinkSaveBtnText}>Set</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
-
-            {/* Real-time Upload Progress card with byte-by-byte metrics and speed */}
-            {isSubmitting && (
-              <UploadProgress
-                pct={uploadPct}
-                loadedBytes={uploadLoadedBytes}
-                totalBytes={uploadTotalBytes}
-                isSubmitting={isSubmitting}
-                stage={uploadStage}
-                fileName={currentUploadFileName}
-              />
-            )}
-
-            {/* Submit Button */}
-            <Pressable
-              onPress={handleCreateSubmit}
-              disabled={isSubmitting}
-              style={[styles.saveButton, isSubmitting && { opacity: 0.6 }]}
-            >
-              {isSubmitting ? (
-                <View style={styles.savingRow}>
-                  <ActivityIndicator color="#000000" size="small" />
-                  <Text style={styles.saveButtonText}>{uploadStatus || "Creating..."}</Text>
-                </View>
-              ) : (
-                <Text style={styles.saveButtonText}>Create Content</Text>
-              )}
-            </Pressable>
-          </ScrollView>
-        ) : (
-          /* Link Existing Content Tab */
-          <View style={styles.linkContainer}>
-            <View style={[styles.searchBar, { borderColor: colors.border }]}>
-              <Search size={16} color={colors.textSubtle} style={{ marginRight: 8 }} />
-              <TextInput
-                style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search existing items to link..."
-                placeholderTextColor={colors.textSubtle}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoFocus
-              />
-              {searchQuery.length > 0 && (
-                <Pressable onPress={() => setSearchQuery("")}>
-                  <X size={16} color={colors.textSubtle} />
-                </Pressable>
-              )}
-            </View>
-
-            {searchLoading ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator size="small" color={colors.accent} />
-              </View>
-            ) : searchResults.length > 0 ? (
-              <ScrollView style={styles.searchResultsList}>
-                {searchResults.map((result: any) => (
-                  <View
-                    key={result.id}
-                    style={[styles.resultItem, { borderBottomColor: colors.border }]}
-                  >
-                    {result.posterImageUrl ? (
-                      <Image
-                        source={{ uri: result.posterImageUrl }}
-                        style={styles.resultPoster}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={[styles.resultPosterPlaceholder, { backgroundColor: colors.surface }]}>
-                        <Film size={16} color={colors.textSubtle} />
+                      <View style={styles.locationBtnRow}>
+                        <Pressable
+                          onPress={handleGetLocation}
+                          disabled={isLocating}
+                          style={[
+                            styles.locationBtn,
+                            { borderColor: colors.border, backgroundColor: inputBg },
+                          ]}
+                        >
+                          {isLocating ? (
+                            <ActivityIndicator size="small" color={colors.text} />
+                          ) : (
+                            <Navigation size={14} color={colors.text} />
+                          )}
+                          <Text style={[styles.locationBtnText, { color: colors.text }]}>
+                            {isLocating ? "Getting location..." : "Use Current Location"}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => setShowLocationLinkField((v) => !v)}
+                          style={[
+                            styles.locationBtn,
+                            { borderColor: colors.border, backgroundColor: inputBg },
+                          ]}
+                        >
+                          <Link2 size={14} color={colors.text} />
+                          <Text style={[styles.locationBtnText, { color: colors.text }]}>
+                            Paste Link
+                          </Text>
+                        </Pressable>
                       </View>
                     )}
-                    <View style={styles.resultInfo}>
-                      <Text style={[styles.resultHeading, { color: colors.text }]} numberOfLines={1}>
-                        {result.heading}
-                      </Text>
-                      {result.description ? (
-                        <Text style={[styles.resultDesc, { color: colors.textMuted }]} numberOfLines={1}>
-                          {result.description}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <Pressable
-                      onPress={() => handleLinkItem(result)}
-                      disabled={isSubmitting}
-                      style={styles.linkActionBtn}
-                    >
-                      <Text style={styles.linkActionBtnText}>Link</Text>
-                    </Pressable>
+                    {showLocationLinkField && !latitude && !locationLinkUrl && (
+                      <View style={styles.locationLinkRow}>
+                        <TextInput
+                          style={[
+                            styles.input,
+                            {
+                              color: colors.text,
+                              borderColor: colors.border,
+                              backgroundColor: inputBg,
+                              flex: 1,
+                            },
+                          ]}
+                          value={locationLinkInput}
+                          onChangeText={setLocationLinkInput}
+                          placeholder="Paste a maps link..."
+                          placeholderTextColor={colors.textSubtle}
+                          autoCapitalize="none"
+                        />
+                        <Pressable
+                          onPress={() => {
+                            const link = locationLinkInput.trim();
+                            if (link) {
+                              setLocationLinkUrl(link);
+                              const m = link.match(
+                                /(?:search\/|@|q=|\?q=|destination=)([+-]?\d+(?:\.\d+)?)[,\s+]+([+-]?\d+(?:\.\d+)?)/
+                              );
+                              if (m && m[1] && m[2]) {
+                                setLatitude(m[1]);
+                                setLongitude(m[2]);
+                              } else {
+                                setLatitude(null);
+                                setLongitude(null);
+                              }
+                              setShowLocationLinkField(false);
+                            }
+                          }}
+                          style={styles.locationLinkSaveBtn}
+                        >
+                          <Text style={styles.locationLinkSaveBtnText}>Set</Text>
+                        </Pressable>
+                      </View>
+                    )}
                   </View>
-                ))}
-              </ScrollView>
-            ) : (
-              <View style={styles.emptySearchBox}>
-                <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
-                  {searchQuery.trim().length > 0
-                    ? "No matching items found"
-                    : "Type above to search existing content"}
-                </Text>
-              </View>
-            )}
+                </>
+              )}
+
+              {isSubmitting && uploadTotalBytes > 0 && (
+                <UploadProgress
+                  pct={uploadPct}
+                  loadedBytes={uploadLoadedBytes}
+                  totalBytes={uploadTotalBytes}
+                  isSubmitting={isSubmitting}
+                  stage={uploadStage}
+                  fileName={currentUploadFileName}
+                />
+              )}
+
+              {/* Submit Button */}
+              <Pressable
+                onPress={handleCreateSubmit}
+                disabled={isSubmitting}
+                style={[
+                  styles.saveButton,
+                  { backgroundColor: theme === "dark" ? "#FFFFFF" : "#111827" },
+                  isSubmitting && { opacity: 0.6 },
+                ]}
+              >
+                {isSubmitting ? (
+                  <View style={styles.savingRow}>
+                    <ActivityIndicator
+                      color={theme === "dark" ? "#000000" : "#FFFFFF"}
+                      size="small"
+                    />
+                    <Text
+                      style={[
+                        styles.saveButtonText,
+                        { color: theme === "dark" ? "#000000" : "#FFFFFF" },
+                      ]}
+                    >
+                      {uploadStatus || "Saving..."}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text
+                    style={[
+                      styles.saveButtonText,
+                      { color: theme === "dark" ? "#000000" : "#FFFFFF" },
+                    ]}
+                  >
+                    {existingContent ? "Link Existing Content" : "Add Content"}
+                  </Text>
+                )}
+              </Pressable>
+
+              {/* LINK EXISTING CONTENT section below divider (matching screenshot & AddContentForm.tsx) */}
+              {(initialCategoryId || initialSubcategoryId) && (
+                <View style={[styles.linkSection, { borderTopColor: colors.border }]}>
+                  <Text style={[styles.linkSectionTitle, { color: colors.text }]}>
+                    LINK EXISTING CONTENT
+                  </Text>
+                  <Text style={[styles.linkSectionSub, { color: colors.textMuted }]}>
+                    Select from your other categories
+                  </Text>
+
+                  <TextInput
+                    style={[
+                      styles.searchInput,
+                      { color: colors.text, borderColor: colors.border, backgroundColor: inputBg },
+                    ]}
+                    placeholder="Search items to link..."
+                    placeholderTextColor={colors.textSubtle}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                  />
+
+                  {searchLoading ? (
+                    <View style={styles.loadingBox}>
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    </View>
+                  ) : displayedLinkResults.length > 0 ? (
+                    <View style={styles.linkList}>
+                      {displayedLinkResults.map((item: any) => {
+                        const total =
+                          (item.categoryIds?.length || 0) + (item.subcategoryIds?.length || 0);
+                        return (
+                          <View
+                            key={item.id}
+                            style={[
+                              styles.resultItem,
+                              { borderColor: colors.border, backgroundColor: colors.surface },
+                            ]}
+                          >
+                            {item.posterImageUrl ? (
+                              <Image
+                                source={{ uri: item.posterImageUrl }}
+                                style={styles.resultPoster}
+                                contentFit="cover"
+                              />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.resultPosterPlaceholder,
+                                  { backgroundColor: inputBg },
+                                ]}
+                              >
+                                <Film size={16} color={colors.textSubtle} />
+                              </View>
+                            )}
+                            <View style={styles.resultInfo}>
+                              <Text
+                                style={[styles.resultHeading, { color: colors.text }]}
+                                numberOfLines={1}
+                              >
+                                {item.heading}
+                              </Text>
+                              <Text style={[styles.resultCollections, { color: colors.textMuted }]}>
+                                {total === 1 ? "1 collection" : `${total} collections`}
+                              </Text>
+                            </View>
+                            <Pressable
+                              onPress={() => handleLinkItem(item)}
+                              disabled={isSubmitting}
+                              style={[
+                                styles.linkActionBtn,
+                                { borderColor: colors.border, backgroundColor: inputBg },
+                              ]}
+                            >
+                              <Text style={[styles.linkActionBtnText, { color: colors.text }]}>
+                                Add
+                              </Text>
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                      {!searchQuery.trim() && visibleLinkCount < availableSearchResults.length && (
+                        <Pressable
+                          onPress={() => setVisibleLinkCount((prev) => prev + 20)}
+                          style={styles.loadMoreBtn}
+                        >
+                          <Text style={[styles.loadMoreText, { color: colors.textMuted }]}>
+                            Showing {displayedLinkResults.length} of {availableSearchResults.length} · Tap or scroll for more
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  ) : (
+                    <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
+                      {searchQuery.trim().length > 0
+                        ? "No matching items found"
+                        : "All your content is already linked here"}
+                    </Text>
+                  )}
+                </View>
+              )}
+            </ScrollView>
           </View>
-        )}
-      </View>
-    </Modal>
-    <AppDialogRenderer {...dialogState} onHide={hide} />
-    <AppToastRenderer {...toastState} />
-  </>
-);
+        </View>
+      </Modal>
+      <AppDialogRenderer {...dialogState} onHide={hide} />
+      <AppToastRenderer {...toastState} />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  modalBackdrop: {
     flex: 1,
+    backgroundColor: Platform.OS === "web" ? "rgba(0, 0, 0, 0.58)" : "rgba(0, 0, 0, 0.8)",
+    justifyContent: "flex-end",
   },
-  header: {
+  modalSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    padding: 22,
+    paddingBottom: 34,
+    maxHeight: "90%",
+  },
+  modalHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
+    marginBottom: 16,
   },
-  headerTitle: {
-    fontSize: 18,
+  modalTitle: {
+    fontSize: 20,
     fontWeight: "700",
   },
-  closeBtn: {
-    padding: 6,
-  },
-  tabBar: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-  },
-  tabItem: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 60,
+  modalSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
   },
   fieldGroup: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   label: {
     fontSize: 12,
     fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   input: {
-    height: 46,
+    height: 44,
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    fontSize: 15,
+    fontSize: 14,
   },
   multilineInput: {
-    height: 80,
-    paddingTop: 12,
+    height: 76,
+    paddingTop: 10,
     textAlignVertical: "top",
   },
-  posterPreviewContainer: {
-    width: "100%",
-    height: 160,
-    borderRadius: 14,
-    overflow: "hidden",
-    position: "relative",
-  },
-  posterPreview: {
-    width: "100%",
-    height: "100%",
-  },
-  removePosterBtn: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  uploadDropzone: {
-    height: 90,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
-  uploadDropzoneText: {
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  checkboxGroup: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  chipOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
+  dropdownTrigger: {
+    height: 44,
     borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  dropdownTriggerText: {
+    fontSize: 14,
+  },
+  dropdownMenu: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 6,
+  },
+  dropdownItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 10,
+    borderRadius: 8,
+  },
+  dropdownItemText: {
+    fontSize: 14,
+    fontWeight: "500",
   },
   checkboxSquare: {
     width: 16,
@@ -885,34 +1009,61 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  chipOptionText: {
-    fontSize: 13,
+  checkboxGroup: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  badgePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  badgePillText: {
+    fontSize: 12,
     fontWeight: "500",
+  },
+  existingBanner: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "rgba(59, 130, 246, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(59, 130, 246, 0.2)",
+  },
+  existingBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#60A5FA",
   },
   mediaHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  addMediaSmallBtn: {
+  cameraSmallBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
   },
-  addMediaSmallBtnText: {
+  cameraSmallBtnText: {
     color: "#3B82F6",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
   },
   mediaGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 8,
   },
   mediaThumbnailWrapper: {
-    width: 85,
-    height: 85,
+    width: 88,
+    height: 88,
     borderRadius: 10,
     overflow: "hidden",
     position: "relative",
@@ -934,108 +1085,27 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 4,
     right: 4,
-    backgroundColor: "rgba(239, 68, 68, 0.85)",
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  saveButton: {
-    backgroundColor: "#FFFFFF",
-    height: 48,
-    borderRadius: 14,
+  addMediaDashedBox: {
+    width: 88,
+    height: 88,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 12,
-  },
-  saveButtonText: {
-    color: "#000000",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  savingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  linkContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 44,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    marginBottom: 16,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-  },
-  loadingBox: {
-    paddingVertical: 40,
-    alignItems: "center",
-  },
-  searchResultsList: {
-    flex: 1,
-  },
-  resultItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-  },
-  resultPoster: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-  },
-  resultPosterPlaceholder: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  resultInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  resultHeading: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  resultDesc: {
-    fontSize: 12,
-  },
-  linkActionBtn: {
-    backgroundColor: "#3B82F6",
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  linkActionBtnText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  emptySearchBox: {
-    paddingVertical: 60,
-    alignItems: "center",
-  },
-  emptySearchText: {
-    fontSize: 14,
   },
   locationCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    padding: 12,
+    padding: 10,
     borderRadius: 12,
     borderWidth: 1,
   },
@@ -1045,7 +1115,7 @@ const styles = StyleSheet.create({
   },
   locationBtnRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
   },
   locationBtn: {
     flex: 1,
@@ -1078,5 +1148,104 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700",
+  },
+  saveButton: {
+    height: 46,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+  },
+  saveButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  savingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  linkSection: {
+    marginTop: 24,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    gap: 8,
+  },
+  linkSectionTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+  },
+  linkSectionSub: {
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  searchInput: {
+    height: 38,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  loadingBox: {
+    paddingVertical: 20,
+    alignItems: "center",
+  },
+  linkList: {
+    gap: 8,
+  },
+  resultItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  resultPoster: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+  },
+  resultPosterPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  resultInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  resultHeading: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  resultCollections: {
+    fontSize: 11,
+  },
+  linkActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  linkActionBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  loadMoreBtn: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  loadMoreText: {
+    fontSize: 11,
+  },
+  emptySearchText: {
+    textAlign: "center",
+    paddingVertical: 16,
+    fontSize: 12,
   },
 });
