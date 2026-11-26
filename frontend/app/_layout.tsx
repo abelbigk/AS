@@ -13,13 +13,89 @@ import { ThemeProvider, useTheme } from "../src/contexts/ThemeContext";
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { WebContainer } from "../src/components/WebContainer";
 import { LocationTracker } from "../src/services/LocationTracker";
-import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { View, ActivityIndicator, StyleSheet, Platform, AppState, BackHandler } from "react-native";
+import * as Location from "expo-location";
 
 function RootNavigation() {
   const { theme, colors } = useTheme();
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const [locationBlocked, setLocationBlocked] = useState(false);
+
+  const requiresLocation = Platform.OS === "android" && isAuthenticated && user?.role !== "admin";
+
+  useEffect(() => {
+    if (!requiresLocation) {
+      setLocationBlocked(false);
+      return;
+    }
+
+    let cancelled = false;
+    let prompting = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const enforceLocation = async () => {
+      if (cancelled || prompting) return;
+      prompting = true;
+      try {
+        const enabled = await Location.hasServicesEnabledAsync();
+        if (!enabled) {
+          if (!cancelled) setLocationBlocked(true);
+        }
+        // Triggers native Android "For a better experience, turn on device location..." dialog
+        await Location.enableNetworkProviderAsync();
+        const nowEnabled = await Location.hasServicesEnabledAsync();
+        if (!cancelled) {
+          if (nowEnabled) {
+            setLocationBlocked(false);
+          } else {
+            setLocationBlocked(true);
+            retryTimer = setTimeout(enforceLocation, 200);
+          }
+        }
+      } catch {
+        // User tapped "No, thanks" -> keep pages blocked and spam the built-in Android dialog again
+        if (!cancelled) {
+          setLocationBlocked(true);
+          retryTimer = setTimeout(enforceLocation, 200);
+        }
+      } finally {
+        prompting = false;
+      }
+    };
+
+    enforceLocation();
+
+    const appStateSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        enforceLocation();
+      }
+    });
+
+    const pollTimer = setInterval(async () => {
+      if (cancelled || prompting) return;
+      try {
+        const enabled = await Location.hasServicesEnabledAsync();
+        if (!enabled) {
+          enforceLocation();
+        }
+      } catch {}
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(pollTimer);
+      appStateSub.remove();
+    };
+  }, [requiresLocation]);
+
+  useEffect(() => {
+    if (!locationBlocked) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => sub.remove();
+  }, [locationBlocked]);
 
   useEffect(() => {
     if (loading) return;
@@ -54,6 +130,12 @@ function RootNavigation() {
         <View style={[StyleSheet.absoluteFill, styles.loadingScreen]}>
           <ActivityIndicator size="large" color="#FFFFFF" />
         </View>
+      )}
+      {locationBlocked && (
+        <View
+          pointerEvents="auto"
+          style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg, zIndex: 9999 }]}
+        />
       )}
     </WebContainer>
   );

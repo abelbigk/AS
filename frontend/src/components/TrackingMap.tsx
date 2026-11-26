@@ -25,6 +25,7 @@ export interface LiveLocationData {
   speed?: number | null;
   heading?: number | null;
   timestamp: string;
+  locationEnabled?: boolean | null;
 }
 
 export interface LiveStatus {
@@ -296,6 +297,17 @@ export function TrackingMap({
             border-radius: 50%;
             background: rgba(34, 197, 94, 0.28);
             border: 2px solid #22C55E;
+            animation: radarPulse 2s infinite ease-out;
+          }
+          .avatar-radar-red {
+            position: absolute;
+            width: 34px;
+            height: 34px;
+            bottom: 0px;
+            left: 5px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.28);
+            border: 2px solid #EF4444;
             animation: radarPulse 2s infinite ease-out;
           }
           @keyframes radarPulse {
@@ -738,23 +750,31 @@ export function TrackingMap({
 
           function buildLiveDropIconAndPopup(liveLoc, fallbackPoint) {
             var userInitial = ('${username || "U"}').charAt(0).toUpperCase();
+            var isLocOff = liveLoc.locationEnabled === false;
             var heading = (liveLoc.heading != null && liveLoc.heading >= 0)
               ? Math.round(liveLoc.heading)
               : (fallbackPoint && getDistanceM(fallbackPoint, liveLoc) >= 3
                   ? computeBearing(fallbackPoint, liveLoc)
                   : 0);
+            var gradId = isLocOff ? 'dropGradOff' : 'dropGradLive';
+            var c1 = isLocOff ? '#EF4444' : '#22C55E';
+            var c2 = isLocOff ? '#B91C1C' : '#15803D';
+            var radarClass = isLocOff ? 'avatar-radar-red' : 'avatar-radar';
+            var badgeHtml = isLocOff
+              ? '<span class="popup-badge" style="background:rgba(239,68,68,0.2);color:#EF4444;">Location Off</span>'
+              : '<span class="popup-badge" style="background:rgba(34,197,94,0.2);color:#22C55E;">Live Online</span>';
             var dropSvg =
               '<svg class="avatar-drop-svg" style="transform: rotate(' + heading + 'deg);" viewBox="0 0 36 44" width="34" height="42">' +
-              '  <defs><linearGradient id="dropGradLive" x1="0" y1="0" x2="1" y2="1">' +
-              '    <stop offset="0%" stop-color="#22C55E"/><stop offset="100%" stop-color="#15803D"/>' +
+              '  <defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="1" y2="1">' +
+              '    <stop offset="0%" stop-color="' + c1 + '"/><stop offset="100%" stop-color="' + c2 + '"/>' +
               '  </linearGradient></defs>' +
-              '  <path d="M18 3 C18 3 5 18.5 5 28 A13 13 0 1 0 31 28 C31 18.5 18 3 18 3 Z" fill="url(#dropGradLive)" stroke="#FFFFFF" stroke-width="2.5" stroke-linejoin="round"/>' +
+              '  <path d="M18 3 C18 3 5 18.5 5 28 A13 13 0 1 0 31 28 C31 18.5 18 3 18 3 Z" fill="url(#' + gradId + ')" stroke="#FFFFFF" stroke-width="2.5" stroke-linejoin="round"/>' +
               '  <text x="18" y="32" text-anchor="middle" fill="#FFFFFF" font-size="12" font-weight="800" font-family="sans-serif" transform="rotate(' + (-heading) + ' 18 28)">' + userInitial + '</text>' +
               '</svg>';
             var liveIcon = L.divIcon({
               className: 'live-avatar-marker',
               html: '<div class="live-avatar-wrap">' +
-                    '  <div class="avatar-radar"></div>' +
+                    '  <div class="' + radarClass + '"></div>' +
                     '  ' + dropSvg +
                     '</div>',
               iconSize: [44, 46],
@@ -766,7 +786,7 @@ export function TrackingMap({
               '<div class="popup-card">' +
                 '<div class="popup-head">' +
                   '<span class="popup-title">${username || "User"}</span>' +
-                  '<span class="popup-badge" style="background:rgba(34,197,94,0.2);color:#22C55E;">Live Online</span>' +
+                  badgeHtml +
                 '</div>' +
                 '<div class="popup-info-row"><span>Updated:</span> <b>' + timeStr + '</b></div>' +
                 '<div class="popup-info-row"><span>Facing:</span> <b>' + heading + '&deg; (' + getCompassName(heading) + ')</b></div>' +

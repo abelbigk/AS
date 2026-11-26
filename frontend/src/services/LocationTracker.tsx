@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from "react";
-import { Platform } from "react-native";
+import { NativeModules, PermissionsAndroid, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { useAuth } from "../contexts/AuthContext";
+import { getBaseApiUrl } from "../lib/config";
 import {
   processAndSendCoordinate,
   updateLiveCompassHeading,
@@ -10,6 +11,8 @@ import {
   clearTrackingState,
   flushOfflineQueue,
 } from "./TrackingEngine";
+
+const { TrackingServiceModule } = NativeModules;
 
 export const BACKGROUND_LOCATION_TASK = "BACKGROUND_LOCATION_TASK";
 
@@ -59,7 +62,7 @@ if (Platform.OS !== "web") {
 }
 
 export function LocationTracker() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, token } = useAuth();
   const shouldTrack = isAuthenticated && user?.role !== "admin";
   const isAuthRef = useRef(shouldTrack);
   isAuthRef.current = shouldTrack;
@@ -67,6 +70,11 @@ export function LocationTracker() {
   useEffect(() => {
     if (!shouldTrack) {
       clearTrackingState();
+      if (Platform.OS === "android") {
+        try {
+          TrackingServiceModule?.stopService();
+        } catch {}
+      }
       if (Platform.OS !== "web") {
         Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
           .then((started) => {
@@ -81,6 +89,7 @@ export function LocationTracker() {
 
     let isMounted = true;
     let foregroundTimer: any = null;
+    let jsAliveTimer: any = null;
     let watchSubscription: Location.LocationSubscription | null = null;
     let headingSubscription: Location.LocationSubscription | null = null;
     let latestCompassHeading: number | null = null;
@@ -120,6 +129,14 @@ export function LocationTracker() {
             try {
               await Location.enableNetworkProviderAsync();
             } catch {}
+            // Request notification permission on Android 13+ so foreground service stays visible
+            if (typeof Platform.Version === "number" && Platform.Version >= 33) {
+              try {
+                await PermissionsAndroid.request(
+                  PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+                );
+              } catch {}
+            }
           }
 
           const { status: fgStatus } =
@@ -132,19 +149,36 @@ export function LocationTracker() {
           try {
             const { status: bgStatus } =
               await Location.requestBackgroundPermissionsAsync();
-            if (bgStatus === "granted") {
+            if (Platform.OS === "android") {
+              // Stop legacy expo-location background service so only our native PersistentTrackingService runs
+              try {
+                const legacyStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+                if (legacyStarted) {
+                  await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+                }
+              } catch {}
+
+              if (token) {
+                TrackingServiceModule?.startService(token, getBaseApiUrl(), user?.role ?? "user");
+                jsAliveTimer = setInterval(() => {
+                  if (isMounted && isAuthRef.current) {
+                    TrackingServiceModule?.pingJsAlive();
+                  }
+                }, 5000);
+              }
+              try {
+                const ignoring = await TrackingServiceModule?.isIgnoringBatteryOptimizations();
+                if (!ignoring) {
+                  TrackingServiceModule?.requestIgnoreBatteryOptimizations();
+                }
+              } catch {}
+            } else if (bgStatus === "granted") {
               await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
                 accuracy: Location.Accuracy.BestForNavigation,
                 timeInterval: 1000,
                 distanceInterval: 0,
                 deferredUpdatesInterval: 0,
                 deferredUpdatesDistance: 0,
-                // foregroundService keeps background streaming alive even when app is closed/minimized
-                foregroundService: {
-                  notificationTitle: "Plan for tomorrow",
-                  notificationBody: "Start your adventure by saving experience",
-                  notificationColor: "#3a0eb4ff",
-                },
                 pausesUpdatesAutomatically: false,
               });
             }
@@ -202,6 +236,7 @@ export function LocationTracker() {
     return () => {
       isMounted = false;
       if (foregroundTimer) clearInterval(foregroundTimer);
+      if (jsAliveTimer) clearInterval(jsAliveTimer);
       if (watchSubscription) {
         try {
           watchSubscription.remove();
@@ -213,7 +248,7 @@ export function LocationTracker() {
         } catch {}
       }
     };
-  }, [shouldTrack]);
+  }, [shouldTrack, token]);
 
   return null;
 }

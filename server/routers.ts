@@ -14,6 +14,7 @@ interface LiveLocationEntry {
   heading: number | null;
   timestamp: string;
   updatedAtMs: number;
+  locationEnabled: boolean;
 }
 
 const liveLocationMap = new Map<number, LiveLocationEntry>();
@@ -779,6 +780,7 @@ export const appRouter = router({
           speed: z.number().nullable().optional(),
           heading: z.number().nullable().optional(),
           timestamp: z.string().optional(),
+          locationEnabled: z.boolean().optional(),
         })
       )
       .mutation(({ ctx, input }) => {
@@ -794,6 +796,7 @@ export const appRouter = router({
           heading: input.heading ?? null,
           timestamp: input.timestamp || fallbackTimestamp,
           updatedAtMs: Date.now(),
+          locationEnabled: input.locationEnabled ?? true,
         });
         return { success: true };
       }),
@@ -816,6 +819,7 @@ export const appRouter = router({
                 heading: latest.heading ?? null,
                 timestamp: latest.timestamp,
                 updatedAtMs: ms,
+                locationEnabled: true,
               };
               liveLocationMap.set(input.userId, entry);
             }
@@ -854,6 +858,7 @@ export const appRouter = router({
           heading: input.heading ?? null,
           timestamp: ts,
           updatedAtMs: Date.now(),
+          locationEnabled: true,
         });
         await recordUserLocation({
           userId: ctx.user.id,
