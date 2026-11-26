@@ -22,6 +22,8 @@ import * as MediaLibrary from "expo-media-library/legacy";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   CheckCircle2,
   MoreVertical,
@@ -752,7 +754,8 @@ export function ContentDetailView({
               {mediaItems.length > 0 ? (
                 <View style={styles.mediaSection}>
                   <View style={styles.mediaSliderContainer}>
-                    <GestureDetector gesture={inlinePinchGesture}>
+                    {(() => {
+                      const mediaScrollView = (
                     <ScrollView
                       ref={scrollViewRef}
                       horizontal
@@ -811,7 +814,7 @@ export function ContentDetailView({
                             ]}
                           >
                             {m.type === "video" ? (
-                              i === displayMediaIndex && fullscreenMediaIndex === null ? (
+                              i === displayMediaIndex ? (
                                 <CustomVideoPlayer
                                   uri={m.url}
                                   isActive={i === displayMediaIndex && !isScrolledPastMedia && visible && fullscreenMediaIndex === null}
@@ -873,7 +876,63 @@ export function ContentDetailView({
                         );
                       })}
                     </ScrollView>
-                    </GestureDetector>
+                      );
+                      return Platform.OS !== "web" ? (
+                        <GestureDetector gesture={inlinePinchGesture}>{mediaScrollView}</GestureDetector>
+                      ) : (
+                        <>
+                          {mediaScrollView}
+                          {mediaItems.length > 1 && displayMediaIndex > 0 && (
+                            <Pressable
+                              onPress={() => {
+                                const prevIdx = displayMediaIndex - 1;
+                                scrollViewRef.current?.scrollTo({ x: prevIdx * sliderWidth, animated: true });
+                                setActiveMediaIndex(prevIdx);
+                              }}
+                              style={{
+                                position: "absolute",
+                                left: 8,
+                                top: "50%",
+                                marginTop: -18,
+                                width: 36,
+                                height: 36,
+                                borderRadius: 18,
+                                backgroundColor: "rgba(0,0,0,0.55)",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                zIndex: 20,
+                              }}
+                            >
+                              <ChevronLeft size={20} color="#FFFFFF" />
+                            </Pressable>
+                          )}
+                          {mediaItems.length > 1 && displayMediaIndex < mediaItems.length - 1 && (
+                            <Pressable
+                              onPress={() => {
+                                const nextIdx = displayMediaIndex + 1;
+                                scrollViewRef.current?.scrollTo({ x: nextIdx * sliderWidth, animated: true });
+                                setActiveMediaIndex(nextIdx);
+                              }}
+                              style={{
+                                position: "absolute",
+                                right: 8,
+                                top: "50%",
+                                marginTop: -18,
+                                width: 36,
+                                height: 36,
+                                borderRadius: 18,
+                                backgroundColor: "rgba(0,0,0,0.55)",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                zIndex: 20,
+                              }}
+                            >
+                              <ChevronRight size={20} color="#FFFFFF" />
+                            </Pressable>
+                          )}
+                        </>
+                      );
+                    })()}
 
                     {/* Pagination indicator dots and location button row */}
                     <View style={styles.paginationRow}>

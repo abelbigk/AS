@@ -889,6 +889,24 @@ export async function deleteUserLocations(
   return totalDeleted;
 }
 
+export async function deleteUserLocationsByIds(
+  userId: number,
+  ids: number[]
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const db = getDb();
+  let totalDeleted = 0;
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const res = await db
+      .delete(userLocations)
+      .where(and(eq(userLocations.userId, userId), inArray(userLocations.id, chunk)));
+    totalDeleted += res.rowsAffected ?? chunk.length;
+  }
+  return totalDeleted;
+}
+
 export async function getAllUsers() {
   const db = getDb();
   return await db

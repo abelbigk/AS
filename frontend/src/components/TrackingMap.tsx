@@ -42,14 +42,19 @@ interface TrackingMapProps {
   style?: any;
 }
 
-function openExternalNavigation(lat: number, lng: number) {
-  const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+function openExternalNavigation(destLat: number, destLng: number) {
+  if (Platform.OS === "ios") {
+    const appleUrl = `https://maps.apple.com/?saddr=Current+Location&daddr=${destLat},${destLng}`;
+    Linking.openURL(appleUrl).catch(() => {});
+    return;
+  }
+  const googleUrl = `https://www.google.com/maps/dir/My+Location/${destLat},${destLng}`;
   if (Platform.OS === "web") {
     try {
-      window.open(url, "_blank", "noopener,noreferrer");
+      window.open(googleUrl, "_blank", "noopener,noreferrer");
     } catch {}
   } else {
-    Linking.openURL(url).catch(() => {});
+    Linking.openURL(googleUrl).catch(() => {});
   }
 }
 
@@ -181,11 +186,38 @@ export function TrackingMap({
             margin-top: 2px;
             color: ${isDark ? "#D1D5DB" : "#4B5563"};
           }
+          .popup-coords-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 4px;
+            flex-wrap: wrap;
+          }
           .popup-coords-text {
             font-family: monospace;
             font-size: 10.5px;
-            margin-top: 4px;
             color: ${isDark ? "#9CA3AF" : "#6B7280"};
+          }
+          .popup-copy-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2px 4px;
+            border-radius: 4px;
+            border: 1px solid ${isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"};
+            background: ${isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)"};
+            color: ${isDark ? "#9CA3AF" : "#6B7280"};
+            cursor: pointer;
+          }
+          .popup-copy-btn:hover {
+            color: #3B82F6;
+            border-color: rgba(59,130,246,0.4);
+          }
+          .popup-copied-msg {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: #22C55E;
+            display: none;
           }
           .popup-bot-row {
             display: flex;
@@ -427,6 +459,48 @@ export function TrackingMap({
             } catch (e) {}
           };
 
+          window.copyCoords = function(lat, lng, btn) {
+            var text = lat.toFixed(5) + ', ' + lng.toFixed(5);
+            var ok = false;
+            try {
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(function() {});
+                ok = true;
+              }
+            } catch (e) {}
+            try {
+              var ta = document.createElement('textarea');
+              ta.value = text;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.focus();
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              ok = true;
+            } catch (e) {}
+            if (btn && btn.parentElement) {
+              var msg = btn.parentElement.querySelector('.popup-copied-msg');
+              if (msg) {
+                msg.style.display = 'inline';
+                if (btn._copyTimer) clearTimeout(btn._copyTimer);
+                btn._copyTimer = setTimeout(function() { msg.style.display = 'none'; }, 1800);
+              }
+            }
+            return ok;
+          };
+
+          function buildCoordsHtml(lat, lng) {
+            return '<div class="popup-coords-row">' +
+              '<span class="popup-coords-text">' + lat.toFixed(5) + ', ' + lng.toFixed(5) + '</span>' +
+              '<button type="button" onclick="window.copyCoords(' + lat + ',' + lng + ',this)" class="popup-copy-btn" title="Copy coordinates">' +
+                '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+              '</button>' +
+              '<span class="popup-copied-msg">Copied</span>' +
+            '</div>';
+          }
+
           function buildPopupContent(idx, title, badge, extraRows) {
             var pt = (movingPointsList.length > 0 && movingPointsList[idx]) ? movingPointsList[idx] : points[idx];
             if (!pt) pt = points[0];
@@ -441,7 +515,7 @@ export function TrackingMap({
               '</div>' +
               '<div class="popup-info-row"><span>Time:</span> <b>' + timeStr + '</b></div>' +
               (extraRows || '') +
-              '<div class="popup-coords-text">' + pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5) + '</div>' +
+              buildCoordsHtml(pt.latitude, pt.longitude) +
               '<div class="popup-bot-row">' +
                 '<button type="button" onclick="window.openNavigation(' + pt.latitude + ',' + pt.longitude + ')" class="popup-nav-pin-btn" title="Open navigation in Maps">' +
                   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>' +
@@ -697,7 +771,7 @@ export function TrackingMap({
                 '<div class="popup-info-row"><span>Updated:</span> <b>' + timeStr + '</b></div>' +
                 '<div class="popup-info-row"><span>Facing:</span> <b>' + heading + '&deg; (' + getCompassName(heading) + ')</b></div>' +
                 '<div class="popup-info-row"><span>Speed:</span> <b>' + spdStr + '</b></div>' +
-                '<div class="popup-coords-text">' + liveLoc.latitude.toFixed(5) + ', ' + liveLoc.longitude.toFixed(5) + '</div>' +
+                buildCoordsHtml(liveLoc.latitude, liveLoc.longitude) +
                 '<div class="popup-bot-row">' +
                   '<button type="button" onclick="window.openNavigation(' + liveLoc.latitude + ',' + liveLoc.longitude + ')" class="popup-nav-pin-btn" title="Open navigation in Maps">' +
                     '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>' +

@@ -315,6 +315,29 @@ export function flushOfflineQueue(): Promise<void> {
   return flushPromise;
 }
 
+export function pingLivePresenceFromBackground(fallbackLat?: number, fallbackLng?: number): void {
+  const nowMs = Date.now();
+  const base = lastHeartbeatPayload;
+  if (base) {
+    sendLiveHeartbeatThrottled(
+      {
+        ...base,
+        timestamp: new Date(nowMs + 3 * 3600 * 1000).toISOString().replace("Z", "+03:00"),
+      },
+      nowMs
+    );
+  } else if (fallbackLat != null && fallbackLng != null) {
+    sendLiveHeartbeatThrottled(
+      {
+        latitude: fallbackLat,
+        longitude: fallbackLng,
+        timestamp: new Date(nowMs + 3 * 3600 * 1000).toISOString().replace("Z", "+03:00"),
+      },
+      nowMs
+    );
+  }
+}
+
 export function updateLiveCompassHeading(headingDeg: number): void {
   if (!lastHeartbeatPayload || Number.isNaN(headingDeg) || headingDeg < 0) return;
   const nowMs = Date.now();
@@ -356,8 +379,10 @@ async function processAndSendCoordinateInner(
     const now = Date.now();
     const payloadMs = Date.parse(payload.timestamp) || now;
 
-    // Deduplicate identical or out-of-order cached OS location fixes
+    // Deduplicate identical or out-of-order cached OS location fixes for DB recording,
+    // but still stream live presence heartbeat when online so background green avatar stays live.
     if (state.lastSeenTimestamp != null && payloadMs <= state.lastSeenTimestamp) {
+      pingLivePresenceFromBackground(payload.latitude, payload.longitude);
       return false;
     }
     state.lastSeenTimestamp = payloadMs;

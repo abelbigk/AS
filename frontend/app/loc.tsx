@@ -180,6 +180,24 @@ export default function LocationScreen() {
   };
 
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<Record<string, boolean>>({});
+  const [waypointDeleteTarget, setWaypointDeleteTarget] = useState<{
+    ids: number[];
+    label: string;
+    coords: string;
+    step: "options" | "confirm";
+  } | null>(null);
+
+  const utils = trpc.useUtils();
+  const deleteByIdsMutation = trpc.tracking.deleteByIds.useMutation({
+    onSuccess: (_data, vars) => {
+      if (selectedPointId && vars.ids.includes(selectedPointId)) {
+        setSelectedPointId(null);
+      }
+      setWaypointDeleteTarget(null);
+      utils.tracking.getHistory.invalidate({ userId });
+      utils.tracking.getAvailableDates.invalidate({ userId });
+    },
+  });
 
   // Group consecutive points within 15m into one waypoint cluster with an expandable dropdown
   const timelineGroups = useMemo(() => {
@@ -555,6 +573,19 @@ export default function LocationScreen() {
                     <View key={group.key} style={{ gap: 6 }}>
                       <Pressable
                         onPress={() => setSelectedPointId(loc.id)}
+                        onLongPress={() => {
+                          const ids = group.items
+                            .map((it) => it.id)
+                            .filter((id): id is number => typeof id === "number");
+                          if (ids.length === 0) return;
+                          setWaypointDeleteTarget({
+                            ids,
+                            label: timeStr,
+                            coords: `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`,
+                            step: "options",
+                          });
+                        }}
+                        delayLongPress={350}
                         style={[
                           styles.timelineCard,
                           {
@@ -645,6 +676,16 @@ export default function LocationScreen() {
                               <Pressable
                                 key={subLoc.id || subIdx}
                                 onPress={() => setSelectedPointId(subLoc.id)}
+                                onLongPress={() => {
+                                  if (typeof subLoc.id !== "number") return;
+                                  setWaypointDeleteTarget({
+                                    ids: [subLoc.id],
+                                    label: subTime,
+                                    coords: `${subLoc.latitude.toFixed(5)}, ${subLoc.longitude.toFixed(5)}`,
+                                    step: "options",
+                                  });
+                                }}
+                                delayLongPress={350}
                                 style={[
                                   styles.timelineCard,
                                   {
@@ -802,6 +843,161 @@ export default function LocationScreen() {
         currentEndMinutes={endMinutes}
         onDeleted={() => refetch()}
       />
+
+      {/* Long-press Waypoint Delete Options & Confirmation Modal */}
+      <Modal
+        visible={!!waypointDeleteTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!deleteByIdsMutation.isPending) setWaypointDeleteTarget(null);
+        }}
+      >
+        <Pressable
+          onPress={() => {
+            if (!deleteByIdsMutation.isPending) setWaypointDeleteTarget(null);
+          }}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.72)",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 24,
+          }}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 340,
+              borderRadius: 18,
+              backgroundColor: colors.bg,
+              borderWidth: 1,
+              borderColor: colors.border,
+              padding: 18,
+              gap: 12,
+            }}
+          >
+            {waypointDeleteTarget && waypointDeleteTarget.step === "options" && (
+              <>
+                <View style={{ gap: 4 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text }}>
+                    Waypoint Options
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                    {waypointDeleteTarget.label} · {waypointDeleteTarget.coords}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSubtle }}>
+                    Contains {waypointDeleteTarget.ids.length} recorded{" "}
+                    {waypointDeleteTarget.ids.length === 1 ? "point" : "points"}
+                  </Text>
+                </View>
+
+                <Pressable
+                  onPress={() =>
+                    setWaypointDeleteTarget((prev) =>
+                      prev ? { ...prev, step: "confirm" } : null
+                    )
+                  }
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    paddingVertical: 12,
+                    borderRadius: 12,
+                    backgroundColor: "rgba(239, 68, 68, 0.16)",
+                    borderWidth: 1,
+                    borderColor: "rgba(239, 68, 68, 0.4)",
+                  }}
+                >
+                  <Trash2 size={16} color="#EF4444" />
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: "#EF4444" }}>
+                    Delete {waypointDeleteTarget.ids.length > 1 ? `All (${waypointDeleteTarget.ids.length} pts)` : "Waypoint"}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => setWaypointDeleteTarget(null)}
+                  style={{
+                    paddingVertical: 10,
+                    borderRadius: 12,
+                    alignItems: "center",
+                    backgroundColor: colors.glassBg,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text }}>
+                    Cancel
+                  </Text>
+                </Pressable>
+              </>
+            )}
+
+            {waypointDeleteTarget && waypointDeleteTarget.step === "confirm" && (
+              <>
+                <View style={{ gap: 6 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: "#EF4444" }}>
+                    Confirm Deletion
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.textMuted, lineHeight: 19 }}>
+                    Are you sure you want to permanently delete this waypoint
+                    {waypointDeleteTarget.ids.length > 1
+                      ? ` and all ${waypointDeleteTarget.ids.length} points inside it`
+                      : ""}
+                    ? This cannot be undone.
+                  </Text>
+                </View>
+
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <Pressable
+                    disabled={deleteByIdsMutation.isPending}
+                    onPress={() => setWaypointDeleteTarget(null)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 11,
+                      borderRadius: 12,
+                      alignItems: "center",
+                      backgroundColor: colors.glassBg,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text }}>
+                      Cancel
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={deleteByIdsMutation.isPending}
+                    onPress={() =>
+                      deleteByIdsMutation.mutate({
+                        userId,
+                        ids: waypointDeleteTarget.ids,
+                      })
+                    }
+                    style={{
+                      flex: 1,
+                      paddingVertical: 11,
+                      borderRadius: 12,
+                      alignItems: "center",
+                      backgroundColor: "#EF4444",
+                    }}
+                  >
+                    {deleteByIdsMutation.isPending ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
+                        Delete
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

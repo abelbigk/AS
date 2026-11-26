@@ -68,6 +68,7 @@ import {
   getLatestUserLocation,
   getUserLocationDates,
   deleteUserLocations,
+  deleteUserLocationsByIds,
   getAllUsers,
 } from "./db";
 
@@ -806,7 +807,7 @@ export const appRouter = router({
           const latest = await getLatestUserLocation(input.userId);
           if (latest) {
             const ms = Date.parse(latest.timestamp);
-            if (!Number.isNaN(ms) && Date.now() - ms < 20000) {
+            if (!Number.isNaN(ms) && Date.now() - ms < 30000) {
               entry = {
                 latitude: latest.latitude,
                 longitude: latest.longitude,
@@ -820,7 +821,7 @@ export const appRouter = router({
             }
           }
         }
-        const isLive = !!entry && Date.now() - entry.updatedAtMs < 20000;
+        const isLive = !!entry && Date.now() - entry.updatedAtMs < 30000;
         return {
           isLive,
           liveLocation: isLive && entry ? entry : null,
@@ -922,6 +923,25 @@ export const appRouter = router({
           input.startIso ?? null,
           input.endIso ?? null
         );
+        return { deleted };
+      }),
+
+    deleteByIds: protectedProcedure
+      .input(
+        z.object({
+          userId: z.number().optional(),
+          ids: z.array(z.number()).min(1),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const targetUserId = input.userId ?? ctx.user.id;
+        if (targetUserId !== ctx.user.id && ctx.user.role !== "admin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Only admins can delete another user's location records",
+          });
+        }
+        const deleted = await deleteUserLocationsByIds(targetUserId, input.ids);
         return { deleted };
       }),
   }),

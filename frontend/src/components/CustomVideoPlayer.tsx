@@ -70,7 +70,9 @@ export function CustomVideoPlayer({
   // ─── React state (triggers re-render for display) ─────────────────────────
   const [playableUri,     setPlayableUri]     = useState(uri);
   const [isPlaying,       setIsPlaying]       = useState(false);
-  const [showInitialPlay, setShowInitialPlay] = useState(true);
+  const [showInitialPlay, setShowInitialPlay] = useState(
+    !(syncIsPlaying || (typeof syncTime === "number" && syncTime > 0))
+  );
   const [currentTime,     setCurrentTime]     = useState(0);
   const [duration,        setDuration]        = useState(0);
   const [isDragging,      setIsDragging]      = useState(false);
@@ -93,6 +95,12 @@ export function CustomVideoPlayer({
   const pinchDistRef   = useRef<number | null>(null);
   const pendingSyncRef = useRef<{ time: number; shouldPlay: boolean } | null>(null);
   const lastSyncVersionRef = useRef<number | undefined>(undefined);
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  const onBufferingChangeRef = useRef(onBufferingChange);
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  onPlayingChangeRef.current = onPlayingChange;
+  onBufferingChangeRef.current = onBufferingChange;
+  onTimeUpdateRef.current = onTimeUpdate;
 
   // ─── Animated values for bar expansion & zero-rerender progress ──────────
   const barHeight       = useRef(new RNAnimated.Value(3)).current;
@@ -396,7 +404,7 @@ export function CustomVideoPlayer({
     } else {
       pendingSyncRef.current = { time: targetTime, shouldPlay };
     }
-  }, [isActive, syncVersion, syncTime, syncIsPlaying, player, onPlayingChange, progressPctAnim]);
+  }, [isActive, syncVersion, syncTime, syncIsPlaying, player, progressPctAnim]);
 
   // Pause when slide becomes inactive (preserve current frame/second so returning resumes where left off)
   useEffect(() => {
@@ -409,25 +417,27 @@ export function CustomVideoPlayer({
       setIsPlaying(false);
       isPlayingRef.current = false;
       isBufferingRef.current = false;
-      onPlayingChange?.(false);
-      onBufferingChange?.(false);
-      setShowInitialPlay(true);
+      onPlayingChangeRef.current?.(false);
+      onBufferingChangeRef.current?.(false);
+      if ((player.currentTime || 0) <= 0.1) {
+        setShowInitialPlay(true);
+      }
     } else {
       try {
         // Unmute when active again
         (player as any).muted = false;
       } catch {}
     }
-  }, [isActive, player, onPlayingChange, onBufferingChange]);
+  }, [isActive, player]);
 
-  // Pause on unmount
+  // Pause ONLY on actual unmount (refs ensure inline callbacks never trigger pause mid-playback)
   useEffect(() => () => {
     try { player.pause(); } catch {}
     isPlayingRef.current = false;
     isBufferingRef.current = false;
-    onPlayingChange?.(false);
-    onBufferingChange?.(false);
-  }, [player, onPlayingChange, onBufferingChange]);
+    onPlayingChangeRef.current?.(false);
+    onBufferingChangeRef.current?.(false);
+  }, [player]);
 
   // ─── Toggle play / pause ──────────────────────────────────────────────────
   const togglePlay = useCallback(() => {

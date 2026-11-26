@@ -6,6 +6,7 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   processAndSendCoordinate,
   updateLiveCompassHeading,
+  pingLivePresenceFromBackground,
   clearTrackingState,
   flushOfflineQueue,
 } from "./TrackingEngine";
@@ -34,8 +35,11 @@ if (Platform.OS !== "web") {
         const { locations } = data as { locations?: Location.LocationObject[] };
         if (locations && locations.length > 0) {
           for (const loc of locations) {
-            // Skip stale OS cached fixes older than 15 seconds
-            if (loc.timestamp && Date.now() - loc.timestamp > 15000) continue;
+            // Skip stale OS cached fixes (>15s) for DB recording, but keep online live heartbeat alive
+            if (loc.timestamp && Date.now() - loc.timestamp > 15000) {
+              pingLivePresenceFromBackground(loc.coords.latitude, loc.coords.longitude);
+              continue;
+            }
             await processAndSendCoordinate({
               latitude: loc.coords.latitude,
               longitude: loc.coords.longitude,
@@ -132,7 +136,10 @@ export function LocationTracker() {
               await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
                 accuracy: Location.Accuracy.BestForNavigation,
                 timeInterval: 1000,
-                // distanceInterval removed: TrackingEngine filters & smooths continuously
+                distanceInterval: 0,
+                deferredUpdatesInterval: 0,
+                deferredUpdatesDistance: 0,
+                // foregroundService keeps background streaming alive even when app is closed/minimized
                 foregroundService: {
                   notificationTitle: "Plan for tomorrow",
                   notificationBody: "Start your adventure by saving experience",
