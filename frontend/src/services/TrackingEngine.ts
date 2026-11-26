@@ -314,6 +314,17 @@ export function flushOfflineQueue(): Promise<void> {
   return flushPromise;
 }
 
+export function updateLiveCompassHeading(headingDeg: number): void {
+  if (!lastHeartbeatPayload || Number.isNaN(headingDeg) || headingDeg < 0) return;
+  const nowMs = Date.now();
+  const updated: CoordinatePayload = {
+    ...lastHeartbeatPayload,
+    heading: headingDeg,
+    timestamp: new Date(nowMs + 3 * 3600 * 1000).toISOString().replace("Z", "+03:00"),
+  };
+  sendLiveHeartbeatThrottled(updated, nowMs);
+}
+
 /**
  * Primary processor: filters out inaccurate cellular fixes, prevents jitter when stationary,
  * and transmits every 10s to the server. Serialized via processingChain so foreground & background
@@ -334,9 +345,9 @@ async function processAndSendCoordinateInner(
   payload: CoordinatePayload
 ): Promise<boolean> {
   try {
-    // 1. Discard coarse/inaccurate fixes (e.g. cellular/wifi triangulation > 20m)
-    // Only accept high-precision GPS fixes (<= 20m) so cell tower jumps NEVER pollute the map
-    if (payload.accuracy != null && payload.accuracy > 20) {
+    // 1. Allow live heartbeats up to 65m accuracy (so indoor live avatar keeps streaming),
+    // but discard coarse fixes (> 20m) from permanent DB history below.
+    if (payload.accuracy != null && payload.accuracy > 65) {
       return false;
     }
 
@@ -390,8 +401,14 @@ async function processAndSendCoordinateInner(
       longitude: smoothedLng,
     };
 
-    // Stream live presence + heading + live wandering position every 3s (in-memory only, no DB write)
+    // Stream live presence + heading + live wandering position every 1s (in-memory only, no DB write)
     sendLiveHeartbeatThrottled(smoothedPayload, now);
+
+    // Only record permanent DB points for high-precision GPS fixes (<= 20m)
+    if (payload.accuracy != null && payload.accuracy > 20) {
+      await saveState(state);
+      return false;
+    }
 
     // Human walking speed is ~1.2 to 1.5 m/s. Null/-1 or < 0.6 m/s means device reports stationary.
     const isStationarySpeed = payload.speed == null || payload.speed < 0.6;
@@ -443,8 +460,9 @@ async function processAndSendCoordinateInner(
     // 2. Online vs Offline movement & stationary rules
     if (isDeviceOnline) {
       // ONLINE MODE:
-      // - Live green drop already shows wandering around in real time (no DB write).
+      // - Live green drop already shows wandering & turning in real time (no DB write).
       // - Stepping >= 10m from lastRecordedCoord (confirmed by speed >= 0.6 or 2 consecutive fixes >= 10m) writes to DB.
+      // - Every 5 minutes while stationary, refine exact position if shifted >= 2m.
       if (distFromLast < 10) {
         state.pendingDeparture = null;
         const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
@@ -469,7 +487,7 @@ async function processAndSendCoordinateInner(
         return false;
       }
 
-      // distFromLast >= 10m: confirm it's a real 10m step (not a 1s GPS spike)
+      // distFromLast >= 10m: confirm it's a real step (not a 1s GPS spike)
       const isMovingSpeed = payload.speed != null && payload.speed >= 0.6;
       if (!isMovingSpeed) {
         if (!state.pendingDeparture || payloadMs - state.pendingDeparture.timestampMs > 90000) {
@@ -487,7 +505,7 @@ async function processAndSendCoordinateInner(
       state.stationaryAnchor = isStationarySpeed ? { latitude: smoothedLat, longitude: smoothedLng } : null;
     } else {
       // OFFLINE MODE:
-      // - Strict 25m/35m stationary anchor + 15m radius filter so indoor drift doesn't fill offline cache
+      // - Strict 25m stationary anchor + 15m radius filter so indoor drift doesn't fill offline cache
       // - 5-minute stationary refinement still updates 2-15m shifts
       if (!state.stationaryAnchor && isStationarySpeed) {
         state.stationaryAnchor = {
@@ -508,8 +526,7 @@ async function processAndSendCoordinateInner(
         if (distFromAnchor < 25) {
           state.pendingDeparture = null;
           const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
-          // Every 5 minutes (300,000 ms) while stationary, check if exact position shifted >= 2m (e.g. moved 5m and stayed 5 mins)
-          if (payloadMs - lastStatMs >= 300000) {
+          if (payloadMs - lastStatMs >= STATIONARY_REFINE_INTERVAL_MS) {
             state.lastStationaryUpdateMs = payloadMs;
             if (distFromLast >= 2 && distFromLast < 15) {
               state.lastRecordedCoord = { latitude: smoothedLat, longitude: smoothedLng };

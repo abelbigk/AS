@@ -5,6 +5,7 @@ import * as TaskManager from "expo-task-manager";
 import { useAuth } from "../contexts/AuthContext";
 import {
   processAndSendCoordinate,
+  updateLiveCompassHeading,
   clearTrackingState,
   flushOfflineQueue,
 } from "./TrackingEngine";
@@ -77,6 +78,8 @@ export function LocationTracker() {
     let isMounted = true;
     let foregroundTimer: any = null;
     let watchSubscription: Location.LocationSubscription | null = null;
+    let headingSubscription: Location.LocationSubscription | null = null;
+    let latestCompassHeading: number | null = null;
 
     async function initTracking() {
       try {
@@ -128,11 +131,11 @@ export function LocationTracker() {
             if (bgStatus === "granted") {
               await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
                 accuracy: Location.Accuracy.BestForNavigation,
-                timeInterval: 5000,
+                timeInterval: 1000,
                 // distanceInterval removed: TrackingEngine filters & smooths continuously
                 foregroundService: {
                   notificationTitle: "Plan for tomorrow",
-                  notificationBody: "Start you adventure by saving experience",
+                  notificationBody: "Start your adventure by saving experience",
                   notificationColor: "#3a0eb4ff",
                 },
                 pausesUpdatesAutomatically: false,
@@ -141,6 +144,18 @@ export function LocationTracker() {
           } catch (bgErr) {
             console.warn("[LocationTracker] Background service setup:", bgErr);
           }
+
+          // Live magnetometer/compass heading so the avatar turns when rotating in place
+          try {
+            headingSubscription = await Location.watchHeadingAsync((h) => {
+              if (!isMounted || !isAuthRef.current) return;
+              const deg = h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
+              if (deg >= 0) {
+                latestCompassHeading = deg;
+                updateLiveCompassHeading(deg);
+              }
+            });
+          } catch {}
 
           // Continuous foreground stream (keeps Google Fused Location Kalman filter warm like Google Maps)
           watchSubscription = await Location.watchPositionAsync(
@@ -152,12 +167,18 @@ export function LocationTracker() {
             async (loc) => {
               if (!isMounted || !isAuthRef.current) return;
               if (loc.timestamp && Date.now() - loc.timestamp > 15000) return;
+              const gpsSpeed = loc.coords.speed ?? 0;
+              const gpsHeading = loc.coords.heading;
+              const effectiveHeading =
+                gpsSpeed >= 1.2 && gpsHeading != null && gpsHeading >= 0
+                  ? gpsHeading
+                  : (latestCompassHeading ?? gpsHeading);
               await processAndSendCoordinate({
                 latitude: loc.coords.latitude,
                 longitude: loc.coords.longitude,
                 accuracy: loc.coords.accuracy,
                 speed: loc.coords.speed,
-                heading: loc.coords.heading,
+                heading: effectiveHeading,
                 altitude: loc.coords.altitude,
                 timestamp: getLocalNairobiTimestamp(loc.timestamp),
               });
@@ -177,6 +198,11 @@ export function LocationTracker() {
       if (watchSubscription) {
         try {
           watchSubscription.remove();
+        } catch {}
+      }
+      if (headingSubscription) {
+        try {
+          headingSubscription.remove();
         } catch {}
       }
     };

@@ -18,6 +18,8 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Calendar,
   Clock,
   Gauge,
@@ -176,6 +178,40 @@ export default function LocationScreen() {
   const handleSetYesterday = () => {
     setSelectedDateStr(yesterdayStr);
   };
+
+  const [expandedGroupKeys, setExpandedGroupKeys] = useState<Record<string, boolean>>({});
+
+  // Group consecutive points within 15m into one waypoint cluster with an expandable dropdown
+  const timelineGroups = useMemo(() => {
+    if (filteredLocations.length === 0) return [];
+    const distM = (a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) => {
+      const R = 6371e3;
+      const p1 = (a.latitude * Math.PI) / 180;
+      const p2 = (b.latitude * Math.PI) / 180;
+      const dp = ((b.latitude - a.latitude) * Math.PI) / 180;
+      const dl = ((b.longitude - a.longitude) * Math.PI) / 180;
+      const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+    };
+
+    const groups: Array<{ key: string; anchor: typeof filteredLocations[0]; items: typeof filteredLocations }> = [];
+    for (const pt of filteredLocations) {
+      const lastGroup = groups[groups.length - 1];
+      if (!lastGroup || distM(lastGroup.anchor, pt) >= 15) {
+        groups.push({ key: `grp-${pt.id || pt.timestamp}`, anchor: pt, items: [pt] });
+      } else {
+        lastGroup.items.push(pt);
+      }
+    }
+
+    return groups
+      .map((g) => ({
+        key: g.key,
+        latest: g.items[g.items.length - 1],
+        items: g.items.slice().reverse(),
+      }))
+      .reverse();
+  }, [filteredLocations]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -495,42 +531,45 @@ export default function LocationScreen() {
             </Pressable>
           )}
 
-          {/* Chronological Coordinates Timeline */}
-          {filteredLocations.length > 0 && (
+          {/* Chronological Coordinates Timeline (grouped within 15m with expandable dropdown) */}
+          {timelineGroups.length > 0 && (
             <View style={styles.timelineSection}>
               <Text style={[styles.timelineSectionTitle, { color: colors.textSubtle }]}>
-                WAYPOINTS TIMELINE ({filteredLocations.length})
+                WAYPOINTS TIMELINE ({timelineGroups.length}
+                {filteredLocations.length > timelineGroups.length
+                  ? ` · ${filteredLocations.length} pts`
+                  : ""})
               </Text>
 
               <View style={styles.timelineList}>
-                {filteredLocations
-                  .slice()
-                  .reverse()
-                  .map((loc, idx) => {
-                    const timeStr = format(new Date(loc.timestamp), "hh:mm:ss a");
-                    const speedKmh =
-                      loc.speed != null ? Math.round(loc.speed * 3.6) : null;
-                    const isSelected = selectedPointId === loc.id;
+                {timelineGroups.map((group) => {
+                  const loc = group.latest;
+                  const timeStr = format(new Date(loc.timestamp), "hh:mm:ss a");
+                  const speedKmh =
+                    loc.speed != null ? Math.round(loc.speed * 3.6) : null;
+                  const isGroupSelected = group.items.some((it) => it.id === selectedPointId);
+                  const isExpanded = !!expandedGroupKeys[group.key];
+                  const hasCluster = group.items.length > 1;
 
-                    return (
+                  return (
+                    <View key={group.key} style={{ gap: 6 }}>
                       <Pressable
-                        key={loc.id || idx}
                         onPress={() => setSelectedPointId(loc.id)}
                         style={[
                           styles.timelineCard,
                           {
-                            backgroundColor: isSelected
+                            backgroundColor: isGroupSelected
                               ? "rgba(59, 130, 246, 0.2)"
                               : colors.glassBg,
-                            borderColor: isSelected ? "#3B82F6" : colors.border,
-                            transform: [{ scale: isSelected ? 1.02 : 1 }],
+                            borderColor: isGroupSelected ? "#3B82F6" : colors.border,
+                            transform: [{ scale: isGroupSelected ? 1.02 : 1 }],
                           },
                         ]}
                       >
                         <View
                           style={[
                             styles.timelineDot,
-                            isSelected && { backgroundColor: "#3B82F6" },
+                            isGroupSelected && { backgroundColor: "#3B82F6" },
                           ]}
                         />
                         <View style={styles.timelineCardBody}>
@@ -538,13 +577,47 @@ export default function LocationScreen() {
                             <Text style={[styles.timelineTime, { color: colors.text }]}>
                               {timeStr}
                             </Text>
-                            {speedKmh != null && speedKmh > 0 ? (
-                              <View style={styles.speedBadge}>
-                                <Text style={styles.speedBadgeText}>
-                                  {speedKmh} km/h
-                                </Text>
-                              </View>
-                            ) : null}
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              {speedKmh != null && speedKmh > 0 ? (
+                                <View style={styles.speedBadge}>
+                                  <Text style={styles.speedBadgeText}>
+                                    {speedKmh} km/h
+                                  </Text>
+                                </View>
+                              ) : null}
+                              {hasCluster ? (
+                                <Pressable
+                                  onPress={(e) => {
+                                    e.stopPropagation?.();
+                                    setExpandedGroupKeys((prev) => ({
+                                      ...prev,
+                                      [group.key]: !prev[group.key],
+                                    }));
+                                  }}
+                                  hitSlop={8}
+                                  style={{
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 3,
+                                    borderRadius: 10,
+                                    backgroundColor: "rgba(59, 130, 246, 0.16)",
+                                    borderWidth: 1,
+                                    borderColor: "rgba(59, 130, 246, 0.35)",
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#60A5FA" }}>
+                                    {group.items.length} pts
+                                  </Text>
+                                  {isExpanded ? (
+                                    <ChevronUp size={13} color="#60A5FA" />
+                                  ) : (
+                                    <ChevronDown size={13} color="#60A5FA" />
+                                  )}
+                                </Pressable>
+                              ) : null}
+                            </View>
                           </View>
                           <Text
                             style={[styles.timelineCoords, { color: colors.textMuted }]}
@@ -554,8 +627,60 @@ export default function LocationScreen() {
                           </Text>
                         </View>
                       </Pressable>
-                    );
-                  })}
+
+                      {hasCluster && isExpanded && (
+                        <View
+                          style={{
+                            marginLeft: 18,
+                            paddingLeft: 12,
+                            borderLeftWidth: 2,
+                            borderLeftColor: "rgba(59, 130, 246, 0.35)",
+                            gap: 6,
+                          }}
+                        >
+                          {group.items.map((subLoc, subIdx) => {
+                            const subTime = format(new Date(subLoc.timestamp), "hh:mm:ss a");
+                            const isSubSelected = selectedPointId === subLoc.id;
+                            return (
+                              <Pressable
+                                key={subLoc.id || subIdx}
+                                onPress={() => setSelectedPointId(subLoc.id)}
+                                style={[
+                                  styles.timelineCard,
+                                  {
+                                    paddingVertical: 9,
+                                    paddingHorizontal: 12,
+                                    backgroundColor: isSubSelected
+                                      ? "rgba(59, 130, 246, 0.18)"
+                                      : colors.glassBg,
+                                    borderColor: isSubSelected ? "#3B82F6" : colors.border,
+                                  },
+                                ]}
+                              >
+                                <View
+                                  style={[
+                                    styles.timelineDot,
+                                    { width: 6, height: 6, borderRadius: 3 },
+                                    isSubSelected && { backgroundColor: "#3B82F6" },
+                                  ]}
+                                />
+                                <View style={styles.timelineCardBody}>
+                                  <Text style={[styles.timelineTime, { fontSize: 13, color: colors.text }]}>
+                                    {subTime}
+                                  </Text>
+                                  <Text style={[styles.timelineCoords, { fontSize: 11, color: colors.textMuted }]}>
+                                    {subLoc.latitude.toFixed(5)}, {subLoc.longitude.toFixed(5)}
+                                    {subLoc.accuracy ? ` · ±${Math.round(subLoc.accuracy)}m` : ""}
+                                  </Text>
+                                </View>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
               </View>
             </View>
           )}

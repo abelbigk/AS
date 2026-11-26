@@ -510,15 +510,15 @@ export function TrackingMap({
 
           function extractMovingWaypoints(cleaned) {
             if (!cleaned || cleaned.length === 0) return [];
-            // Step >= 25m between waypoints to prevent indoor GPS drift from creating star/spiderweb clusters
+            // Step >= 15m between waypoints to prevent indoor GPS drift from creating star/spiderweb clusters
             var moving = [cleaned[0]];
             for (var i = 1; i < cleaned.length; i++) {
               var d = getDistanceM(moving[moving.length - 1], cleaned[i]);
-              if (d >= 25) {
+              if (d >= 15) {
                 moving.push(cleaned[i]);
               }
             }
-            // Collapse quick ping-pong bounces (A -> B -> A within 25m of A and < 2 mins)
+            // Collapse quick ping-pong bounces (A -> B -> A within 15m of A and < 2 mins)
             if (moving.length >= 3) {
               var collapsed = [moving[0]];
               for (var j = 1; j < moving.length; j++) {
@@ -527,7 +527,7 @@ export function TrackingMap({
                   var prev1 = collapsed[collapsed.length - 1];
                   var cur = moving[j];
                   var dt = Math.abs(new Date(cur.timestamp).getTime() - new Date(prev2.timestamp).getTime());
-                  if (getDistanceM(prev2, cur) < 25 && getDistanceM(prev1, cur) < 50 && dt < 120000) {
+                  if (getDistanceM(prev2, cur) < 15 && getDistanceM(prev1, cur) < 50 && dt < 120000) {
                     collapsed.pop();
                     continue;
                   }
@@ -536,7 +536,7 @@ export function TrackingMap({
               }
               moving = collapsed;
             }
-            // Always ensure the very latest point is represented if >= 25m from start
+            // Always ensure the very latest point is represented if >= 15m from start
             var lastRaw = cleaned[cleaned.length - 1];
             if (moving.length >= 2 && moving[moving.length - 1].id !== lastRaw.id) {
               if (getDistanceM(moving[moving.length - 1], lastRaw) >= 15) {
