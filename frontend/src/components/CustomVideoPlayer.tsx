@@ -32,12 +32,16 @@ import { VideoView, useVideoPlayer } from "expo-video";
 import Svg, { Path } from "react-native-svg";
 import { Play, MoreVertical, PictureInPicture2, Gauge } from "lucide-react-native";
 import { DropdownMenu, DropdownItem } from "./DropdownMenu";
-import { getOrCacheVideoUri } from "../lib/videoCache";
+import { getCachedVideoUriOnly, getOrCacheVideoUri } from "../lib/videoCache";
 import { useTheme } from "../contexts/ThemeContext";
 
 interface CustomVideoPlayerProps {
   uri: string;
   isActive?: boolean;
+  syncTime?: number;
+  syncIsPlaying?: boolean;
+  syncVersion?: number;
+  onTimeUpdate?: (timeSec: number) => void;
   onPlayingChange?: (isPlaying: boolean) => void;
   onDraggingChange?: (isDragging: boolean) => void;
   onBufferingChange?: (isBuffering: boolean) => void;
@@ -50,6 +54,10 @@ interface CustomVideoPlayerProps {
 export function CustomVideoPlayer({
   uri,
   isActive = true,
+  syncTime,
+  syncIsPlaying,
+  syncVersion,
+  onTimeUpdate,
   onPlayingChange,
   onDraggingChange,
   onBufferingChange,
@@ -83,6 +91,8 @@ export function CustomVideoPlayer({
   const progressBarRef = useRef<any>(null);
   const videoViewRef   = useRef<VideoView>(null);
   const pinchDistRef   = useRef<number | null>(null);
+  const pendingSyncRef = useRef<{ time: number; shouldPlay: boolean } | null>(null);
+  const lastSyncVersionRef = useRef<number | undefined>(undefined);
 
   // ─── Animated values for bar expansion & zero-rerender progress ──────────
   const barHeight       = useRef(new RNAnimated.Value(3)).current;
@@ -111,21 +121,43 @@ export function CustomVideoPlayer({
     p.timeUpdateEventInterval = 0.05; // 50ms interval for smooth time tracking
   });
 
-  // Cache video locally. When background download completes, hot-swap to local
-  // file without restarting playback — fixes looping re-buffer and seek-back reload.
+  // Check local cache immediately on mount; defer background download until active for 1.2s
+  // so quick swipes don't waste 2x bandwidth, and preserve position on hot-swap.
   useEffect(() => {
     let isMounted = true;
-    getOrCacheVideoUri(uri, (localUri) => {
+    let downloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const applyLocalUri = (localUri: string) => {
       if (!isMounted || localUri === playableUri) return;
+      const savedTime = player.currentTime || 0;
+      const wasPlaying = isPlayingRef.current;
       setPlayableUri(localUri);
-      try { player.replace({ uri: localUri }); } catch {}
-    }).then((initial) => {
-      if (isMounted && initial && initial !== playableUri) {
-        setPlayableUri(initial);
+      try {
+        player.replace({ uri: localUri });
+        if (savedTime > 0) player.currentTime = savedTime;
+        if (wasPlaying) player.play();
+      } catch {}
+    };
+
+    getCachedVideoUriOnly(uri).then((cached) => {
+      if (!isMounted) return;
+      if (cached) {
+        if (cached !== playableUri) setPlayableUri(cached);
+        return;
+      }
+      if (isActive) {
+        downloadTimer = setTimeout(() => {
+          if (!isMounted) return;
+          getOrCacheVideoUri(uri, applyLocalUri);
+        }, 1200);
       }
     });
-    return () => { isMounted = false; };
-  }, [uri]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    return () => {
+      isMounted = false;
+      if (downloadTimer) clearTimeout(downloadTimer);
+    };
+  }, [uri, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const playSub = player.addListener("playingChange", (e) => {
@@ -159,6 +191,7 @@ export function CustomVideoPlayer({
       if (!isDraggingRef.current) {
         const dur = durationRef.current || player.duration || 0;
         setCurrentTime(e.currentTime);
+        onTimeUpdate?.(e.currentTime);
         if (dur > 0) {
           const pct = Math.min(100, Math.max(0, (e.currentTime / dur) * 100));
           currentProgressRef.current = pct;
@@ -175,6 +208,37 @@ export function CustomVideoPlayer({
       if (player.duration) {
         setDuration(player.duration);
         durationRef.current = player.duration;
+      }
+      if (pendingSyncRef.current && ((player as any).status === "readyToPlay" || player.duration > 0)) {
+        const pending = pendingSyncRef.current;
+        pendingSyncRef.current = null;
+        try {
+          if (pending.time > 0) {
+            player.currentTime = pending.time;
+            setCurrentTime(pending.time);
+            onTimeUpdate?.(pending.time);
+            const dur = player.duration || durationRef.current || 0;
+            if (dur > 0) {
+              const pct = Math.min(100, Math.max(0, (pending.time / dur) * 100));
+              currentProgressRef.current = pct;
+              progressPctAnim.setValue(pct);
+            }
+          }
+          if (pending.shouldPlay) {
+            (player as any).muted = false;
+            player.play();
+            setIsPlaying(true);
+            isPlayingRef.current = true;
+            setShowInitialPlay(false);
+            onPlayingChange?.(true);
+          } else {
+            player.pause();
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            if (pending.time > 0) setShowInitialPlay(false);
+            onPlayingChange?.(false);
+          }
+        } catch {}
       }
       const track = (player as any).videoTrack;
       const size = track?.size;
@@ -293,6 +357,47 @@ export function CustomVideoPlayer({
   // Keep durationRef in sync with state
   useEffect(() => { durationRef.current = duration; }, [duration]);
 
+  // Apply external sync (entering or exiting fullscreen) when active
+  useEffect(() => {
+    if (!isActive || syncVersion === undefined) return;
+    if (lastSyncVersionRef.current === syncVersion) return;
+    lastSyncVersionRef.current = syncVersion;
+
+    const targetTime = typeof syncTime === "number" && !Number.isNaN(syncTime) ? syncTime : 0;
+    const shouldPlay = !!syncIsPlaying;
+
+    if ((player as any).status === "readyToPlay" || player.duration > 0) {
+      pendingSyncRef.current = null;
+      try {
+        player.currentTime = targetTime;
+        setCurrentTime(targetTime);
+        onTimeUpdate?.(targetTime);
+        const dur = player.duration || durationRef.current || 0;
+        if (dur > 0) {
+          const pct = Math.min(100, Math.max(0, (targetTime / dur) * 100));
+          currentProgressRef.current = pct;
+          progressPctAnim.setValue(pct);
+        }
+        if (shouldPlay) {
+          (player as any).muted = false;
+          player.play();
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          setShowInitialPlay(false);
+          onPlayingChange?.(true);
+        } else {
+          player.pause();
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          if (targetTime > 0) setShowInitialPlay(false);
+          onPlayingChange?.(false);
+        }
+      } catch {}
+    } else {
+      pendingSyncRef.current = { time: targetTime, shouldPlay };
+    }
+  }, [isActive, syncVersion, syncTime, syncIsPlaying, player, onPlayingChange, progressPctAnim]);
+
   // Pause when slide becomes inactive (preserve current frame/second so returning resumes where left off)
   useEffect(() => {
     if (!isActive) {
@@ -367,6 +472,7 @@ export function CustomVideoPlayer({
     lastSeekPctRef.current = pct;
     const target = (pct / 100) * dur;
     try { player.currentTime = target; } catch {}
+    onTimeUpdate?.(target);
   };
 
   // ─── Drag lifecycle helpers (called from both native + web handlers) ──────

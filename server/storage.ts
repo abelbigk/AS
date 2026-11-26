@@ -53,7 +53,7 @@ export async function storagePut(
       CacheControl: "public, max-age=172800, immutable",
     },
     partSize: 5 * 1024 * 1024,
-    queueSize: 1,
+    queueSize: 4,
   });
 
   let lastProgressTime = Date.now();

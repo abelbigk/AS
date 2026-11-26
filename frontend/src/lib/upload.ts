@@ -1,4 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getCachedAuthToken } from "./authTokenCache";
 import axios from "axios";
 import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
@@ -18,7 +18,7 @@ export async function uploadFile(
   prefix: string = "content"
 ): Promise<UploadResult | null> {
   try {
-    const token = await AsyncStorage.getItem("auth_token");
+    const token = await getCachedAuthToken();
     const baseUrl = getBaseApiUrl();
 
     // 1. Get presigned URL from backend

@@ -799,12 +799,31 @@ export const appRouter = router({
 
     getLive: protectedProcedure
       .input(z.object({ userId: z.number() }))
-      .query(({ input }) => {
-        const entry = liveLocationMap.get(input.userId);
+      .query(async ({ input }) => {
+        let entry = liveLocationMap.get(input.userId);
+        // Hydrate from DB if server restarted recently and user pinged within last 20s
+        if (!entry) {
+          const latest = await getLatestUserLocation(input.userId);
+          if (latest) {
+            const ms = Date.parse(latest.timestamp);
+            if (!Number.isNaN(ms) && Date.now() - ms < 20000) {
+              entry = {
+                latitude: latest.latitude,
+                longitude: latest.longitude,
+                accuracy: latest.accuracy ?? null,
+                speed: latest.speed ?? null,
+                heading: latest.heading ?? null,
+                timestamp: latest.timestamp,
+                updatedAtMs: ms,
+              };
+              liveLocationMap.set(input.userId, entry);
+            }
+          }
+        }
         const isLive = !!entry && Date.now() - entry.updatedAtMs < 20000;
         return {
           isLive,
-          liveLocation: isLive ? entry : null,
+          liveLocation: isLive && entry ? entry : null,
         };
       }),
 

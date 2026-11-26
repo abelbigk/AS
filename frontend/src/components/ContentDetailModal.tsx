@@ -140,6 +140,16 @@ export function ContentDetailView({
   const fsHeaderVisibleRef = useRef(false);
   const fsHeaderOpacity = useRef(new Animated.Value(0)).current;
   const [fsHeaderPointerEvents, setFsHeaderPointerEvents] = useState<"none" | "auto">("none");
+  const mediaItemsRef = useRef<Array<{ id: string | number; type: string; url: string }>>([]);
+  const isFullscreenRef = useRef(false);
+  isFullscreenRef.current = fullscreenMediaIndex !== null;
+  const videoPlaybackMapRef = useRef<Record<string, { time: number; isPlaying: boolean }>>({});
+  const [videoSyncState, setVideoSyncState] = useState<{
+    url: string;
+    time: number;
+    isPlaying: boolean;
+    version: number;
+  } | null>(null);
 
   const setFullscreenControlsVisible = useCallback((show: boolean) => {
     fsHeaderVisibleRef.current = show;
@@ -152,12 +162,40 @@ export function ContentDetailView({
   }, [setFullscreenControlsVisible]);
 
   const openFullscreen = useCallback((index: number) => {
+    isFullscreenRef.current = true;
+    const item = mediaItemsRef.current[index];
+    if (item && item.type === "video") {
+      const snap = videoPlaybackMapRef.current[item.url];
+      if (snap) {
+        setVideoSyncState((prev) => ({
+          url: item.url,
+          time: snap.time,
+          isPlaying: snap.isPlaying,
+          version: (prev?.version ?? 0) + 1,
+        }));
+      }
+    }
     setFullscreenControlsVisible(false);
     setFullscreenMediaIndex(index);
   }, [setFullscreenControlsVisible]);
 
   const closeFullscreen = useCallback(() => {
+    isFullscreenRef.current = false;
     const targetIndex = fullscreenMediaIndex;
+    if (targetIndex !== null) {
+      const item = mediaItemsRef.current[targetIndex];
+      if (item && item.type === "video") {
+        const snap = videoPlaybackMapRef.current[item.url];
+        if (snap) {
+          setVideoSyncState((prev) => ({
+            url: item.url,
+            time: snap.time,
+            isPlaying: snap.isPlaying,
+            version: (prev?.version ?? 0) + 1,
+          }));
+        }
+      }
+    }
     setFullscreenMediaIndex(null);
     if (targetIndex !== null && sliderWidth > 0) {
       setActiveMediaIndex(targetIndex);
@@ -208,6 +246,7 @@ export function ContentDetailView({
     if (!freshItem?.media || freshItem.id !== item?.id) return [];
     return freshItem.media.filter((m: any) => m.contentItemId === item?.id);
   }, [freshItem, item?.id]);
+  mediaItemsRef.current = mediaItems;
 
   // Reset all item-specific state whenever a different item is opened or modal becomes visible
   useEffect(() => {
@@ -222,6 +261,8 @@ export function ContentDetailView({
       setCoverAspectRatio(undefined);
       setMediaAspectRatios({});
       setFullscreenMediaIndex(null);
+      videoPlaybackMapRef.current = {};
+      setVideoSyncState(null);
       try {
         scrollViewRef.current?.scrollTo({ x: 0, animated: false });
       } catch {}
@@ -770,16 +811,40 @@ export function ContentDetailView({
                             ]}
                           >
                             {m.type === "video" ? (
-                              <CustomVideoPlayer
-                                uri={m.url}
-                                isActive={i === displayMediaIndex && !isScrolledPastMedia && visible && fullscreenMediaIndex === null}
-                                onPlayingChange={handleVideoPlayingChange}
-                                onBufferingChange={setIsVideoBuffering}
-                                onUserPausedChange={setIsVideoUserPaused}
-                                onDraggingChange={handleVideoTimelineDraggingChange}
-                                onFullscreenTrigger={() => openFullscreen(i)}
-                              />
-                            ) : (
+                              i === displayMediaIndex && fullscreenMediaIndex === null ? (
+                                <CustomVideoPlayer
+                                  uri={m.url}
+                                  isActive={i === displayMediaIndex && !isScrolledPastMedia && visible && fullscreenMediaIndex === null}
+                                  syncTime={videoSyncState?.url === m.url ? videoSyncState.time : undefined}
+                                  syncIsPlaying={videoSyncState?.url === m.url ? videoSyncState.isPlaying : undefined}
+                                  syncVersion={videoSyncState?.url === m.url ? videoSyncState.version : undefined}
+                                  onTimeUpdate={(t) => {
+                                    if (isFullscreenRef.current) return;
+                                    const prev = videoPlaybackMapRef.current[m.url];
+                                    videoPlaybackMapRef.current[m.url] = {
+                                      time: t,
+                                      isPlaying: prev?.isPlaying ?? false,
+                                    };
+                                  }}
+                                  onPlayingChange={(playing) => {
+                                    if (!isFullscreenRef.current && i === displayMediaIndex) {
+                                      const prev = videoPlaybackMapRef.current[m.url];
+                                      videoPlaybackMapRef.current[m.url] = {
+                                        time: prev?.time ?? 0,
+                                        isPlaying: playing,
+                                      };
+                                    }
+                                    handleVideoPlayingChange(playing);
+                                  }}
+                                  onBufferingChange={setIsVideoBuffering}
+                                  onUserPausedChange={setIsVideoUserPaused}
+                                  onDraggingChange={handleVideoTimelineDraggingChange}
+                                  onFullscreenTrigger={() => openFullscreen(i)}
+                                />
+                              ) : (
+                                <View style={{ width: "100%", height: "100%", backgroundColor: "#000" }} />
+                              )
+                            ) : Math.abs(i - displayMediaIndex) <= 1 ? (
                               <Pressable
                                 onPress={() => openFullscreen(i)}
                                 style={[
@@ -801,6 +866,8 @@ export function ContentDetailView({
                                   }}
                                 />
                               </Pressable>
+                            ) : (
+                              <View style={{ width: "100%", height: "100%" }} />
                             )}
                           </View>
                         );
@@ -1140,22 +1207,44 @@ export function ContentDetailView({
                     ]}
                   >
                     {m.type === "video" ? (
-                      <View style={{ width: "100%", height: "100%" }}>
-                        <CustomVideoPlayer
-                          uri={m.url}
-                          isActive={i === fullscreenMediaIndex}
-                          onPlayingChange={handleVideoPlayingChange}
-                          onBufferingChange={setIsVideoBuffering}
-                          onUserPausedChange={setIsVideoUserPaused}
-                          onDraggingChange={handleVideoTimelineDraggingChange}
-                          onFullscreenExit={closeFullscreen}
-                        />
-                        <Pressable
-                          onPress={toggleFullscreenControls}
-                          style={{ position: "absolute", top: 0, left: 0, right: 0, height: 54 }}
-                        />
-                      </View>
-                    ) : (
+                      i === fullscreenMediaIndex ? (
+                        <View style={{ width: "100%", height: "100%" }}>
+                          <CustomVideoPlayer
+                            uri={m.url}
+                            isActive={i === fullscreenMediaIndex}
+                            syncTime={videoSyncState?.url === m.url ? videoSyncState.time : undefined}
+                            syncIsPlaying={videoSyncState?.url === m.url ? videoSyncState.isPlaying : undefined}
+                            syncVersion={videoSyncState?.url === m.url ? videoSyncState.version : undefined}
+                            onTimeUpdate={(t) => {
+                              if (!isFullscreenRef.current) return;
+                              const prev = videoPlaybackMapRef.current[m.url];
+                              videoPlaybackMapRef.current[m.url] = {
+                                time: t,
+                                isPlaying: prev?.isPlaying ?? false,
+                              };
+                            }}
+                            onPlayingChange={(playing) => {
+                              if (isFullscreenRef.current && i === fullscreenMediaIndex) {
+                                const prev = videoPlaybackMapRef.current[m.url];
+                                videoPlaybackMapRef.current[m.url] = {
+                                  time: prev?.time ?? 0,
+                                  isPlaying: playing,
+                                };
+                              }
+                              handleVideoPlayingChange(playing);
+                            }}
+                            onBufferingChange={setIsVideoBuffering}
+                            onUserPausedChange={setIsVideoUserPaused}
+                            onDraggingChange={handleVideoTimelineDraggingChange}
+                            onFullscreenExit={closeFullscreen}
+                          />
+                          <Pressable
+                            onPress={toggleFullscreenControls}
+                            style={{ position: "absolute", top: 0, left: 0, right: 0, height: 54 }}
+                          />
+                        </View>
+                      ) : null
+                    ) : Math.abs(i - fullscreenMediaIndex) <= 1 ? (
                       <Pressable
                         onPress={toggleFullscreenControls}
                         style={{ width: "100%", height: "100%" }}
@@ -1168,7 +1257,7 @@ export function ContentDetailView({
                           priority="high"
                         />
                       </Pressable>
-                    )}
+                    ) : null}
                   </View>
                 ))}
               </ScrollView>

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { setCachedAuthToken } from "../lib/authTokenCache";
 import { trpc } from "../lib/trpc";
 
 interface User {
@@ -30,8 +31,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const savedToken = await AsyncStorage.getItem("auth_token");
         const savedUser = await AsyncStorage.getItem("auth_user");
         if (savedToken && savedUser) {
+          setCachedAuthToken(savedToken);
           setToken(savedToken);
           setUser(JSON.parse(savedUser));
+        } else {
+          setCachedAuthToken(null);
         }
       } catch (e) {
         console.error("Failed to load auth:", e);
@@ -43,6 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setAuth = async (newToken: string, newUser: User) => {
+    setCachedAuthToken(newToken);
     setToken(newToken);
     setUser(newUser);
     await AsyncStorage.setItem("auth_token", newToken);
@@ -50,6 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    setCachedAuthToken(null);
     setToken(null);
     setUser(null);
     await AsyncStorage.removeItem("auth_token");

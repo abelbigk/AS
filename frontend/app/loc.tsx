@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,8 +9,9 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
+  AppState,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -42,6 +43,21 @@ const DEFAULT_BG =
 
 export default function LocationScreen() {
   const router = useRouter();
+  const [isFocused, setIsFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => setIsFocused(false);
+    }, [])
+  );
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === "active");
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      setIsAppActive(next === "active");
+    });
+    return () => sub.remove();
+  }, []);
+  const isScreenActive = isFocused && isAppActive;
   const insets = useSafeAreaInsets();
   const { colors, theme } = useTheme();
   const params = useLocalSearchParams<{ userId: string; username?: string }>();
@@ -103,12 +119,15 @@ export default function LocationScreen() {
   );
   const { refreshControlProps } = usePullToRefresh(refetch);
 
-  // Live streaming status (polls every 1s when viewing today)
+  // Live streaming status: 1s when user is actively live, 4s idle poll when offline, paused when unfocused/backgrounded
   const { data: liveData } = trpc.tracking.getLive.useQuery(
     { userId },
     {
-      enabled: !!userId && isCurrentDayToday,
-      refetchInterval: isCurrentDayToday ? 1000 : false,
+      enabled: !!userId && isCurrentDayToday && isScreenActive,
+      refetchInterval:
+        isCurrentDayToday && isScreenActive
+          ? (query) => (query.state.data?.isLive ? 1000 : 4000)
+          : false,
     }
   );
 

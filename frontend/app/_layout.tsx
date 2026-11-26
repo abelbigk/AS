@@ -6,7 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getCachedAuthToken } from "../src/lib/authTokenCache";
 import { trpc } from "../src/lib/trpc";
 import { getTrpcUrl } from "../src/lib/config";
 import { ThemeProvider, useTheme } from "../src/contexts/ThemeContext";
@@ -80,7 +80,7 @@ export default function RootLayout() {
           url: getTrpcUrl(),
           transformer: superjson,
           async fetch(url, options) {
-            const token = await AsyncStorage.getItem("auth_token");
+            const token = await getCachedAuthToken();
             return fetch(url, {
               ...options,
               headers: {

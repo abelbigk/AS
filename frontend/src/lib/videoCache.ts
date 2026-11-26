@@ -3,9 +3,13 @@ import { Platform } from "react-native";
 
 const VIDEO_CACHE_DIR = `${FileSystem.cacheDirectory}video_cache/`;
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000; // 48 hours in milliseconds
+const MAX_CACHE_BYTES = 250 * 1024 * 1024; // 250 MB cap
+const TARGET_PRUNE_BYTES = 200 * 1024 * 1024; // Prune down to 200 MB
 
 // Track in-flight downloads so we don't start duplicate downloads for the same URL
 const inFlightDownloads = new Map<string, Promise<string>>();
+let lastPruneMs = 0;
+let pruneInFlight: Promise<void> | null = null;
 
 /**
  * Ensures the video cache directory exists on native devices.
@@ -23,13 +27,105 @@ async function ensureDirExists(): Promise<void> {
 }
 
 /**
- * Generates a stable, safe local filename for a given remote video URL.
+ * Fast deterministic FNV-1a 32-bit hash for collision-safe cache filenames.
+ */
+function hashString(str: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * Generates a stable, collision-safe local filename for a given remote video URL.
  */
 function getLocalCachePath(remoteUri: string): string {
   const cleanUri = remoteUri.split("?")[0];
   const sanitized = cleanUri.replace(/[^a-zA-Z0-9]/g, "_");
   const ext = cleanUri.toLowerCase().endsWith(".webm") ? ".webm" : ".mp4";
-  return `${VIDEO_CACHE_DIR}${sanitized.slice(-50)}${ext}`;
+  return `${VIDEO_CACHE_DIR}${hashString(cleanUri)}_${sanitized.slice(-24)}${ext}`;
+}
+
+/**
+ * Evicts expired (>48h) and oldest cached videos if total cache size exceeds MAX_CACHE_BYTES.
+ */
+async function pruneVideoCacheIfNeeded(force = false): Promise<void> {
+  if (Platform.OS === "web") return;
+  const now = Date.now();
+  if (!force && now - lastPruneMs < 30000) return;
+  if (pruneInFlight) return pruneInFlight;
+  lastPruneMs = now;
+
+  pruneInFlight = (async () => {
+    try {
+      const files = await FileSystem.readDirectoryAsync(VIDEO_CACHE_DIR);
+      if (files.length === 0) return;
+
+      const entries: Array<{ uri: string; size: number; modTime: number }> = [];
+      let totalSize = 0;
+
+      for (const name of files) {
+        const uri = `${VIDEO_CACHE_DIR}${name}`;
+        try {
+          const info = await FileSystem.getInfoAsync(uri);
+          if (!info.exists) continue;
+          const size = (info as any).size ?? 0;
+          const modTime = (info as any).modificationTime
+            ? (info as any).modificationTime * 1000
+            : now;
+
+          if (now - modTime >= TWO_DAYS_MS || size <= 0) {
+            await FileSystem.deleteAsync(uri, { idempotent: true });
+          } else {
+            totalSize += size;
+            entries.push({ uri, size, modTime });
+          }
+        } catch {}
+      }
+
+      if (totalSize > MAX_CACHE_BYTES) {
+        entries.sort((a, b) => a.modTime - b.modTime); // Oldest first
+        for (const entry of entries) {
+          if (totalSize <= TARGET_PRUNE_BYTES) break;
+          await FileSystem.deleteAsync(entry.uri, { idempotent: true });
+          totalSize -= entry.size;
+        }
+      }
+    } catch {
+      // Non-fatal
+    } finally {
+      pruneInFlight = null;
+    }
+  })();
+
+  return pruneInFlight;
+}
+
+/**
+ * Checks if a video is already cached locally (< 2 days old) without triggering a download.
+ */
+export async function getCachedVideoUriOnly(remoteUri: string): Promise<string | null> {
+  if (Platform.OS === "web" || !remoteUri || !remoteUri.startsWith("http")) {
+    return null;
+  }
+  try {
+    await ensureDirExists();
+    const localUri = getLocalCachePath(remoteUri);
+    const fileInfo = await FileSystem.getInfoAsync(localUri);
+    if (fileInfo.exists && (fileInfo as any).size > 0) {
+      const now = Date.now();
+      const modTime = (fileInfo as any).modificationTime
+        ? (fileInfo as any).modificationTime * 1000
+        : now;
+      if (now - modTime < TWO_DAYS_MS) {
+        return localUri;
+      }
+      await FileSystem.deleteAsync(localUri, { idempotent: true });
+    }
+  } catch {}
+  return null;
 }
 
 /**
@@ -74,6 +170,7 @@ export async function getOrCacheVideoUri(
           const res = await FileSystem.downloadAsync(remoteUri, localUri);
           if (res.status >= 200 && res.status < 300 && res.uri) {
             onCached?.(res.uri);
+            pruneVideoCacheIfNeeded(true).catch(() => {});
             return res.uri;
           }
           return remoteUri;

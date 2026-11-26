@@ -38,15 +38,36 @@ const STORAGE_KEY_QUEUE = "@tracking_offline_queue";
 const TRAIL_INTERVAL_MS = 10000; // Offline mode: leave a trail point every 10s while moving
 const STATIONARY_REFINE_INTERVAL_MS = 300000; // Check every 5 mins when stationary to refine position
 const PING_TIMEOUT_MS = 7000;
-const HEARTBEAT_INTERVAL_MS = 1000; // Stream live online presence & heading every 1s (in-memory only, no DB write)
+const HEARTBEAT_INTERVAL_MS = 1000; // Stream live online presence & heading every 1s when moving
+const HEARTBEAT_IDLE_INTERVAL_MS = 5000; // Keep-alive every 5s when stationary & heading unchanged
 
 let lastHeartbeatSentMs = 0;
+let lastHeartbeatPayload: CoordinatePayload | null = null;
 let heartbeatInFlight = false;
 let isDeviceOnline = true; // Updated by heartbeat & ping network results
 
+function hasSignificantHeartbeatChange(prev: CoordinatePayload | null, next: CoordinatePayload): boolean {
+  if (!prev) return true;
+  const moved = getDistanceMeters(prev.latitude, prev.longitude, next.latitude, next.longitude);
+  if (moved >= 1.5) return true;
+  const h1 = prev.heading ?? 0;
+  const h2 = next.heading ?? 0;
+  const rawDiff = Math.abs(h1 - h2) % 360;
+  const headingDiff = rawDiff > 180 ? 360 - rawDiff : rawDiff;
+  if (headingDiff >= 5) return true;
+  if (Math.abs((prev.speed ?? 0) - (next.speed ?? 0)) >= 0.3) return true;
+  return false;
+}
+
 function sendLiveHeartbeatThrottled(payload: CoordinatePayload, nowMs: number): void {
-  if (heartbeatInFlight || nowMs - lastHeartbeatSentMs < HEARTBEAT_INTERVAL_MS) return;
+  if (heartbeatInFlight) return;
+  const elapsed = nowMs - lastHeartbeatSentMs;
+  const minInterval = hasSignificantHeartbeatChange(lastHeartbeatPayload, payload)
+    ? HEARTBEAT_INTERVAL_MS
+    : HEARTBEAT_IDLE_INTERVAL_MS;
+  if (elapsed < minInterval) return;
   lastHeartbeatSentMs = nowMs;
+  lastHeartbeatPayload = payload;
   heartbeatInFlight = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
   Promise.race([

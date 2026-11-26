@@ -328,6 +328,8 @@ export function TrackingMap({
           let points = ${initialLocations};
           let targetId = ${initialTargetId};
           let currentLiveStatus = ${initialLiveStatus};
+          let liveDropMarker = null;
+          let wasLiveOnline = !!(currentLiveStatus && currentLiveStatus.isLive && currentLiveStatus.liveLocation);
           const markerMap = {};
           const map = L.map('map', { zoomControl: false });
           L.control.zoom({ position: 'topright' }).addTo(map);
@@ -642,7 +644,7 @@ export function TrackingMap({
             }
           }
 
-          function buildGreenDropMarker(liveLoc, fallbackPoint) {
+          function buildLiveDropIconAndPopup(liveLoc, fallbackPoint) {
             var userInitial = ('${username || "U"}').charAt(0).toUpperCase();
             var heading = (liveLoc.heading != null && liveLoc.heading >= 0)
               ? Math.round(liveLoc.heading)
@@ -679,10 +681,34 @@ export function TrackingMap({
                 '<div class="popup-info-row"><span>Speed:</span> <b>' + spdStr + '</b></div>' +
                 '<div class="popup-coords-text">' + liveLoc.latitude.toFixed(5) + ', ' + liveLoc.longitude.toFixed(5) + '</div>' +
               '</div>';
-            return L.marker([liveLoc.latitude, liveLoc.longitude], { icon: liveIcon, zIndexOffset: 1000 })
-              .addTo(routeGroup)
-              .bindPopup(popupHtml, { className: 'custom-popup' });
+            return { liveIcon: liveIcon, popupHtml: popupHtml };
           }
+
+          function buildGreenDropMarker(liveLoc, fallbackPoint) {
+            var built = buildLiveDropIconAndPopup(liveLoc, fallbackPoint);
+            liveDropMarker = L.marker([liveLoc.latitude, liveLoc.longitude], { icon: built.liveIcon, zIndexOffset: 1000 })
+              .addTo(routeGroup)
+              .bindPopup(built.popupHtml, { className: 'custom-popup' });
+            return liveDropMarker;
+          }
+
+          window.updateLiveStatus = function(newLiveStatus) {
+            currentLiveStatus = newLiveStatus;
+            var isNowOnline = !!(newLiveStatus && newLiveStatus.isLive && newLiveStatus.liveLocation);
+            // If online/offline status didn't flip and we already have the live marker, update it in-place (0 route/OSRM re-renders!)
+            if (isNowOnline && wasLiveOnline && liveDropMarker) {
+              var loc = newLiveStatus.liveLocation;
+              var fallbackPt = points && points.length > 0 ? points[points.length - 1] : null;
+              var built = buildLiveDropIconAndPopup(loc, fallbackPt);
+              liveDropMarker.setLatLng([loc.latitude, loc.longitude]);
+              liveDropMarker.setIcon(built.liveIcon);
+              liveDropMarker.setPopupContent(built.popupHtml);
+              return;
+            }
+            if (isNowOnline !== wasLiveOnline) {
+              window.renderRoute(points, targetId, true, newLiveStatus);
+            }
+          };
 
           window.renderRoute = function(newPoints, newTargetId, preserveViewport, newLiveStatus) {
             var seq = ++currentRenderSeq;
@@ -697,6 +723,8 @@ export function TrackingMap({
               currentLiveStatus = newLiveStatus;
             }
             var isLiveOnline = !!(currentLiveStatus && currentLiveStatus.isLive && currentLiveStatus.liveLocation);
+            wasLiveOnline = isLiveOnline;
+            liveDropMarker = null;
 
             routeGroup.clearLayers();
             movingPointsList = [];
@@ -704,7 +732,7 @@ export function TrackingMap({
             if (points && points.length > 0) {
             var cleanedPoints = denoisePoints(points);
 
-            // Check if all cleaned points for this date are within a 35m indoor stationary cluster
+            // Check if all cleaned points for this date are within a 15m indoor stationary cluster
             var maxSpread = 0;
             var origin = cleanedPoints[0];
             for (var k = 1; k < cleanedPoints.length; k++) {
@@ -715,9 +743,10 @@ export function TrackingMap({
             var movingPoints = extractMovingWaypoints(cleanedPoints);
             movingPointsList = movingPoints;
 
-            // CASE 1: Stationary / No movement outside 35m cluster:
-            if (maxSpread < 35 || movingPoints.length < 2) {
+            // CASE 1: Stationary / No movement outside 15m cluster:
+            if (maxSpread < 15 || movingPoints.length < 2) {
               const pt = cleanedPoints[cleanedPoints.length - 1];
+              movingPointsList = [pt];
               const userInitial = ('${username || "U"}').charAt(0).toUpperCase();
               let marker;
               if (isLiveOnline) {
@@ -973,6 +1002,8 @@ export function TrackingMap({
                 const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
                 if (data && data.type === 'updateRoute') {
                   window.renderRoute(data.locations, data.selectedPointId, true, data.liveStatus);
+                } else if (data && data.type === 'updateLiveStatus') {
+                  window.updateLiveStatus && window.updateLiveStatus(data.liveStatus);
                 } else if (data && data.focusPointId && markerMap[data.focusPointId]) {
                   const m = markerMap[data.focusPointId];
                   map.flyTo(m.getLatLng(), 18, { duration: 0.8 });
@@ -986,7 +1017,7 @@ export function TrackingMap({
     `;
   }, [theme, username]);
 
-  // Push new coordinates / selected point / live status in-place without reloading WebView (preserves Satellite layer!)
+  // Push new coordinates / selected point in-place without reloading WebView (preserves Satellite layer!)
   useEffect(() => {
     if (Platform.OS === "web") {
       try {
@@ -995,7 +1026,7 @@ export function TrackingMap({
             type: "updateRoute",
             locations,
             selectedPointId: selectedPointId ?? null,
-            liveStatus: liveStatus ?? null,
+            liveStatus: latestLiveStatusRef.current ?? null,
           }),
           "*"
         );
@@ -1003,12 +1034,32 @@ export function TrackingMap({
     } else if (webViewRef.current) {
       const payload = JSON.stringify(locations);
       const target = selectedPointId != null ? selectedPointId : "null";
-      const livePayload = JSON.stringify(liveStatus ?? null);
+      const livePayload = JSON.stringify(latestLiveStatusRef.current ?? null);
       webViewRef.current.injectJavaScript(
         `window.renderRoute && window.renderRoute(${payload}, ${target}, true, ${livePayload}); true;`
       );
     }
-  }, [locations, selectedPointId, liveStatus]);
+  }, [locations, selectedPointId]);
+
+  // Fast 1s in-place live marker update (zero route/OSRM re-renders when liveStatus ticks!)
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      try {
+        iframeRef.current?.contentWindow?.postMessage(
+          JSON.stringify({
+            type: "updateLiveStatus",
+            liveStatus: liveStatus ?? null,
+          }),
+          "*"
+        );
+      } catch {}
+    } else if (webViewRef.current) {
+      const livePayload = JSON.stringify(liveStatus ?? null);
+      webViewRef.current.injectJavaScript(
+        `window.updateLiveStatus && window.updateLiveStatus(${livePayload}); true;`
+      );
+    }
+  }, [liveStatus]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;

@@ -1,4 +1,4 @@
-import { eq, and, like, desc, asc, isNull, or, ne, inArray, gte, lte } from "drizzle-orm";
+import { eq, and, like, desc, asc, isNull, or, ne, inArray, gte, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import {
@@ -17,6 +17,7 @@ import {
 
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _indexesEnsured = false;
 
 export function getDb() {
   if (_db) return _db;
@@ -34,6 +35,37 @@ export function getDb() {
   });
 
   _db = drizzle(client);
+
+  if (!_indexesEnsured) {
+    _indexesEnsured = true;
+    client
+      .batch(
+        [
+          "CREATE INDEX IF NOT EXISTS idx_categories_user_order ON categories (userId, \"order\")",
+          "CREATE INDEX IF NOT EXISTS idx_subcategories_cat_order ON subcategories (categoryId, \"order\")",
+          "CREATE INDEX IF NOT EXISTS idx_subcategories_user ON subcategories (userId)",
+          "CREATE INDEX IF NOT EXISTS idx_content_status_created ON contentItems (status, createdAt)",
+          "CREATE INDEX IF NOT EXISTS idx_content_user_created ON contentItems (userId, createdAt)",
+          "CREATE INDEX IF NOT EXISTS idx_content_sound ON contentItems (soundId)",
+          "CREATE INDEX IF NOT EXISTS idx_ccl_category_order ON contentCategoryLinks (categoryId, \"order\")",
+          "CREATE INDEX IF NOT EXISTS idx_ccl_content ON contentCategoryLinks (contentId)",
+          "CREATE INDEX IF NOT EXISTS idx_csl_sub_order ON contentSubcategoryLinks (subcategoryId, \"order\")",
+          "CREATE INDEX IF NOT EXISTS idx_csl_content ON contentSubcategoryLinks (contentId)",
+          "CREATE INDEX IF NOT EXISTS idx_media_content_order ON mediaItems (contentItemId, \"order\")",
+          "CREATE INDEX IF NOT EXISTS idx_locations_user_ts ON user_locations (userId, timestamp)",
+          "CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(heading, content='contentItems', content_rowid='id')",
+          "CREATE TRIGGER IF NOT EXISTS content_fts_ai AFTER INSERT ON contentItems BEGIN INSERT INTO content_fts(rowid, heading) VALUES (new.id, new.heading); END",
+          "CREATE TRIGGER IF NOT EXISTS content_fts_ad AFTER DELETE ON contentItems BEGIN INSERT INTO content_fts(content_fts, rowid, heading) VALUES ('delete', old.id, old.heading); END",
+          "CREATE TRIGGER IF NOT EXISTS content_fts_au AFTER UPDATE OF heading ON contentItems BEGIN INSERT INTO content_fts(content_fts, rowid, heading) VALUES ('delete', old.id, old.heading); INSERT INTO content_fts(rowid, heading) VALUES (new.id, new.heading); END",
+          "INSERT INTO content_fts(rowid, heading) SELECT id, heading FROM contentItems WHERE id NOT IN (SELECT rowid FROM content_fts)",
+        ],
+        "write"
+      )
+      .catch((err) => {
+        console.warn("[Database] Failed to ensure indexes:", err?.message || err);
+      });
+  }
+
   return _db;
 }
 
@@ -175,28 +207,38 @@ export async function attachCategoryAndSubcategoryIds<T extends { id: number }>(
   const db = getDb();
   const contentIds = items.map((item) => item.id);
 
-  const [cats, subs] = await Promise.all([
-    db
-      .select({
-        contentId: contentCategoryLinks.contentId,
-        categoryId: contentCategoryLinks.categoryId,
-      })
-      .from(contentCategoryLinks)
-      .innerJoin(categories, eq(contentCategoryLinks.categoryId, categories.id))
-      .where(inArray(contentCategoryLinks.contentId, contentIds)),
+  // Chunk into batches of 500 to stay safely under SQLite's 999 SQL variable limit
+  const CHUNK_SIZE = 500;
+  const cats: { contentId: number; categoryId: number }[] = [];
+  const subs: { contentId: number; subcategoryId: number }[] = [];
 
-    db
-      .select({
-        contentId: contentSubcategoryLinks.contentId,
-        subcategoryId: contentSubcategoryLinks.subcategoryId,
-      })
-      .from(contentSubcategoryLinks)
-      .innerJoin(
-        subcategories,
-        eq(contentSubcategoryLinks.subcategoryId, subcategories.id)
-      )
-      .where(inArray(contentSubcategoryLinks.contentId, contentIds)),
-  ]);
+  for (let i = 0; i < contentIds.length; i += CHUNK_SIZE) {
+    const chunk = contentIds.slice(i, i + CHUNK_SIZE);
+    const [chunkCats, chunkSubs] = await Promise.all([
+      db
+        .select({
+          contentId: contentCategoryLinks.contentId,
+          categoryId: contentCategoryLinks.categoryId,
+        })
+        .from(contentCategoryLinks)
+        .innerJoin(categories, eq(contentCategoryLinks.categoryId, categories.id))
+        .where(inArray(contentCategoryLinks.contentId, chunk)),
+
+      db
+        .select({
+          contentId: contentSubcategoryLinks.contentId,
+          subcategoryId: contentSubcategoryLinks.subcategoryId,
+        })
+        .from(contentSubcategoryLinks)
+        .innerJoin(
+          subcategories,
+          eq(contentSubcategoryLinks.subcategoryId, subcategories.id)
+        )
+        .where(inArray(contentSubcategoryLinks.contentId, chunk)),
+    ]);
+    cats.push(...chunkCats);
+    subs.push(...chunkSubs);
+  }
 
   const catMap = new Map<number, number[]>();
   for (const c of cats) {
@@ -290,7 +332,7 @@ export async function updateSubcategory(
 
 // Content queries
 export async function getContentByCategory(
-  categoryId: number, _userId?: number, subcategoryId?: number
+  categoryId: number, _userId?: number, subcategoryId?: number, limit = 500
 ) {
   const db = getDb();
   let items;
@@ -300,6 +342,7 @@ export async function getContentByCategory(
       .innerJoin(contentSubcategoryLinks, eq(contentItems.id, contentSubcategoryLinks.contentId))
       .where(eq(contentSubcategoryLinks.subcategoryId, subcategoryId))
       .orderBy(asc(contentSubcategoryLinks.order), desc(contentItems.createdAt))
+      .limit(limit)
       .then(rows => rows.map(r => r.content));
   } else {
     // Only show content that is directly linked to this category
@@ -311,25 +354,27 @@ export async function getContentByCategory(
         eq(contentCategoryLinks.categoryId, categoryId)
       ))
       .orderBy(asc(contentCategoryLinks.order), desc(contentItems.createdAt))
+      .limit(limit)
       .then(rows => rows.map(r => r.content));
   }
 
   return await attachCategoryAndSubcategoryIds(items);
 }
 
-export async function getContentBySubcategory(subcategoryId: number, _userId?: number) {
+export async function getContentBySubcategory(subcategoryId: number, _userId?: number, limit = 500) {
   const db = getDb();
   const items = await db.select({ content: contentItems })
     .from(contentItems)
     .innerJoin(contentSubcategoryLinks, eq(contentItems.id, contentSubcategoryLinks.contentId))
     .where(eq(contentSubcategoryLinks.subcategoryId, subcategoryId))
     .orderBy(asc(contentSubcategoryLinks.order), desc(contentItems.createdAt))
+    .limit(limit)
     .then(rows => rows.map(r => r.content));
 
   return await attachCategoryAndSubcategoryIds(items);
 }
 
-export async function getUncategorizedContent(_userId?: number) {
+export async function getUncategorizedContent(_userId?: number, limit = 500) {
   const db = getDb();
   const items = await db.select({ content: contentItems })
     .from(contentItems)
@@ -341,6 +386,8 @@ export async function getUncategorizedContent(_userId?: number) {
         isNull(contentSubcategoryLinks.subcategoryId)
       )
     )
+    .orderBy(desc(contentItems.createdAt))
+    .limit(limit)
     .then(rows => {
       const seen = new Set<number>();
       const unique: typeof rows = [];
@@ -356,11 +403,12 @@ export async function getUncategorizedContent(_userId?: number) {
   return await attachCategoryAndSubcategoryIds(items);
 }
 
-export async function getContentByStatus(_userId: number, status: "default" | "queued" | "done") {
+export async function getContentByStatus(_userId: number, status: "default" | "queued" | "done", limit = 500) {
   const db = getDb();
-  const items = await db.select().from(contentItems).where(
-    eq(contentItems.status, status)
-  );
+  const items = await db.select().from(contentItems)
+    .where(eq(contentItems.status, status))
+    .orderBy(desc(contentItems.createdAt))
+    .limit(limit);
 
   return await attachCategoryAndSubcategoryIds(items);
 }
@@ -539,8 +587,34 @@ export async function deleteMediaItem(mediaId: number, _userId?: number) {
 }
 export async function searchContentItems(_userId: number, query: string) {
   const db = getDb();
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  // Use FTS5 full-text index when possible for O(log N) search; fall back to LIKE for mid-word/special chars
+  const tokens = trimmed
+    .split(/\s+/)
+    .map((t) => t.replace(/"/g, ""))
+    .filter((t) => t.length > 0);
+
+  if (tokens.length > 0) {
+    try {
+      const ftsQuery = tokens.map((t) => `"${t}"*`).join(" ");
+      const ftsItems = await db
+        .select()
+        .from(contentItems)
+        .where(sql`${contentItems.id} IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ${ftsQuery})`)
+        .orderBy(desc(contentItems.createdAt))
+        .limit(100);
+      if (ftsItems.length > 0) {
+        return await attachCategoryAndSubcategoryIds(ftsItems);
+      }
+    } catch {
+      // Fall through to LIKE if FTS5 table is unavailable
+    }
+  }
+
   const items = await db.select().from(contentItems).where(
-    like(contentItems.heading, `%${query}%`)
+    like(contentItems.heading, `%${trimmed}%`)
   ).orderBy(desc(contentItems.createdAt)).limit(100);
 
   return await attachCategoryAndSubcategoryIds(items);
@@ -712,25 +786,25 @@ export async function recordUserLocation(data: {
 export async function getUserLocationsByDate(
   userId: number,
   dateStr: string,
-  startIso?: string,
-  endIso?: string
+  _startIso?: string,
+  _endIso?: string
 ) {
   const db = getDb();
   const [y, m, d] = dateStr.split("-").map(Number);
   const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - 3 * 3600 * 1000).toISOString();
   const endUtc = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - 3 * 3600 * 1000).toISOString();
 
-  return await db
+  // Two clean B-tree range scans (no LIKE wildcard): covers both Z and +03:00 stored timestamps
+  const rows = await db
     .select()
     .from(userLocations)
     .where(
       and(
         eq(userLocations.userId, userId),
         or(
-          like(userLocations.timestamp, `${dateStr}%`),
           and(
             gte(userLocations.timestamp, `${dateStr}T00:00:00`),
-            lte(userLocations.timestamp, `${dateStr}T23:59:59`)
+            lte(userLocations.timestamp, `${dateStr}T23:59:59.999+03:00`)
           ),
           and(
             gte(userLocations.timestamp, startUtc),
@@ -740,6 +814,16 @@ export async function getUserLocationsByDate(
       )
     )
     .orderBy(asc(userLocations.timestamp));
+
+  // Exact UTC+3 date filter to guard against cross-timezone string boundary overlap
+  return rows.filter((row) => {
+    const ms = Date.parse(row.timestamp);
+    if (!Number.isNaN(ms)) {
+      const nairobiDate = new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
+      return nairobiDate === dateStr;
+    }
+    return row.timestamp.startsWith(dateStr);
+  });
 }
 
 export async function getLatestUserLocation(userId: number) {
@@ -755,22 +839,18 @@ export async function getLatestUserLocation(userId: number) {
 
 export async function getUserLocationDates(userId: number): Promise<string[]> {
   const db = getDb();
+  // Compute distinct UTC+3 dates directly in SQLite instead of transferring full location history
   const rows = await db
-    .select({ timestamp: userLocations.timestamp })
+    .selectDistinct({
+      dateStr: sql<string>`substr(datetime(${userLocations.timestamp}, '+3 hours'), 1, 10)`,
+    })
     .from(userLocations)
     .where(eq(userLocations.userId, userId));
 
-  const dateSet = new Set<string>();
-  for (const row of rows) {
-    const ms = Date.parse(row.timestamp);
-    if (!Number.isNaN(ms)) {
-      const nairobiDate = new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
-      dateSet.add(nairobiDate);
-    } else if (row.timestamp.length >= 10) {
-      dateSet.add(row.timestamp.slice(0, 10));
-    }
-  }
-  return Array.from(dateSet).sort();
+  return rows
+    .map((r) => r.dateStr)
+    .filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
 }
 
 export async function deleteUserLocations(

@@ -1,4 +1,4 @@
-import { int, sqliteTable, text, real } from "drizzle-orm/sqlite-core";
+import { int, sqliteTable, text, real, index } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const users = sqliteTable("users", {
@@ -32,7 +32,9 @@ export const categories = sqliteTable("categories", {
   order: int("order").default(0).notNull(),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
   updatedAt: text("updatedAt").default(sql`(current_timestamp)`).notNull(),
-});
+}, (t) => [
+  index("idx_categories_user_order").on(t.userId, t.order),
+]);
 
 export type Category = typeof categories.$inferSelect;
 export type InsertCategory = typeof categories.$inferInsert;
@@ -49,7 +51,10 @@ export const subcategories = sqliteTable("subcategories", {
   order: int("order").default(0).notNull(),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
   updatedAt: text("updatedAt").default(sql`(current_timestamp)`).notNull(),
-});
+}, (t) => [
+  index("idx_subcategories_cat_order").on(t.categoryId, t.order),
+  index("idx_subcategories_user").on(t.userId),
+]);
 
 export type Subcategory = typeof subcategories.$inferSelect;
 export type InsertSubcategory = typeof subcategories.$inferInsert;
@@ -87,7 +92,11 @@ export const contentItems = sqliteTable("contentItems", {
   locationLinkUrl: text("location_link_url"),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
   updatedAt: text("updatedAt").default(sql`(current_timestamp)`).notNull(),
-});
+}, (t) => [
+  index("idx_content_status_created").on(t.status, t.createdAt),
+  index("idx_content_user_created").on(t.userId, t.createdAt),
+  index("idx_content_sound").on(t.soundId),
+]);
 
 export type ContentItem = typeof contentItems.$inferSelect;
 export type InsertContentItem = typeof contentItems.$inferInsert;
@@ -97,14 +106,20 @@ export const contentCategoryLinks = sqliteTable("contentCategoryLinks", {
   contentId: int("contentId").notNull(),
   categoryId: int("categoryId").notNull(),
   order: int("order").default(0).notNull(),
-});
+}, (t) => [
+  index("idx_ccl_category_order").on(t.categoryId, t.order),
+  index("idx_ccl_content").on(t.contentId),
+]);
 
 export const contentSubcategoryLinks = sqliteTable("contentSubcategoryLinks", {
   id: int("id").primaryKey({ autoIncrement: true }),
   contentId: int("contentId").notNull(),
   subcategoryId: int("subcategoryId").notNull(),
   order: int("order").default(0).notNull(),
-});
+}, (t) => [
+  index("idx_csl_sub_order").on(t.subcategoryId, t.order),
+  index("idx_csl_content").on(t.contentId),
+]);
 
 /**
  * Media attachments — multiple photos or videos inside a content item
@@ -119,7 +134,9 @@ export const mediaItems = sqliteTable("mediaItems", {
   type: text("type", { enum: ["image", "video"] }).default("image").notNull(),
   order: int("order").default(0).notNull(),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
-});
+}, (t) => [
+  index("idx_media_content_order").on(t.contentItemId, t.order),
+]);
 
 export type MediaItem = typeof mediaItems.$inferSelect;
 export type InsertMediaItem = typeof mediaItems.$inferInsert;
@@ -146,7 +163,9 @@ export const userLocations = sqliteTable("user_locations", {
   altitude: real("altitude"),
   timestamp: text("timestamp").notNull(),
   createdAt: text("createdAt").default(sql`(current_timestamp)`).notNull(),
-});
+}, (t) => [
+  index("idx_locations_user_ts").on(t.userId, t.timestamp),
+]);
 
 export type UserLocation = typeof userLocations.$inferSelect;
 export type InsertUserLocation = typeof userLocations.$inferInsert;
