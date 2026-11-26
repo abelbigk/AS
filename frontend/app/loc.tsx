@@ -103,13 +103,19 @@ export default function LocationScreen() {
   );
   const { refreshControlProps } = usePullToRefresh(refetch);
 
-  // Live streaming status (polls every 3s when viewing today)
+  // Live streaming status (polls every 1s when viewing today)
   const { data: liveData } = trpc.tracking.getLive.useQuery(
     { userId },
     {
       enabled: !!userId && isCurrentDayToday,
-      refetchInterval: isCurrentDayToday ? 3000 : false,
+      refetchInterval: isCurrentDayToday ? 1000 : false,
     }
+  );
+
+  // Available dates with DB records (for highlighting on the outside calendar)
+  const { data: availableDates = [] } = trpc.tracking.getAvailableDates.useQuery(
+    { userId },
+    { enabled: !!userId }
   );
 
   const isDefaultTimeInterval = startMinutes === 0 && endMinutes === null;
@@ -619,6 +625,7 @@ export default function LocationScreen() {
         visible={calendarModalOpen}
         selectedDate={selectedDate}
         maxDate={new Date()}
+        availableDates={availableDates}
         onClose={() => setCalendarModalOpen(false)}
         onSelectDate={(dateStr) => {
           setSelectedDateStr(dateStr);

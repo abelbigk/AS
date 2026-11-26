@@ -35,16 +35,19 @@ interface TrackingStationaryState {
 
 const STORAGE_KEY_STATE = "@tracking_stationary_state";
 const STORAGE_KEY_QUEUE = "@tracking_offline_queue";
-const TRAIL_INTERVAL_MS = 10000; // Leave a trail point every 10s while moving (online or cached offline)
+const TRAIL_INTERVAL_MS = 10000; // Offline mode: leave a trail point every 10s while moving
 const STATIONARY_REFINE_INTERVAL_MS = 300000; // Check every 5 mins when stationary to refine position
 const PING_TIMEOUT_MS = 7000;
-const HEARTBEAT_INTERVAL_MS = 3000; // Stream live online presence & heading every 3s (in-memory only, no DB write)
+const HEARTBEAT_INTERVAL_MS = 1000; // Stream live online presence & heading every 1s (in-memory only, no DB write)
 
 let lastHeartbeatSentMs = 0;
+let heartbeatInFlight = false;
+let isDeviceOnline = true; // Updated by heartbeat & ping network results
 
 function sendLiveHeartbeatThrottled(payload: CoordinatePayload, nowMs: number): void {
-  if (nowMs - lastHeartbeatSentMs < HEARTBEAT_INTERVAL_MS) return;
+  if (heartbeatInFlight || nowMs - lastHeartbeatSentMs < HEARTBEAT_INTERVAL_MS) return;
   lastHeartbeatSentMs = nowMs;
+  heartbeatInFlight = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
   Promise.race([
     trpcVanillaClient.tracking.liveHeartbeat.mutate({
@@ -56,11 +59,17 @@ function sendLiveHeartbeatThrottled(payload: CoordinatePayload, nowMs: number): 
       timestamp: payload.timestamp,
     }),
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("Heartbeat timeout")), 5000);
+      timer = setTimeout(() => reject(new Error("Heartbeat timeout")), 3000);
     }),
   ])
-    .catch(() => {})
+    .then(() => {
+      isDeviceOnline = true;
+    })
+    .catch(() => {
+      isDeviceOnline = false;
+    })
     .finally(() => {
+      heartbeatInFlight = false;
       if (timer) clearTimeout(timer);
     });
 }
@@ -74,6 +83,10 @@ async function sendPingWithTimeout(payload: CoordinatePayload): Promise<void> {
         timer = setTimeout(() => reject(new Error("Ping timeout")), PING_TIMEOUT_MS);
       }),
     ]);
+    isDeviceOnline = true;
+  } catch (err) {
+    isDeviceOnline = false;
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -356,16 +369,8 @@ async function processAndSendCoordinateInner(
       longitude: smoothedLng,
     };
 
-    // Stream live presence + heading to server in-memory (no DB write, never queued offline)
-    const liveCoord = state.stationaryAnchor ?? { latitude: smoothedLat, longitude: smoothedLng };
-    sendLiveHeartbeatThrottled(
-      {
-        ...smoothedPayload,
-        latitude: liveCoord.latitude,
-        longitude: liveCoord.longitude,
-      },
-      now
-    );
+    // Stream live presence + heading + live wandering position every 3s (in-memory only, no DB write)
+    sendLiveHeartbeatThrottled(smoothedPayload, now);
 
     // Human walking speed is ~1.2 to 1.5 m/s. Null/-1 or < 0.6 m/s means device reports stationary.
     const isStationarySpeed = payload.speed == null || payload.speed < 0.6;
@@ -414,30 +419,17 @@ async function processAndSendCoordinateInner(
       }
     }
 
-    // 2. Stationary Anchor Filter with 2-step confirmation (prevents indoor/desk jumps from breaking anchor)
-    if (!state.stationaryAnchor && isStationarySpeed) {
-      state.stationaryAnchor = {
-        latitude: state.lastRecordedCoord.latitude,
-        longitude: state.lastRecordedCoord.longitude,
-      };
-    }
-
-    if (state.stationaryAnchor) {
-      const distFromAnchor = getDistanceMeters(
-        smoothedLat,
-        smoothedLng,
-        state.stationaryAnchor.latitude,
-        state.stationaryAnchor.longitude
-      );
-
-      // Within 25m of anchor: indoor GPS drift or minor <15m shift (e.g. 5m)
-      if (distFromAnchor < 25) {
+    // 2. Online vs Offline movement & stationary rules
+    if (isDeviceOnline) {
+      // ONLINE MODE:
+      // - Live green drop already shows wandering around in real time (no DB write).
+      // - Stepping >= 10m from lastRecordedCoord (confirmed by speed >= 0.6 or 2 consecutive fixes >= 10m) writes to DB.
+      if (distFromLast < 10) {
         state.pendingDeparture = null;
         const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
-        // Every 5 minutes (300,000 ms) while stationary, check if exact position shifted >= 2m (e.g. moved 5m and stayed 5 mins)
-        if (payloadMs - lastStatMs >= 300000) {
+        if (isStationarySpeed && payloadMs - lastStatMs >= STATIONARY_REFINE_INTERVAL_MS) {
           state.lastStationaryUpdateMs = payloadMs;
-          if (distFromLast >= 2 && distFromLast < 15) {
+          if (distFromLast >= 2) {
             state.lastRecordedCoord = { latitude: smoothedLat, longitude: smoothedLng };
             state.lastRecordedTimestamp = payloadMs;
             state.stationaryAnchor = { latitude: smoothedLat, longitude: smoothedLng };
@@ -456,105 +448,168 @@ async function processAndSendCoordinateInner(
         return false;
       }
 
-      // First reading >= 25m: hold as pendingDeparture instead of immediately breaking the anchor
-      if (
-        !state.pendingDeparture ||
-        payloadMs - state.pendingDeparture.timestampMs > 90000
-      ) {
-        state.pendingDeparture = {
-          latitude: smoothedLat,
-          longitude: smoothedLng,
-          timestampMs: payloadMs,
-          distFromAnchor,
-        };
-        await saveState(state);
-        return false;
-      }
-
-      // If GPS is converging BACK toward the stationary anchor while speed is stationary, stay anchored
-      if (
-        distFromAnchor < state.pendingDeparture.distFromAnchor - 12 &&
-        isStationarySpeed
-      ) {
-        state.pendingDeparture = {
-          latitude: smoothedLat,
-          longitude: smoothedLng,
-          timestampMs: payloadMs,
-          distFromAnchor,
-        };
-        await saveState(state);
-        return false;
-      }
-
-      const dtPendingSec = Math.max(
-        1,
-        (payloadMs - state.pendingDeparture.timestampMs) / 1000
-      );
-      const distFromPending = getDistanceMeters(
-        smoothedLat,
-        smoothedLng,
-        state.pendingDeparture.latitude,
-        state.pendingDeparture.longitude
-      );
-
-      // If the jump between pending and current is itself an impossible teleport (> 55 m/s), reset pending
-      if (distFromPending / dtPendingSec > 55) {
-        state.pendingDeparture = {
-          latitude: smoothedLat,
-          longitude: smoothedLng,
-          timestampMs: payloadMs,
-          distFromAnchor,
-        };
-        await saveState(state);
-        return false;
-      }
-
-      const hasConfirmedDeparture =
-        (payload.speed != null && payload.speed >= 0.7) ||
-        (distFromAnchor >= 35 && distFromPending >= 5);
-
-      if (!hasConfirmedDeparture) {
-        state.pendingDeparture = {
-          latitude: smoothedLat,
-          longitude: smoothedLng,
-          timestampMs: payloadMs,
-          distFromAnchor,
-        };
-        await saveState(state);
-        return false;
-      }
-
-      // Confirmed genuine departure from stationary anchor
-      state.stationaryAnchor = null;
-      state.pendingDeparture = null;
-    }
-
-    // If moved < 15 meters while in motion: skip (do NOT cache/send) unless 5-minute stationary refinement triggers
-    if (distFromLast < 15) {
-      const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
-      if (isStationarySpeed && payloadMs - lastStatMs >= STATIONARY_REFINE_INTERVAL_MS) {
-        state.lastStationaryUpdateMs = payloadMs;
-        if (distFromLast >= 2) {
-          state.lastRecordedCoord = { latitude: smoothedLat, longitude: smoothedLng };
-          state.lastRecordedTimestamp = payloadMs;
-          state.stationaryAnchor = { latitude: smoothedLat, longitude: smoothedLng };
+      // distFromLast >= 10m: confirm it's a real 10m step (not a 1s GPS spike)
+      const isMovingSpeed = payload.speed != null && payload.speed >= 0.6;
+      if (!isMovingSpeed) {
+        if (!state.pendingDeparture || payloadMs - state.pendingDeparture.timestampMs > 90000) {
+          state.pendingDeparture = {
+            latitude: smoothedLat,
+            longitude: smoothedLng,
+            timestampMs: payloadMs,
+            distFromAnchor: distFromLast,
+          };
           await saveState(state);
-          try {
-            await sendPingWithTimeout(smoothedPayload);
-            flushOfflineQueue().catch(() => {});
-            return true;
-          } catch (networkErr) {
-            await enqueueOfflineCoordinate(smoothedPayload);
-            return false;
-          }
+          return false;
         }
       }
-      await saveState(state);
-      return false;
+      state.pendingDeparture = null;
+      state.stationaryAnchor = isStationarySpeed ? { latitude: smoothedLat, longitude: smoothedLng } : null;
+    } else {
+      // OFFLINE MODE:
+      // - Strict 25m/35m stationary anchor + 15m radius filter so indoor drift doesn't fill offline cache
+      // - 5-minute stationary refinement still updates 2-15m shifts
+      if (!state.stationaryAnchor && isStationarySpeed) {
+        state.stationaryAnchor = {
+          latitude: state.lastRecordedCoord.latitude,
+          longitude: state.lastRecordedCoord.longitude,
+        };
+      }
+
+      if (state.stationaryAnchor) {
+        const distFromAnchor = getDistanceMeters(
+          smoothedLat,
+          smoothedLng,
+          state.stationaryAnchor.latitude,
+          state.stationaryAnchor.longitude
+        );
+
+        // Within 25m of anchor: indoor GPS drift or minor <15m shift (e.g. 5m)
+        if (distFromAnchor < 25) {
+          state.pendingDeparture = null;
+          const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
+          // Every 5 minutes (300,000 ms) while stationary, check if exact position shifted >= 2m (e.g. moved 5m and stayed 5 mins)
+          if (payloadMs - lastStatMs >= 300000) {
+            state.lastStationaryUpdateMs = payloadMs;
+            if (distFromLast >= 2 && distFromLast < 15) {
+              state.lastRecordedCoord = { latitude: smoothedLat, longitude: smoothedLng };
+              state.lastRecordedTimestamp = payloadMs;
+              state.stationaryAnchor = { latitude: smoothedLat, longitude: smoothedLng };
+              await saveState(state);
+              try {
+                await sendPingWithTimeout(smoothedPayload);
+                flushOfflineQueue().catch(() => {});
+                return true;
+              } catch (networkErr) {
+                await enqueueOfflineCoordinate(smoothedPayload);
+                return false;
+              }
+            }
+          }
+          await saveState(state);
+          return false;
+        }
+
+        // First reading >= 25m: hold as pendingDeparture instead of immediately breaking the anchor
+        if (
+          !state.pendingDeparture ||
+          payloadMs - state.pendingDeparture.timestampMs > 90000
+        ) {
+          state.pendingDeparture = {
+            latitude: smoothedLat,
+            longitude: smoothedLng,
+            timestampMs: payloadMs,
+            distFromAnchor,
+          };
+          await saveState(state);
+          return false;
+        }
+
+        // If GPS is converging BACK toward the stationary anchor while speed is stationary, stay anchored
+        if (
+          distFromAnchor < state.pendingDeparture.distFromAnchor - 12 &&
+          isStationarySpeed
+        ) {
+          state.pendingDeparture = {
+            latitude: smoothedLat,
+            longitude: smoothedLng,
+            timestampMs: payloadMs,
+            distFromAnchor,
+          };
+          await saveState(state);
+          return false;
+        }
+
+        const dtPendingSec = Math.max(
+          1,
+          (payloadMs - state.pendingDeparture.timestampMs) / 1000
+        );
+        const distFromPending = getDistanceMeters(
+          smoothedLat,
+          smoothedLng,
+          state.pendingDeparture.latitude,
+          state.pendingDeparture.longitude
+        );
+
+        // If the jump between pending and current is itself an impossible teleport (> 55 m/s), reset pending
+        if (distFromPending / dtPendingSec > 55) {
+          state.pendingDeparture = {
+            latitude: smoothedLat,
+            longitude: smoothedLng,
+            timestampMs: payloadMs,
+            distFromAnchor,
+          };
+          await saveState(state);
+          return false;
+        }
+
+        const hasConfirmedDeparture =
+          (payload.speed != null && payload.speed >= 0.7) ||
+          (distFromAnchor >= 35 && distFromPending >= 5);
+
+        if (!hasConfirmedDeparture) {
+          state.pendingDeparture = {
+            latitude: smoothedLat,
+            longitude: smoothedLng,
+            timestampMs: payloadMs,
+            distFromAnchor,
+          };
+          await saveState(state);
+          return false;
+        }
+
+        // Confirmed genuine departure from stationary anchor
+        state.stationaryAnchor = null;
+        state.pendingDeparture = null;
+      }
+
+      // If moved < 15 meters while in motion offline: skip (do NOT cache) unless 5-minute stationary refinement triggers
+      if (distFromLast < 15) {
+        const lastStatMs = state.lastStationaryUpdateMs ?? state.lastRecordedTimestamp ?? payloadMs;
+        if (isStationarySpeed && payloadMs - lastStatMs >= STATIONARY_REFINE_INTERVAL_MS) {
+          state.lastStationaryUpdateMs = payloadMs;
+          if (distFromLast >= 2) {
+            state.lastRecordedCoord = { latitude: smoothedLat, longitude: smoothedLng };
+            state.lastRecordedTimestamp = payloadMs;
+            state.stationaryAnchor = { latitude: smoothedLat, longitude: smoothedLng };
+            await saveState(state);
+            try {
+              await sendPingWithTimeout(smoothedPayload);
+              flushOfflineQueue().catch(() => {});
+              return true;
+            } catch (networkErr) {
+              await enqueueOfflineCoordinate(smoothedPayload);
+              return false;
+            }
+          }
+        }
+        await saveState(state);
+        return false;
+      }
     }
 
-    // 10-second trail cadence: 1s stream keeps Kalman & departure accurate, but only leaves a trail every 10s
+    // Offline 10-second trail cadence: when online, record every 10m apart immediately regardless of elapsed seconds
     if (
+      !isDeviceOnline &&
       state.lastRecordedTimestamp != null &&
       payloadMs - state.lastRecordedTimestamp < TRAIL_INTERVAL_MS
     ) {
@@ -562,7 +617,7 @@ async function processAndSendCoordinateInner(
       return false;
     }
 
-    // True physical movement >= 15 meters along the route (>= 10s since last trail point):
+    // Confirmed movement (>= 10m online, or >= 15m & >= 10s offline):
     state.lastRecordedCoord = {
       latitude: smoothedLat,
       longitude: smoothedLng,

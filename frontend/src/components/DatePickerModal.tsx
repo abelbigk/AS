@@ -42,6 +42,7 @@ interface DatePickerModalProps {
   onClose: () => void;
   onSelectDate: (dateStr: string) => void;
   maxDate?: Date;
+  availableDates?: string[];
 }
 
 const MONTH_NAMES = [
@@ -57,6 +58,7 @@ export function DatePickerModal({
   onClose,
   onSelectDate,
   maxDate,
+  availableDates,
 }: DatePickerModalProps) {
   const { colors, theme } = useTheme();
 
@@ -75,6 +77,21 @@ export function DatePickerModal({
   }, [visible, selectedDate]);
 
   const maxDay = useMemo(() => (maxDate ? startOfDay(maxDate) : undefined), [maxDate]);
+
+  const { availableDateSet, availableMonthSet, availableYearSet } = useMemo(() => {
+    const dSet = new Set<string>();
+    const mSet = new Set<string>();
+    const ySet = new Set<number>();
+    if (availableDates) {
+      for (const d of availableDates) {
+        dSet.add(d);
+        mSet.add(d.slice(0, 7));
+        const yr = parseInt(d.slice(0, 4), 10);
+        if (!Number.isNaN(yr)) ySet.add(yr);
+      }
+    }
+    return { availableDateSet: dSet, availableMonthSet: mSet, availableYearSet: ySet };
+  }, [availableDates]);
 
   // Calendar days grid calculation
   const calendarDays = useMemo(() => {
@@ -229,6 +246,8 @@ export function DatePickerModal({
                     const isCurrentMonth = isSameMonth(day, viewDate);
                     const isTodayDay = isToday(day);
                     const isDisabled = !!maxDay && isAfter(startOfDay(day), maxDay);
+                    const dateStr = format(day, "yyyy-MM-dd");
+                    const hasData = availableDateSet.has(dateStr);
 
                     return (
                       <Pressable
@@ -237,6 +256,11 @@ export function DatePickerModal({
                         disabled={isDisabled}
                         style={[
                           styles.dayCell,
+                          hasData && !isSelected && {
+                            backgroundColor: "rgba(34, 197, 94, 0.12)",
+                            borderWidth: 1,
+                            borderColor: "rgba(34, 197, 94, 0.35)",
+                          },
                           isSelected && [
                             styles.dayCellSelected,
                             { backgroundColor: colors.accent },
@@ -253,18 +277,18 @@ export function DatePickerModal({
                                 : !isCurrentMonth
                                 ? cellMuted
                                 : colors.text,
-                              fontWeight: isSelected ? "700" : isTodayDay ? "600" : "400",
+                              fontWeight: isSelected || hasData ? "700" : isTodayDay ? "600" : "400",
                               opacity: isDisabled ? 0.25 : 1,
                             },
                           ]}
                         >
                           {format(day, "d")}
                         </Text>
-                        {isTodayDay && !isSelected && (
+                        {(hasData || isTodayDay) && !isSelected && (
                           <View
                             style={[
                               styles.todayDot,
-                              { backgroundColor: colors.accent },
+                              { backgroundColor: hasData ? "#22C55E" : colors.accent },
                             ]}
                           />
                         )}
@@ -282,6 +306,8 @@ export function DatePickerModal({
                   const isCurrentSelectedMonth =
                     viewDate.getMonth() === idx &&
                     viewDate.getFullYear() === selectedDate.getFullYear();
+                  const ym = `${viewDate.getFullYear()}-${String(idx + 1).padStart(2, "0")}`;
+                  const hasData = availableMonthSet.has(ym);
 
                   return (
                     <Pressable
@@ -291,6 +317,12 @@ export function DatePickerModal({
                         styles.monthCell,
                         isCurrentSelectedMonth
                           ? [styles.monthCellSelected, { backgroundColor: colors.accent }]
+                          : hasData
+                          ? {
+                              backgroundColor: "rgba(34, 197, 94, 0.12)",
+                              borderWidth: 1,
+                              borderColor: "rgba(34, 197, 94, 0.35)",
+                            }
                           : { backgroundColor: isLight ? "#F1F5F9" : "rgba(255, 255, 255, 0.05)" },
                       ]}
                     >
@@ -317,6 +349,7 @@ export function DatePickerModal({
                 {decadeYears.map((yr) => {
                   const isCurrentSelectedYear = yr === selectedDate.getFullYear();
                   const isFutureYear = maxDay ? yr > maxDay.getFullYear() : false;
+                  const hasData = availableYearSet.has(yr);
 
                   return (
                     <Pressable
@@ -327,6 +360,12 @@ export function DatePickerModal({
                         styles.yearCell,
                         isCurrentSelectedYear
                           ? [styles.yearCellSelected, { backgroundColor: colors.accent }]
+                          : hasData
+                          ? {
+                              backgroundColor: "rgba(34, 197, 94, 0.12)",
+                              borderWidth: 1,
+                              borderColor: "rgba(34, 197, 94, 0.35)",
+                            }
                           : { backgroundColor: isLight ? "#F1F5F9" : "rgba(255, 255, 255, 0.05)" },
                         isFutureYear && { opacity: 0.25 },
                       ]}
