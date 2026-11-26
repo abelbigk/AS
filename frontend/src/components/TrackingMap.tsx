@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect } from "react";
-import { View, Text, StyleSheet, Platform } from "react-native";
+import { View, Text, StyleSheet, Platform, Linking } from "react-native";
 import { WebView } from "react-native-webview";
 import { MapPin } from "lucide-react-native";
 import { useTheme } from "../contexts/ThemeContext";
@@ -38,7 +38,19 @@ interface TrackingMapProps {
   selectedPointId?: number | null;
   liveStatus?: LiveStatus | null;
   isFullScreen?: boolean;
+  topControlsOffset?: number;
   style?: any;
+}
+
+function openExternalNavigation(lat: number, lng: number) {
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  if (Platform.OS === "web") {
+    try {
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {}
+  } else {
+    Linking.openURL(url).catch(() => {});
+  }
 }
 
 export function TrackingMap({
@@ -47,6 +59,7 @@ export function TrackingMap({
   selectedPointId,
   liveStatus = null,
   isFullScreen = false,
+  topControlsOffset = 0,
   style,
 }: TrackingMapProps) {
   const { theme, colors } = useTheme();
@@ -78,6 +91,7 @@ export function TrackingMap({
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body, html, #map { width: 100%; height: 100%; background: ${isDark ? "#121212" : "#f5f5f5"}; }
           .leaflet-container { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+          ${topControlsOffset > 0 ? `.leaflet-top { top: ${topControlsOffset}px !important; }` : ""}
           
           /* Dark mode invert applies ONLY to street tiles, NEVER to satellite */
           ${isDark ? '.street-tiles .leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(90%) contrast(90%); }' : ''}
@@ -85,7 +99,7 @@ export function TrackingMap({
           /* Layer toggle pill control */
           .layer-switch-container {
             position: absolute;
-            top: 12px;
+            top: ${12 + topControlsOffset}px;
             left: 12px;
             z-index: 1000;
             display: flex;
@@ -402,11 +416,21 @@ export function TrackingMap({
 
           // Build Popup Content
           var movingPointsList = [];
+          window.openNavigation = function(lat, lng) {
+            var payload = JSON.stringify({ type: 'navigate', latitude: lat, longitude: lng });
+            try {
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(payload);
+              } else if (window.parent && window.parent !== window) {
+                window.parent.postMessage(payload, '*');
+              }
+            } catch (e) {}
+          };
+
           function buildPopupContent(idx, title, badge, extraRows) {
             var pt = (movingPointsList.length > 0 && movingPointsList[idx]) ? movingPointsList[idx] : points[idx];
             if (!pt) pt = points[0];
             var timeStr = new Date(pt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            var navUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + pt.latitude + ',' + pt.longitude;
             var prevDisabled = idx <= 0 ? 'disabled' : '';
             var nextDisabled = (idx >= movingPointsList.length - 1 || movingPointsList.length <= 1) ? 'disabled' : '';
 
@@ -419,10 +443,10 @@ export function TrackingMap({
               (extraRows || '') +
               '<div class="popup-coords-text">' + pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5) + '</div>' +
               '<div class="popup-bot-row">' +
-                '<a href="' + navUrl + '" target="_blank" rel="noopener noreferrer" class="popup-nav-pin-btn" title="Open navigation in Maps">' +
+                '<button type="button" onclick="window.openNavigation(' + pt.latitude + ',' + pt.longitude + ')" class="popup-nav-pin-btn" title="Open navigation in Maps">' +
                   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>' +
                   '<span>Navigate</span>' +
-                '</a>' +
+                '</button>' +
                 '<div class="popup-step-btns">' +
                   '<button type="button" onclick="window.goToPoint(' + (idx - 1) + ')" class="popup-step-btn" ' + prevDisabled + ' title="Previous waypoint">&lsaquo; Prev</button>' +
                   '<button type="button" onclick="window.goToPoint(' + (idx + 1) + ')" class="popup-step-btn" ' + nextDisabled + ' title="Next waypoint">Next &rsaquo;</button>' +
@@ -674,6 +698,12 @@ export function TrackingMap({
                 '<div class="popup-info-row"><span>Facing:</span> <b>' + heading + '&deg; (' + getCompassName(heading) + ')</b></div>' +
                 '<div class="popup-info-row"><span>Speed:</span> <b>' + spdStr + '</b></div>' +
                 '<div class="popup-coords-text">' + liveLoc.latitude.toFixed(5) + ', ' + liveLoc.longitude.toFixed(5) + '</div>' +
+                '<div class="popup-bot-row">' +
+                  '<button type="button" onclick="window.openNavigation(' + liveLoc.latitude + ',' + liveLoc.longitude + ')" class="popup-nav-pin-btn" title="Open navigation in Maps">' +
+                    '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>' +
+                    '<span>Navigate</span>' +
+                  '</button>' +
+                '</div>' +
               '</div>';
             return { liveIcon: liveIcon, popupHtml: popupHtml };
           }
@@ -1009,7 +1039,7 @@ export function TrackingMap({
       </body>
       </html>
     `;
-  }, [theme, username]);
+  }, [theme, username, topControlsOffset]);
 
   // Push new coordinates / selected point in-place without reloading WebView (preserves Satellite layer!)
   useEffect(() => {
@@ -1062,6 +1092,8 @@ export function TrackingMap({
         const data = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
         if (data?.type === "layerChange" && (data.layer === "street" || data.layer === "sat")) {
           savedMapLayer = data.layer;
+        } else if (data?.type === "navigate" && typeof data.latitude === "number" && typeof data.longitude === "number") {
+          openExternalNavigation(data.latitude, data.longitude);
         }
       } catch {}
     };
@@ -1126,6 +1158,8 @@ export function TrackingMap({
             const data = JSON.parse(event.nativeEvent.data);
             if (data?.type === "layerChange" && (data.layer === "street" || data.layer === "sat")) {
               savedMapLayer = data.layer;
+            } else if (data?.type === "navigate" && typeof data.latitude === "number" && typeof data.longitude === "number") {
+              openExternalNavigation(data.latitude, data.longitude);
             }
           } catch {}
         }}

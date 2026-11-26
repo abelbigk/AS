@@ -700,6 +700,7 @@ export default function LocationScreen() {
             selectedPointId={selectedPointId}
             liveStatus={activeLiveStatus}
             isFullScreen={true}
+            topControlsOffset={Math.max(insets.top, 16) + 58}
           />
 
           {/* Floating Controls Overlay */}
