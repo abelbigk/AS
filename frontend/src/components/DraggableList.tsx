@@ -122,8 +122,8 @@ function DraggableItemInner<T extends { id: number }>({
       slotX.value = slot.x;
       slotY.value = slot.y;
     } else if (!isDragged) {
-      slotX.value = withTiming(slot.x, { duration: 150 });
-      slotY.value = withTiming(slot.y, { duration: 150 });
+      slotX.value = withTiming(slot.x, { duration: 100 });
+      slotY.value = withTiming(slot.y, { duration: 100 });
     }
   }, [slot?.x, slot?.y, isDragged, slotX, slotY]);
 
@@ -464,7 +464,16 @@ export function DraggableList<T extends { id: number }>({
       const currentIdx = currentIds.indexOf(draggedIdRef.current);
       if (currentIdx === -1) return;
 
-      // Find the slot whose center is nearest to the dragged card's current center
+      // Measure how far our center is from the current slot's center
+      const curRect = slotsRef.current.get(currentIds[currentIdx]);
+      const curCx = (curRect?.x ?? 0) + (curRect?.width ?? 0) / 2;
+      const curCy = (curRect?.y ?? 0) + (curRect?.height ?? 0) / 2;
+      const distFromOwn =
+        layout === "list"
+          ? Math.abs(curCenterY - curCy)
+          : Math.hypot(curCenterX - curCx, curCenterY - curCy);
+
+      // Find the nearest other slot's center
       let targetIdx = -1;
       let bestDist = Infinity;
       for (let i = 0; i < currentIds.length; i++) {
@@ -483,19 +492,14 @@ export function DraggableList<T extends { id: number }>({
         }
       }
 
-      // Swap only if our center has crossed into the target slot's half
-      if (targetIdx !== -1 && targetIdx !== currentIdx) {
-        const targetRect = slotsRef.current.get(currentIds[targetIdx]);
-        const halfH = (targetRect?.height ?? 160) / 2;
-        const halfW = (targetRect?.width ?? 160) / 2;
-        const threshold = layout === "list" ? halfH : Math.min(halfH, halfW);
-        if (bestDist < threshold) {
-          const nextIds = [...currentIds];
-          const [moved] = nextIds.splice(currentIdx, 1);
-          nextIds.splice(targetIdx, 0, moved);
-          orderIdsRef.current = nextIds;
-          setOrderIds(nextIds);
-        }
+      // Swap the instant our center is closer to any other slot than to our own —
+      // no dead-zone, no half-height threshold, fires immediately.
+      if (targetIdx !== -1 && targetIdx !== currentIdx && bestDist < distFromOwn) {
+        const nextIds = [...currentIds];
+        const [moved] = nextIds.splice(currentIdx, 1);
+        nextIds.splice(targetIdx, 0, moved);
+        orderIdsRef.current = nextIds;
+        setOrderIds(nextIds);
       }
     },
     [layout, autoScrollY]
