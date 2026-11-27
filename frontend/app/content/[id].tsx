@@ -27,6 +27,7 @@ export default function ContentDetailPage() {
   const removeFromSubcategory = trpc.content.batchRemoveFromSubcategory.useMutation({
     onSuccess: () => {
       if (activeSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: activeSubcategoryId });
+      utils.subcategories.getContentCounts.invalidate();
       utils.content.listByStatus.invalidate();
       utils.content.listUncategorized.invalidate();
     },

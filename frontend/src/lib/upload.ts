@@ -48,17 +48,42 @@ export async function uploadFile(
       const blobRes = await fetch(fileUri);
       const blob = await blobRes.blob();
 
-      await axios.put(uploadUrl, blob, {
-        headers: { "Content-Type": uploadMime },
-        onUploadProgress: (e) => {
-          if (onProgress && e.total) {
-            onProgress(e.loaded, e.total);
-          }
-        },
-      });
+      try {
+        await axios.put(uploadUrl, blob, {
+          headers: { "Content-Type": uploadMime },
+          onUploadProgress: (e) => {
+            if (onProgress && e.total) {
+              onProgress(e.loaded, e.total);
+            }
+          },
+        });
 
-      if (onProgress) onProgress(blob.size, blob.size);
-      return { url: publicUrl, key };
+        if (onProgress) onProgress(blob.size, blob.size);
+        return { url: publicUrl, key };
+      } catch (putErr) {
+        console.warn("[Upload] Direct presigned PUT failed on web, falling back to /api/upload:", putErr);
+        const formData = new FormData();
+        formData.append("key", key);
+        formData.append("file", blob, fileName || "upload");
+
+        const fallbackRes = await axios.post(`${baseUrl}/api/upload`, formData, {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          withCredentials: true,
+          onUploadProgress: (e) => {
+            if (onProgress && e.total) {
+              onProgress(e.loaded, e.total);
+            }
+          },
+        });
+
+        if (onProgress) onProgress(blob.size, blob.size);
+        return {
+          url: fallbackRes.data?.url || publicUrl,
+          key: fallbackRes.data?.key || key,
+        };
+      }
     } else {
       // Native iOS / Android:
       // Fast path: Direct presigned PUT to Cloudflare R2 via binary streaming

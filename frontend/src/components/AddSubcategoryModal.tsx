@@ -71,6 +71,8 @@ export function AddSubcategoryModal({
   const deleteSubcategoryMutation = trpc.subcategories.delete.useMutation({
     onSuccess: () => {
       utils.subcategories.list.invalidate({ categoryId });
+      utils.subcategories.getContentCounts.invalidate({ categoryId });
+      utils.content.listUncategorized.invalidate();
     },
   });
 
@@ -310,7 +312,7 @@ export function AddSubcategoryModal({
                             showConfirm({
                               title: "Delete this subcategory?",
                               message:
-                                "This action cannot be undone. This will permanently delete the subcategory.",
+                                "This will permanently delete the subcategory. Any content not linked to other categories or subcategories will be in the Uncategorized section in Settings.",
                               confirmText: "Delete",
                               destructive: true,
                               onConfirm: () =>

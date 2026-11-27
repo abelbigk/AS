@@ -18,9 +18,10 @@ interface ReorderBarProps {
   onSave: () => void;
   onCancel: () => void;
   saving?: boolean;
+  bottomOffset?: number;
 }
 
-export function ReorderBar({ onSave, onCancel, saving }: ReorderBarProps) {
+export function ReorderBar({ onSave, onCancel, saving, bottomOffset = 24 }: ReorderBarProps) {
   const { theme } = useTheme();
 
   const saveButtonBg = theme === "dark" ? "#FFFFFF" : "#0F172A";
@@ -31,7 +32,7 @@ export function ReorderBar({ onSave, onCancel, saving }: ReorderBarProps) {
     theme === "dark" ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.65)";
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { bottom: bottomOffset }]}>
       <View
         style={[
           styles.bar,

@@ -403,6 +403,7 @@ export function EditContentModal({
       // Invalidate queries so all views refresh
       utils.content.listByCategory.invalidate();
       utils.content.listBySubcategory.invalidate();
+      utils.subcategories.getContentCounts.invalidate();
       utils.content.listByStatus.invalidate();
       utils.content.listUncategorized.invalidate();
       utils.content.getById.invalidate({ itemId: item.id });

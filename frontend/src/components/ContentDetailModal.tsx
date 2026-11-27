@@ -480,6 +480,7 @@ export function ContentDetailView({
     onSuccess: () => {
       utils.content.listByCategory.invalidate();
       utils.content.listBySubcategory.invalidate();
+      utils.subcategories.getContentCounts.invalidate();
       utils.content.listByStatus.invalidate();
       utils.content.listUncategorized.invalidate();
       onDeleted?.();

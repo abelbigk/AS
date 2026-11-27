@@ -44,6 +44,7 @@ export function CategorizeContentModal({
       utils.content.listUncategorized.invalidate();
       utils.content.listByCategory.invalidate();
       utils.content.listBySubcategory.invalidate();
+      utils.subcategories.getContentCounts.invalidate();
       onClose();
     },
   });
@@ -67,16 +68,23 @@ export function CategorizeContentModal({
 
   const toggleSubcategory = (subId: number) => {
     const next = new Set(selectedSubcategoryIds);
+    const nextCats = new Set(selectedCategoryIds);
     if (next.has(subId)) {
       next.delete(subId);
     } else {
       next.add(subId);
+      const sub = allSubcategories.find((s) => s.id === subId);
+      if (sub) {
+        nextCats.delete(sub.categoryId);
+      }
     }
     setSelectedSubcategoryIds(next);
+    setSelectedCategoryIds(nextCats);
   };
 
   const handleSave = () => {
     if (!content) return;
+    if (selectedCategoryIds.size === 0 && selectedSubcategoryIds.size === 0) return;
     updateContent.mutate({
       itemId: content.id,
       heading: content.heading,

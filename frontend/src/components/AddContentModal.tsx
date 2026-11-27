@@ -60,6 +60,7 @@ export function AddContentModal({
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [selectedSubcategoryIds, setSelectedSubcategoryIds] = useState<number[]>([]);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const [subcategoriesOpen, setSubcategoriesOpen] = useState(false);
 
   const [coverImage, setCoverImage] = useState<ImageValue | null>(null);
   const [mediaAssets, setMediaAssets] = useState<
@@ -169,9 +170,10 @@ export function AddContentModal({
     if (visible) {
       setHeading("");
       setDescription("");
-      setSelectedCategoryIds(initialCategoryId ? [initialCategoryId] : []);
+      setSelectedCategoryIds(!initialSubcategoryId && initialCategoryId ? [initialCategoryId] : []);
       setSelectedSubcategoryIds(initialSubcategoryId ? [initialSubcategoryId] : []);
       setCategoriesOpen(false);
+      setSubcategoriesOpen(false);
       setCoverImage(null);
       setMediaAssets([]);
       setIsSubmitting(false);
@@ -195,13 +197,23 @@ export function AddContentModal({
 
   const toggleSubcategory = (subId: number) => {
     const isChecking = !selectedSubcategoryIds.includes(subId);
-    setSelectedSubcategoryIds((prev) =>
-      isChecking ? [...prev, subId] : prev.filter((id) => id !== subId)
-    );
-    if (isChecking) {
-      const sub = allSubcategories.find((s) => s.id === subId);
-      if (sub) {
-        setSelectedCategoryIds((prev) => prev.filter((id) => id !== sub.categoryId));
+    const nextSubs = isChecking
+      ? [...selectedSubcategoryIds, subId]
+      : selectedSubcategoryIds.filter((id) => id !== subId);
+    setSelectedSubcategoryIds(nextSubs);
+
+    const sub = allSubcategories.find((s) => s.id === subId);
+    if (isChecking && sub) {
+      setSelectedCategoryIds((prev) => prev.filter((id) => id !== sub.categoryId));
+    } else if (!isChecking && initialCategoryId && !initialSubcategoryId) {
+      const hasRemainingInInitialCat = nextSubs.some((id) => {
+        const s = allSubcategories.find((item) => item.id === id);
+        return s?.categoryId === initialCategoryId;
+      });
+      if (!hasRemainingInInitialCat) {
+        setSelectedCategoryIds((prev) =>
+          prev.includes(initialCategoryId) ? prev : [...prev, initialCategoryId]
+        );
       }
     }
   };
@@ -365,6 +377,7 @@ export function AddContentModal({
       setUploadStage("idle");
       if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
       if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
+      utils.subcategories.getContentCounts.invalidate();
       utils.content.listByStatus.invalidate();
       utils.content.listUncategorized.invalidate();
 
@@ -394,6 +407,7 @@ export function AddContentModal({
 
       if (initialCategoryId) utils.content.listByCategory.invalidate({ categoryId: initialCategoryId });
       if (initialSubcategoryId) utils.content.listBySubcategory.invalidate({ subcategoryId: initialSubcategoryId });
+      utils.subcategories.getContentCounts.invalidate();
       utils.content.listByStatus.invalidate();
       utils.content.search.invalidate();
 
@@ -449,8 +463,8 @@ export function AddContentModal({
               onScroll={handleScroll}
               scrollEventThrottle={150}
             >
-              {/* Categories Dropdown (hidden when initialCategoryId is preset) */}
-              {!initialCategoryId && sortedCategories.length > 0 && (
+              {/* Categories Dropdown (hidden when initialCategoryId or initialSubcategoryId is preset) */}
+              {!initialCategoryId && !initialSubcategoryId && sortedCategories.length > 0 && (
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.textMuted }]}>Categories</Text>
                   <Pressable
@@ -514,38 +528,70 @@ export function AddContentModal({
                 </View>
               )}
 
-              {/* Subcategories pills */}
+              {/* Subcategories Dropdown (Optional) */}
               {!initialSubcategoryId && activeSubcategories.length > 0 && (
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.textMuted }]}>
                     Subcategories (Optional)
                   </Text>
-                  <View style={styles.checkboxGroup}>
-                    {activeSubcategories.map((sub) => {
-                      const isChecked = selectedSubcategoryIds.includes(sub.id);
-                      return (
-                        <Pressable
-                          key={sub.id}
-                          onPress={() => toggleSubcategory(sub.id)}
-                          style={[
-                            styles.badgePill,
-                            isChecked
-                              ? { backgroundColor: "rgba(59, 130, 246, 0.2)", borderColor: "#3B82F6" }
-                              : { backgroundColor: colors.surface, borderColor: colors.border },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.badgePillText,
-                              { color: isChecked ? "#3B82F6" : colors.textMuted },
-                            ]}
-                          >
-                            {sub.name}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
+                  <Pressable
+                    onPress={() => setSubcategoriesOpen((v) => !v)}
+                    style={[
+                      styles.dropdownTrigger,
+                      { borderColor: colors.border, backgroundColor: inputBg },
+                    ]}
+                  >
+                    <Text style={[styles.dropdownTriggerText, { color: colors.text }]}>
+                      {selectedSubcategoryIds.length === 0
+                        ? "Select subcategories..."
+                        : `${selectedSubcategoryIds.length} selected`}
+                    </Text>
+                    {subcategoriesOpen ? (
+                      <ChevronUp size={16} color={colors.textMuted} />
+                    ) : (
+                      <ChevronDown size={16} color={colors.textMuted} />
+                    )}
+                  </Pressable>
+                  {subcategoriesOpen && (
+                    <View
+                      style={[
+                        styles.dropdownMenu,
+                        { borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                    >
+                      <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
+                        {activeSubcategories.map((sub) => {
+                          const isChecked = selectedSubcategoryIds.includes(sub.id);
+                          return (
+                            <Pressable
+                              key={sub.id}
+                              onPress={() => toggleSubcategory(sub.id)}
+                              style={[
+                                styles.dropdownItem,
+                                isChecked && { backgroundColor: "rgba(59, 130, 246, 0.12)" },
+                              ]}
+                            >
+                              <View
+                                style={[
+                                  styles.checkboxSquare,
+                                  isChecked
+                                    ? { backgroundColor: theme === "dark" ? "#FFFFFF" : "#111827", borderColor: "transparent" }
+                                    : { borderColor: colors.textSubtle },
+                                ]}
+                              >
+                                {isChecked && (
+                                  <Check size={12} color={theme === "dark" ? "#000000" : "#FFFFFF"} />
+                                )}
+                              </View>
+                              <Text style={[styles.dropdownItemText, { color: colors.text }]}>
+                                {sub.name}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -989,6 +1035,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     padding: 6,
+    maxHeight: 210,
+    overflow: "hidden",
   },
   dropdownItem: {
     flexDirection: "row",

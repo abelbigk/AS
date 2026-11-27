@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -26,6 +26,8 @@ import { EditContentModal } from "../../src/components/EditContentModal";
 import { DraggableList } from "../../src/components/DraggableList";
 import { ReorderBar } from "../../src/components/ReorderBar";
 
+const EMPTY_CATEGORIES: any[] = [];
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -38,24 +40,19 @@ export default function HomeScreen() {
 
   // Reorder state
   const [isCategoryReordering, setIsCategoryReordering] = useState(false);
-  const [localCategories, setLocalCategories] = useState<typeof categories>([]);
-  const pendingCategoryOrder = useRef<typeof categories>([]);
+  const [isDraggingCategory, setIsDraggingCategory] = useState(false);
+  const [localCategories, setLocalCategories] = useState<any[]>(EMPTY_CATEGORIES);
+  const pendingCategoryOrder = useRef<any[]>(EMPTY_CATEGORIES);
 
   const utils = trpc.useUtils();
 
   const {
-    data: categories = [],
+    data: rawCategories,
     isLoading,
     refetch,
   } = trpc.categories.list.useQuery();
+  const categories = rawCategories ?? EMPTY_CATEGORIES;
   const { refreshControlProps } = usePullToRefresh(refetch);
-
-  // Keep local categories in sync when not reordering
-  useEffect(() => {
-    if (!isCategoryReordering) {
-      setLocalCategories(categories);
-    }
-  }, [categories, isCategoryReordering]);
 
   const reorderMutation = trpc.categories.reorder.useMutation({
     onSuccess: () => {
@@ -71,25 +68,32 @@ export default function HomeScreen() {
 
   const handleSaveCategoryOrder = () => {
     const ordered = pendingCategoryOrder.current;
-    if (!ordered.length) return;
+    if (!ordered.length) {
+      setIsCategoryReordering(false);
+      setIsDraggingCategory(false);
+      return;
+    }
+    utils.categories.list.setData(undefined, ordered);
+    setIsCategoryReordering(false);
+    setIsDraggingCategory(false);
     reorderMutation.mutate(
       { categoryIds: ordered.map((c) => c.id) },
       {
         onSuccess: () => {
           utils.categories.list.invalidate();
-          setIsCategoryReordering(false);
         },
         onError: () => {
           utils.categories.list.invalidate();
-          setIsCategoryReordering(false);
         },
       }
     );
   };
 
   const handleCancelCategoryReorder = () => {
-    setLocalCategories(categories);
+    setLocalCategories(EMPTY_CATEGORIES);
+    pendingCategoryOrder.current = EMPTY_CATEGORIES;
     setIsCategoryReordering(false);
+    setIsDraggingCategory(false);
   };
 
   const handleMoveCategory = (categoryId: number, direction: "up" | "down") => {
@@ -166,6 +170,7 @@ export default function HomeScreen() {
       />
 
       <ScrollView
+        scrollEnabled={!isDraggingCategory}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -353,27 +358,33 @@ export default function HomeScreen() {
                   {/* Categories Vertical List */}
                   {categories.length > 0 ? (
                     <DraggableList
-                      data={localCategories.length ? localCategories : categories}
+                      data={isCategoryReordering && localCategories.length ? localCategories : categories}
                       layout="list"
                       isReordering={isCategoryReordering}
+                      onDragStart={() => {
+                        setIsDraggingCategory(true);
+                        if (!isCategoryReordering) {
+                          setLocalCategories(categories);
+                          pendingCategoryOrder.current = categories;
+                          setIsCategoryReordering(true);
+                        }
+                      }}
+                      onDragEnd={() => {
+                        setIsDraggingCategory(false);
+                      }}
                       onReorder={(newData) => {
                         setLocalCategories(newData);
                         pendingCategoryOrder.current = newData;
                       }}
                       renderItem={(category) => (
-                        <Pressable
-                          onLongPress={() => setIsCategoryReordering(true)}
-                          delayLongPress={500}
-                        >
-                          <CategoryCard
-                            category={category}
-                            onPress={() => {
-                              if (!isCategoryReordering) router.push(`/category/${category.id}`);
-                            }}
-                            onEdit={isCategoryReordering ? undefined : () => setActiveCategoryForEdit(category)}
-                            onDelete={isCategoryReordering ? undefined : () => deleteCategoryMutation.mutate({ categoryId: category.id })}
-                          />
-                        </Pressable>
+                        <CategoryCard
+                          category={category}
+                          onPress={() => {
+                            if (!isCategoryReordering) router.push(`/category/${category.id}`);
+                          }}
+                          onEdit={isCategoryReordering ? undefined : () => setActiveCategoryForEdit(category)}
+                          onDelete={isCategoryReordering ? undefined : () => deleteCategoryMutation.mutate({ categoryId: category.id })}
+                        />
                       )}
                     />
                   ) : (
@@ -413,6 +424,7 @@ export default function HomeScreen() {
           onSave={handleSaveCategoryOrder}
           onCancel={handleCancelCategoryReorder}
           saving={reorderMutation.isPending}
+          bottomOffset={insets.bottom + 76}
         />
       )}
     </View>

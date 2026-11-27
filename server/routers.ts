@@ -260,29 +260,18 @@ export const appRouter = router({
         const existing = await getCategoryById(input.categoryId, ctx.user.id);
         if (!existing) return { success: true };
 
-        // 1. Get all content linked to this category
+        // 1. Unlink all content from this category (preserve content items)
         const contents = await getContentByCategory(input.categoryId, ctx.user.id);
         for (const item of contents) {
-          // Remove this category link
           await removeContentCategoryLink(item.id, input.categoryId);
-          // Check if it has any other links (cats or subs)
-          const links = await getContentLinksCount(item.id);
-          if (links === 0) {
-            await performDeleteContentItem(item.id, ctx.user.id);
-          }
         }
 
-        // 2. Handle subcategories
+        // 2. Permanently delete subcategories and unlink their content (preserve content items)
         const subs = await getSubcategoriesByCategory(input.categoryId, ctx.user.id);
         for (const sub of subs) {
-          // Get content linked to this subcategory
           const subContents = await getContentBySubcategory(sub.id, ctx.user.id);
           for (const item of subContents) {
             await removeContentSubcategoryLink(item.id, sub.id);
-            const links = await getContentLinksCount(item.id);
-            if (links === 0) {
-              await performDeleteContentItem(item.id, ctx.user.id);
-            }
           }
           await tryDeleteImage(sub.coverImageKey);
           await deleteSubcategory(sub.id, ctx.user.id);
@@ -370,11 +359,6 @@ export const appRouter = router({
         const contents = await getContentBySubcategory(input.subcategoryId, ctx.user.id);
         for (const item of contents) {
           await removeContentSubcategoryLink(item.id, input.subcategoryId);
-          
-          const links = await getContentLinksCount(item.id);
-          if (links === 0) {
-            await performDeleteContentItem(item.id, ctx.user.id);
-          }
         }
 
         await tryDeleteImage(existing.coverImageKey);

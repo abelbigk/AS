@@ -43,6 +43,7 @@ import { ReorderBar } from "../../src/components/ReorderBar";
 
 const DEFAULT_BG =
   "https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=80";
+const EMPTY_ARRAY: any[] = [];
 
 export default function CategoryDetailScreen() {
   const router = useRouter();
@@ -126,20 +127,23 @@ export default function CategoryDetailScreen() {
 
   // Reorder state – subcategories
   const [isSubReordering, setIsSubReordering] = useState(false);
-  const [localSubcategories, setLocalSubcategories] = useState<any[]>([]);
-  const pendingSubOrder = useRef<any[]>([]);
+  const [localSubcategories, setLocalSubcategories] = useState<any[]>(EMPTY_ARRAY);
+  const pendingSubOrder = useRef<any[]>(EMPTY_ARRAY);
 
   // Reorder state – content
   const [isContentReordering, setIsContentReordering] = useState(false);
-  const [localItems, setLocalItems] = useState<any[]>([]);
-  const pendingContentOrder = useRef<any[]>([]);
+  const [localItems, setLocalItems] = useState<any[]>(EMPTY_ARRAY);
+  const pendingContentOrder = useRef<any[]>(EMPTY_ARRAY);
+
+  const [isDraggingAny, setIsDraggingAny] = useState(false);
 
   // Queries
   const { data: category, isLoading: catLoading } =
     trpc.categories.getById.useQuery({ categoryId });
 
-  const { data: subcategories = [], isLoading: subsLoading } =
+  const { data: rawSubcategories, isLoading: subsLoading } =
     trpc.subcategories.list.useQuery({ categoryId });
+  const subcategories = rawSubcategories ?? EMPTY_ARRAY;
 
   const { data: subcategoryCounts } =
     trpc.subcategories.getContentCounts.useQuery(
@@ -148,25 +152,19 @@ export default function CategoryDetailScreen() {
     );
 
   const {
-    data: items = [],
+    data: rawItems,
     isLoading: itemsLoading,
     refetch,
   } = trpc.content.listByCategory.useQuery({ categoryId });
+  const items = rawItems ?? EMPTY_ARRAY;
   const { refreshControlProps } = usePullToRefresh(refetch);
-
-  // Sync local reorder lists when server data changes (but not mid-drag)
-  useEffect(() => {
-    if (!isSubReordering) setLocalSubcategories(subcategories);
-  }, [subcategories, isSubReordering]);
-
-  useEffect(() => {
-    if (!isContentReordering) setLocalItems(items);
-  }, [items, isContentReordering]);
 
   // Mutations
   const deleteCategory = trpc.categories.delete.useMutation({
     onSuccess: () => {
       utils.categories.list.invalidate();
+      utils.subcategories.listAll.invalidate();
+      utils.content.listUncategorized.invalidate();
       router.back();
     },
   });
@@ -237,48 +235,62 @@ export default function CategoryDetailScreen() {
   // Drag-reorder save/cancel handlers
   const handleSaveSubOrder = () => {
     const ordered = pendingSubOrder.current;
-    if (!ordered.length) return;
+    if (!ordered.length) {
+      setIsSubReordering(false);
+      setIsDraggingAny(false);
+      return;
+    }
+    utils.subcategories.list.setData({ categoryId }, ordered);
+    setIsSubReordering(false);
+    setIsDraggingAny(false);
     reorderSubMutation.mutate(
       { categoryId, subcategoryIds: ordered.map((s) => s.id) },
       {
         onSuccess: () => {
           utils.subcategories.list.invalidate({ categoryId });
-          setIsSubReordering(false);
         },
         onError: () => {
-          setLocalSubcategories(subcategories);
-          setIsSubReordering(false);
+          utils.subcategories.list.invalidate({ categoryId });
         },
       }
     );
   };
 
   const handleCancelSubReorder = () => {
-    setLocalSubcategories(subcategories);
+    setLocalSubcategories(EMPTY_ARRAY);
+    pendingSubOrder.current = EMPTY_ARRAY;
     setIsSubReordering(false);
+    setIsDraggingAny(false);
   };
 
   const handleSaveContentOrder = () => {
     const ordered = pendingContentOrder.current;
-    if (!ordered.length) return;
+    if (!ordered.length) {
+      setIsContentReordering(false);
+      setIsDraggingAny(false);
+      return;
+    }
+    utils.content.listByCategory.setData({ categoryId }, ordered);
+    setIsContentReordering(false);
+    setIsDraggingAny(false);
     reorderContentMutation.mutate(
       { categoryId, contentIds: ordered.map((it) => it.id) },
       {
         onSuccess: () => {
           utils.content.listByCategory.invalidate({ categoryId });
-          setIsContentReordering(false);
         },
         onError: () => {
-          setLocalItems(items);
-          setIsContentReordering(false);
+          utils.content.listByCategory.invalidate({ categoryId });
         },
       }
     );
   };
 
   const handleCancelContentReorder = () => {
-    setLocalItems(items);
+    setLocalItems(EMPTY_ARRAY);
+    pendingContentOrder.current = EMPTY_ARRAY;
     setIsContentReordering(false);
+    setIsDraggingAny(false);
   };
 
   const updateStatus = trpc.content.updateStatus.useMutation({
@@ -291,6 +303,7 @@ export default function CategoryDetailScreen() {
   const deleteItem = trpc.content.delete.useMutation({
     onSuccess: () => {
       utils.content.listByCategory.invalidate({ categoryId });
+      utils.subcategories.getContentCounts.invalidate({ categoryId });
       utils.content.listByStatus.invalidate();
       utils.content.listUncategorized.invalidate();
     },
@@ -299,12 +312,15 @@ export default function CategoryDetailScreen() {
   const updateContent = trpc.content.update.useMutation({
     onSuccess: () => {
       utils.content.listByCategory.invalidate({ categoryId });
+      utils.subcategories.getContentCounts.invalidate({ categoryId });
     },
   });
 
   const batchRemoveFromCategory = trpc.content.batchRemoveFromCategory.useMutation({
     onSuccess: () => {
       utils.content.listByCategory.invalidate({ categoryId });
+      utils.subcategories.getContentCounts.invalidate({ categoryId });
+      utils.content.listUncategorized.invalidate();
       setIsSelectMode(false);
       setSelectedContentIds(new Set());
     },
@@ -380,7 +396,7 @@ export default function CategoryDetailScreen() {
       onPress: () => {
         showConfirm({
           title: "Delete this category?",
-          message: "This will permanently delete the category and all its contents.",
+          message: "This will permanently delete the category and its subcategories. Contents in other categories will stay there, and unlinked contents will move to Uncategorized.",
           confirmText: "Delete",
           destructive: true,
           onConfirm: () => deleteCategory.mutate({ categoryId }),
@@ -409,7 +425,7 @@ export default function CategoryDetailScreen() {
     if (selectedSubcategoryIds.size === 0) return;
     showConfirm({
       title: `Delete ${selectedSubcategoryIds.size} subcategor${selectedSubcategoryIds.size === 1 ? "y" : "ies"}?`,
-      message: "This action cannot be undone. All linked content will be unlinked.",
+      message: "This will permanently delete the selected subcategories. Any content not linked with other categories or subcategories will be in the Uncategorized section in Settings.",
       confirmText: "Delete",
       destructive: true,
       onConfirm: async () => {
@@ -473,6 +489,7 @@ export default function CategoryDetailScreen() {
       />
 
       <ScrollView
+        scrollEnabled={!isDraggingAny}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -593,17 +610,26 @@ export default function CategoryDetailScreen() {
                     SUBCATEGORIES
                   </Text>
                   <DraggableList
-                    data={localSubcategories.length ? localSubcategories : displayedSubcategories}
+                    data={isSubReordering && localSubcategories.length ? localSubcategories : displayedSubcategories}
                     layout="grid"
                     isReordering={isSubReordering}
+                    onDragStart={() => {
+                      setIsDraggingAny(true);
+                      if (!isSubReordering) {
+                        setLocalSubcategories(displayedSubcategories);
+                        pendingSubOrder.current = displayedSubcategories;
+                        setIsSubReordering(true);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      setIsDraggingAny(false);
+                    }}
                     onReorder={(newData) => {
                       setLocalSubcategories(newData);
                       pendingSubOrder.current = newData;
                     }}
                     renderItem={(sub) => (
-                      <Pressable
-                        onLongPress={() => setIsSubReordering(true)}
-                        delayLongPress={500}
+                      <View
                         {...({ "data-item-id": sub.id, "data-item-type": "subcategory" } as any)}
                       >
                         <SubcategoryCard
@@ -625,7 +651,7 @@ export default function CategoryDetailScreen() {
                           onEdit={isSubReordering ? undefined : () => setActiveSubcategoryForEdit(sub)}
                           onDelete={isSubReordering ? undefined : () => deleteSubcategory.mutate({ subcategoryId: sub.id })}
                         />
-                      </Pressable>
+                      </View>
                     )}
                   />
                 </View>
@@ -652,17 +678,26 @@ export default function CategoryDetailScreen() {
                   </View>
 
                   <DraggableList
-                    data={localItems.length ? localItems : displayedContent}
+                    data={isContentReordering && localItems.length ? localItems : displayedContent}
                     layout="grid"
                     isReordering={isContentReordering}
+                    onDragStart={() => {
+                      setIsDraggingAny(true);
+                      if (!isContentReordering) {
+                        setLocalItems(displayedContent);
+                        pendingContentOrder.current = displayedContent;
+                        setIsContentReordering(true);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      setIsDraggingAny(false);
+                    }}
                     onReorder={(newData) => {
                       setLocalItems(newData);
                       pendingContentOrder.current = newData;
                     }}
                     renderItem={(item) => (
-                      <Pressable
-                        onLongPress={() => setIsContentReordering(true)}
-                        delayLongPress={500}
+                      <View
                         {...({ "data-item-id": item.id, "data-item-type": "content" } as any)}
                       >
                         <ContentCard
@@ -693,7 +728,7 @@ export default function CategoryDetailScreen() {
                           onEdit={isContentReordering ? undefined : () => setActiveEditItem(item as any)}
                           onDelete={isContentReordering ? undefined : () => deleteItem.mutate({ itemId: item.id })}
                         />
-                      </Pressable>
+                      </View>
                     )}
                   />
                 </View>
