@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -136,6 +136,23 @@ export default function CategoryDetailScreen() {
   const pendingContentOrder = useRef<any[]>(EMPTY_ARRAY);
 
   const [isDraggingAny, setIsDraggingAny] = useState(false);
+
+  const scrollViewRef = useRef<any>(null);
+  const scrollOffsetRef = useRef(0);
+  const [scrollOffsetY, setScrollOffsetY] = useState(0);
+  const scrollViewHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+
+  const handleAutoScroll = useCallback((deltaY: number) => {
+    const maxScroll = Math.max(0, contentHeightRef.current - scrollViewHeightRef.current);
+    const prev = scrollOffsetRef.current;
+    const next = Math.max(0, Math.min(maxScroll, prev + deltaY));
+    if (next !== prev) {
+      scrollOffsetRef.current = next;
+      setScrollOffsetY(next);
+      scrollViewRef.current?.scrollTo({ y: next, animated: false });
+    }
+  }, []);
 
   // Queries
   const { data: category, isLoading: catLoading } =
@@ -489,7 +506,20 @@ export default function CategoryDetailScreen() {
       />
 
       <ScrollView
+        ref={scrollViewRef}
         scrollEnabled={!isDraggingAny}
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          const y = e.nativeEvent.contentOffset.y;
+          scrollOffsetRef.current = y;
+          if (isDraggingAny) setScrollOffsetY(y);
+        }}
+        onLayout={(e) => {
+          scrollViewHeightRef.current = e.nativeEvent.layout.height;
+        }}
+        onContentSizeChange={(_w, h) => {
+          contentHeightRef.current = h;
+        }}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -532,7 +562,7 @@ export default function CategoryDetailScreen() {
                 )}
               </View>
               <Pressable
-                onPress={() => {
+                onPressIn={() => {
                   setIsSearchMode(false);
                   setSearchQuery("");
                 }}
@@ -613,6 +643,8 @@ export default function CategoryDetailScreen() {
                     data={isSubReordering && localSubcategories.length ? localSubcategories : displayedSubcategories}
                     layout="grid"
                     isReordering={isSubReordering}
+                    onAutoScroll={handleAutoScroll}
+                    scrollOffsetY={scrollOffsetY}
                     onDragStart={() => {
                       if (isContentReordering) {
                         setLocalItems(EMPTY_ARRAY);
@@ -686,6 +718,8 @@ export default function CategoryDetailScreen() {
                     data={isContentReordering && localItems.length ? localItems : displayedContent}
                     layout="grid"
                     isReordering={isContentReordering}
+                    onAutoScroll={handleAutoScroll}
+                    scrollOffsetY={scrollOffsetY}
                     onDragStart={() => {
                       if (isSubReordering) {
                         setLocalSubcategories(EMPTY_ARRAY);

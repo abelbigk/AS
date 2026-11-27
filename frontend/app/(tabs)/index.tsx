@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -43,6 +43,23 @@ export default function HomeScreen() {
   const [isDraggingCategory, setIsDraggingCategory] = useState(false);
   const [localCategories, setLocalCategories] = useState<any[]>(EMPTY_CATEGORIES);
   const pendingCategoryOrder = useRef<any[]>(EMPTY_CATEGORIES);
+
+  const scrollViewRef = useRef<any>(null);
+  const scrollOffsetRef = useRef(0);
+  const [scrollOffsetY, setScrollOffsetY] = useState(0);
+  const scrollViewHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+
+  const handleAutoScroll = useCallback((deltaY: number) => {
+    const maxScroll = Math.max(0, contentHeightRef.current - scrollViewHeightRef.current);
+    const prev = scrollOffsetRef.current;
+    const next = Math.max(0, Math.min(maxScroll, prev + deltaY));
+    if (next !== prev) {
+      scrollOffsetRef.current = next;
+      setScrollOffsetY(next);
+      scrollViewRef.current?.scrollTo({ y: next, animated: false });
+    }
+  }, []);
 
   const utils = trpc.useUtils();
 
@@ -170,7 +187,20 @@ export default function HomeScreen() {
       />
 
       <ScrollView
+        ref={scrollViewRef}
         scrollEnabled={!isDraggingCategory}
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          const y = e.nativeEvent.contentOffset.y;
+          scrollOffsetRef.current = y;
+          if (isDraggingCategory) setScrollOffsetY(y);
+        }}
+        onLayout={(e) => {
+          scrollViewHeightRef.current = e.nativeEvent.layout.height;
+        }}
+        onContentSizeChange={(_w, h) => {
+          contentHeightRef.current = h;
+        }}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -187,7 +217,7 @@ export default function HomeScreen() {
             <View style={{ width: "100%" }}>
               <View style={styles.searchHeader}>
                 <Pressable
-                  onPress={() => {
+                  onPressIn={() => {
                     setIsSearchMode(false);
                     setSearchQuery("");
                   }}
@@ -361,6 +391,8 @@ export default function HomeScreen() {
                       data={isCategoryReordering && localCategories.length ? localCategories : categories}
                       layout="list"
                       isReordering={isCategoryReordering}
+                      onAutoScroll={handleAutoScroll}
+                      scrollOffsetY={scrollOffsetY}
                       onDragStart={() => {
                         setIsDraggingCategory(true);
                         if (!isCategoryReordering) {

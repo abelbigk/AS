@@ -122,8 +122,8 @@ function DraggableItemInner<T extends { id: number }>({
       slotX.value = slot.x;
       slotY.value = slot.y;
     } else if (!isDragged) {
-      slotX.value = withTiming(slot.x, { duration: 100 });
-      slotY.value = withTiming(slot.y, { duration: 100 });
+      slotX.value = withTiming(slot.x, { duration: 50 });
+      slotY.value = withTiming(slot.y, { duration: 50 });
     }
   }, [slot?.x, slot?.y, isDragged, slotX, slotY]);
 
