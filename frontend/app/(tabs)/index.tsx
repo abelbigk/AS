@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Pressable,
   Platform,
+  Keyboard,
 } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
@@ -212,9 +213,99 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.maxWidthWrapper}>
-          {isSearchMode ? (
-            /* Search Mode Header & Results */
-            <View style={{ width: "100%" }}>
+          {/* ── Default Home View – always rendered so it's instant on search close ── */}
+          <View style={isSearchMode ? { opacity: 0, pointerEvents: "none" } as any : undefined}>
+            {isLoading ? (
+              <View style={styles.fullLoadingContainer}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              </View>
+            ) : (
+              <View>
+                {/* Header matching original web app */}
+                <View style={styles.headerRow}>
+                  <View>
+                    <Text style={styles.pageTitle}>My</Text>
+                    <Text style={styles.categoriesCount}>
+                      {categories.length} categories
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    onPress={() => setIsSearchMode(true)}
+                    style={styles.circleBtn}
+                  >
+                    <Search size={20} color={colors.text} />
+                  </Pressable>
+                </View>
+
+                {/* Categories Vertical List */}
+                {categories.length > 0 ? (
+                  <DraggableList
+                    data={isCategoryReordering && localCategories.length ? localCategories : categories}
+                    layout="list"
+                    isReordering={isCategoryReordering}
+                    onAutoScroll={handleAutoScroll}
+                    scrollOffsetY={scrollOffsetY}
+                    onDragStart={() => {
+                      setIsDraggingCategory(true);
+                      if (!isCategoryReordering) {
+                        setLocalCategories(categories);
+                        pendingCategoryOrder.current = categories;
+                        setIsCategoryReordering(true);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      setIsDraggingCategory(false);
+                    }}
+                    onReorder={(newData) => {
+                      setLocalCategories(newData);
+                      pendingCategoryOrder.current = newData;
+                    }}
+                    renderItem={(category) => (
+                      <CategoryCard
+                        category={category}
+                        onPress={() => {
+                          if (!isCategoryReordering) router.push(`/category/${category.id}`);
+                        }}
+                        onEdit={isCategoryReordering ? undefined : () => setActiveCategoryForEdit(category)}
+                        onDelete={isCategoryReordering ? undefined : () => deleteCategoryMutation.mutate({ categoryId: category.id })}
+                      />
+                    )}
+                  />
+                ) : (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No categories yet</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* ── Search overlay – absolutely positioned on top, shown/hidden instantly ── */}
+      {isSearchMode && (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            styles.searchOverlay,
+            {
+              paddingTop: insets.top + (Platform.OS === "web" ? 32 : 16),
+              paddingBottom: insets.bottom + 110,
+              backgroundColor:
+                theme === "dark"
+                  ? "rgba(10, 10, 10, 0.97)"
+                  : "rgba(255, 255, 255, 0.97)",
+            },
+          ]}
+        >
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.searchScrollContent}
+          >
+            <View style={styles.maxWidthWrapper}>
+              {/* Search header */}
               <View style={styles.searchHeader}>
                 <Pressable
                   onPressIn={() => {
@@ -359,77 +450,9 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
-          ) : (
-            /* Default Home View */
-            <View>
-              {isLoading ? (
-                <View style={styles.fullLoadingContainer}>
-                  <ActivityIndicator size="large" color="#FFFFFF" />
-                </View>
-              ) : (
-                <View>
-                  {/* Header matching original web app */}
-                  <View style={styles.headerRow}>
-                    <View>
-                      <Text style={styles.pageTitle}>My</Text>
-                      <Text style={styles.categoriesCount}>
-                        {categories.length} categories
-                      </Text>
-                    </View>
-
-                    <Pressable
-                      onPress={() => setIsSearchMode(true)}
-                      style={styles.circleBtn}
-                    >
-                      <Search size={20} color={colors.text} />
-                    </Pressable>
-                  </View>
-
-                  {/* Categories Vertical List */}
-                  {categories.length > 0 ? (
-                    <DraggableList
-                      data={isCategoryReordering && localCategories.length ? localCategories : categories}
-                      layout="list"
-                      isReordering={isCategoryReordering}
-                      onAutoScroll={handleAutoScroll}
-                      scrollOffsetY={scrollOffsetY}
-                      onDragStart={() => {
-                        setIsDraggingCategory(true);
-                        if (!isCategoryReordering) {
-                          setLocalCategories(categories);
-                          pendingCategoryOrder.current = categories;
-                          setIsCategoryReordering(true);
-                        }
-                      }}
-                      onDragEnd={() => {
-                        setIsDraggingCategory(false);
-                      }}
-                      onReorder={(newData) => {
-                        setLocalCategories(newData);
-                        pendingCategoryOrder.current = newData;
-                      }}
-                      renderItem={(category) => (
-                        <CategoryCard
-                          category={category}
-                          onPress={() => {
-                            if (!isCategoryReordering) router.push(`/category/${category.id}`);
-                          }}
-                          onEdit={isCategoryReordering ? undefined : () => setActiveCategoryForEdit(category)}
-                          onDelete={isCategoryReordering ? undefined : () => deleteCategoryMutation.mutate({ categoryId: category.id })}
-                        />
-                      )}
-                    />
-                  ) : (
-                    <View style={styles.emptyContainer}>
-                      <Text style={styles.emptyText}>No categories yet</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
-          )}
+          </ScrollView>
         </View>
-      </ScrollView>
+      )}
 
       {/* Edit Content Modal */}
       <EditContentModal
@@ -605,5 +628,23 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     color: "rgba(255, 255, 255, 0.6)",
+  },
+  searchOverlay: {
+    zIndex: 100,
+    ...Platform.select({
+      web: {
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+      } as any,
+    }),
+  },
+  searchScrollContent: {
+    paddingHorizontal: 16,
+    alignItems: "center",
+    width: "100%",
+    paddingBottom: 40,
+    ...Platform.select({
+      web: { overflowX: "hidden" } as any,
+    }),
   },
 });
