@@ -237,6 +237,8 @@ function DraggableItem<T extends { id: number }>({
     Platform.OS === "web"
       ? {
           onPointerDown: handleWebPointerDown,
+          onDragStart: (e: any) => e.preventDefault(),
+          onDragStartCapture: (e: any) => e.preventDefault(),
           onContextMenu: (e: any) => e.preventDefault(),
           onClickCapture: (e: any) => {
             if (blockClickRef.current) {
@@ -249,7 +251,12 @@ function DraggableItem<T extends { id: number }>({
 
   const content = (
     <Animated.View
-      style={[positionStyle, isDragged && styles.draggedItem, dragStyle]}
+      style={[
+        positionStyle,
+        isDragged && styles.draggedItem,
+        dragStyle,
+        Platform.OS === "web" && ({ WebkitUserDrag: "none" } as any),
+      ]}
       onLayout={(e: { nativeEvent: { layout: LayoutRectangle } }) => {
         onMeasureHeight(item.id, e.nativeEvent.layout.height);
       }}

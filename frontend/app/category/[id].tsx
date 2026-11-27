@@ -614,6 +614,11 @@ export default function CategoryDetailScreen() {
                     layout="grid"
                     isReordering={isSubReordering}
                     onDragStart={() => {
+                      if (isContentReordering) {
+                        setLocalItems(EMPTY_ARRAY);
+                        pendingContentOrder.current = EMPTY_ARRAY;
+                        setIsContentReordering(false);
+                      }
                       setIsDraggingAny(true);
                       if (!isSubReordering) {
                         setLocalSubcategories(displayedSubcategories);
@@ -682,6 +687,11 @@ export default function CategoryDetailScreen() {
                     layout="grid"
                     isReordering={isContentReordering}
                     onDragStart={() => {
+                      if (isSubReordering) {
+                        setLocalSubcategories(EMPTY_ARRAY);
+                        pendingSubOrder.current = EMPTY_ARRAY;
+                        setIsSubReordering(false);
+                      }
                       setIsDraggingAny(true);
                       if (!isContentReordering) {
                         setLocalItems(displayedContent);
