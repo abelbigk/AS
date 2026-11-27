@@ -47,7 +47,6 @@ export default function HomeScreen() {
 
   const scrollViewRef = useRef<any>(null);
   const scrollOffsetRef = useRef(0);
-  const [scrollOffsetY, setScrollOffsetY] = useState(0);
   const scrollViewHeightRef = useRef(0);
   const contentHeightRef = useRef(0);
 
@@ -55,11 +54,12 @@ export default function HomeScreen() {
     const maxScroll = Math.max(0, contentHeightRef.current - scrollViewHeightRef.current);
     const prev = scrollOffsetRef.current;
     const next = Math.max(0, Math.min(maxScroll, prev + deltaY));
-    if (next !== prev) {
+    const applied = next - prev;
+    if (applied !== 0) {
       scrollOffsetRef.current = next;
-      setScrollOffsetY(next);
       scrollViewRef.current?.scrollTo({ y: next, animated: false });
     }
+    return applied;
   }, []);
 
   const utils = trpc.useUtils();
@@ -192,9 +192,7 @@ export default function HomeScreen() {
         scrollEnabled={!isDraggingCategory}
         scrollEventThrottle={16}
         onScroll={(e) => {
-          const y = e.nativeEvent.contentOffset.y;
-          scrollOffsetRef.current = y;
-          if (isDraggingCategory) setScrollOffsetY(y);
+          scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
         }}
         onLayout={(e) => {
           scrollViewHeightRef.current = e.nativeEvent.layout.height;
@@ -245,7 +243,6 @@ export default function HomeScreen() {
                     layout="list"
                     isReordering={isCategoryReordering}
                     onAutoScroll={handleAutoScroll}
-                    scrollOffsetY={scrollOffsetY}
                     onDragStart={() => {
                       setIsDraggingCategory(true);
                       if (!isCategoryReordering) {

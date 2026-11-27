@@ -114,7 +114,6 @@ export default function SubcategoryDetailScreen() {
 
   const scrollViewRef = useRef<any>(null);
   const scrollOffsetRef = useRef(0);
-  const [scrollOffsetY, setScrollOffsetY] = useState(0);
   const scrollViewHeightRef = useRef(0);
   const contentHeightRef = useRef(0);
 
@@ -122,11 +121,12 @@ export default function SubcategoryDetailScreen() {
     const maxScroll = Math.max(0, contentHeightRef.current - scrollViewHeightRef.current);
     const prev = scrollOffsetRef.current;
     const next = Math.max(0, Math.min(maxScroll, prev + deltaY));
-    if (next !== prev) {
+    const applied = next - prev;
+    if (applied !== 0) {
       scrollOffsetRef.current = next;
-      setScrollOffsetY(next);
       scrollViewRef.current?.scrollTo({ y: next, animated: false });
     }
+    return applied;
   }, []);
 
   // Queries
@@ -350,9 +350,7 @@ export default function SubcategoryDetailScreen() {
         scrollEnabled={!isDraggingContent}
         scrollEventThrottle={16}
         onScroll={(e) => {
-          const y = e.nativeEvent.contentOffset.y;
-          scrollOffsetRef.current = y;
-          if (isDraggingContent) setScrollOffsetY(y);
+          scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
         }}
         onLayout={(e) => {
           scrollViewHeightRef.current = e.nativeEvent.layout.height;
@@ -477,7 +475,6 @@ export default function SubcategoryDetailScreen() {
                     layout="grid"
                     isReordering={isContentReordering}
                     onAutoScroll={handleAutoScroll}
-                    scrollOffsetY={scrollOffsetY}
                     onDragStart={() => {
                       setIsDraggingContent(true);
                       if (!isContentReordering) {

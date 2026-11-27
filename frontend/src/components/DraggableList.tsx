@@ -44,9 +44,9 @@ interface DraggableListProps<T extends { id: number }> {
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onReorder: (newData: T[]) => void;
-  /** Called during edge auto-scroll with pixel delta (positive = scroll down) */
-  onAutoScroll?: (deltaY: number) => void;
-  /** Current ScrollView contentOffset.y */
+  /** Called during edge auto-scroll with pixel delta (positive = scroll down); returns actual applied delta */
+  onAutoScroll?: (deltaY: number) => number | void;
+  /** Deprecated: kept optional for compatibility */
   scrollOffsetY?: number;
   renderItem: (item: T, isDragged: boolean) => React.ReactNode;
   gap?: number;
@@ -57,7 +57,7 @@ interface DraggableItemProps<T extends { id: number }> {
   isReordering: boolean;
   isDragged: boolean;
   slot: SlotRect | undefined;
-  startPos: SlotRect | null;
+  activeIdSV: SharedValue<number>;
   dragX: SharedValue<number>;
   dragY: SharedValue<number>;
   autoScrollY: SharedValue<number>;
@@ -74,7 +74,7 @@ function DraggableItemInner<T extends { id: number }>({
   isReordering,
   isDragged,
   slot,
-  startPos,
+  activeIdSV,
   dragX,
   dragY,
   autoScrollY,
@@ -85,15 +85,16 @@ function DraggableItemInner<T extends { id: number }>({
   onRelease,
   renderItem,
 }: DraggableItemProps<T>) {
+  const itemId = item.id;
   const callbacksRef = useRef({
-    id: item.id,
+    id: itemId,
     isReordering,
     onActivate,
     onMove,
     onRelease,
   });
   callbacksRef.current = {
-    id: item.id,
+    id: itemId,
     isReordering,
     onActivate,
     onMove,
@@ -110,7 +111,7 @@ function DraggableItemInner<T extends { id: number }>({
     };
   }, []);
 
-  // Reanimated animated slot position for smooth non-dragged gliding
+  // Reanimated slot coordinates (used via transform translateX/Y, never left/top)
   const hasMeasuredSlot = useRef(false);
   const slotX = useSharedValue(slot?.x ?? 0);
   const slotY = useSharedValue(slot?.y ?? 0);
@@ -121,58 +122,50 @@ function DraggableItemInner<T extends { id: number }>({
       hasMeasuredSlot.current = true;
       slotX.value = slot.x;
       slotY.value = slot.y;
-    } else if (!isDragged) {
-      slotX.value = withTiming(slot.x, { duration: 50 });
-      slotY.value = withTiming(slot.y, { duration: 50 });
+    } else if (!isDragged && activeIdSV.value !== itemId) {
+      slotX.value = withTiming(slot.x, { duration: 150 });
+      slotY.value = withTiming(slot.y, { duration: 150 });
     }
-  }, [slot?.x, slot?.y, isDragged, slotX, slotY]);
+  }, [slot?.x, slot?.y, isDragged, itemId, activeIdSV, slotX, slotY]);
 
-  const isDraggedSV = useSharedValue(isDragged);
-  isDraggedSV.value = isDragged;
-  const startXSV = useSharedValue(startPos?.x ?? 0);
-  const startYSV = useSharedValue(startPos?.y ?? 0);
-  if (isDragged && startPos) {
-    startXSV.value = startPos.x;
-    startYSV.value = startPos.y;
-  }
   const isGrid = layout === "grid";
 
+  // 100% UI-thread transform: follows finger strictly from frame 0 with zero JS lag
   const animatedStyle = useAnimatedStyle(() => {
-    if (isDraggedSV.value) {
+    if (activeIdSV.value === itemId) {
       return {
-        left: startXSV.value,
-        top: startYSV.value,
         zIndex: 999,
         elevation: 20,
         transform: [
-          { translateX: isGrid ? dragX.value : 0 },
-          { translateY: dragY.value + autoScrollY.value },
+          { translateX: slotX.value + (isGrid ? dragX.value : 0) },
+          { translateY: slotY.value + dragY.value + autoScrollY.value },
           { scale: 1.03 },
         ],
       };
     }
     return {
-      left: slotX.value,
-      top: slotY.value,
       zIndex: 1,
       elevation: 0,
-      transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }],
+      transform: [
+        { translateX: slotX.value },
+        { translateY: slotY.value },
+        { scale: 1 },
+      ],
     };
   });
 
-  // Native UI-thread Gesture.Pan (empty deps so never recreated mid-drag)
+  // Native UI-thread Gesture.Pan (never recreated mid-drag)
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
-        .activateAfterLongPress(260)
+        .activateAfterLongPress(220)
         .onStart((e) => {
           "worklet";
+          activeIdSV.value = itemId;
           dragX.value = 0;
           dragY.value = 0;
-          runOnJS(callbacksRef.current.onActivate)(
-            callbacksRef.current.id,
-            e.absoluteY
-          );
+          autoScrollY.value = 0;
+          runOnJS(callbacksRef.current.onActivate)(itemId, e.absoluteY);
         })
         .onUpdate((e) => {
           "worklet";
@@ -186,13 +179,23 @@ function DraggableItemInner<T extends { id: number }>({
         })
         .onEnd(() => {
           "worklet";
-          runOnJS(callbacksRef.current.onRelease)();
+          if (activeIdSV.value === itemId) {
+            slotX.value = slotX.value + (isGrid ? dragX.value : 0);
+            slotY.value = slotY.value + dragY.value + autoScrollY.value;
+            activeIdSV.value = -1;
+            runOnJS(callbacksRef.current.onRelease)();
+          }
         })
         .onFinalize(() => {
           "worklet";
-          runOnJS(callbacksRef.current.onRelease)();
+          if (activeIdSV.value === itemId) {
+            slotX.value = slotX.value + (isGrid ? dragX.value : 0);
+            slotY.value = slotY.value + dragY.value + autoScrollY.value;
+            activeIdSV.value = -1;
+            runOnJS(callbacksRef.current.onRelease)();
+          }
         }),
-    [dragX, dragY, isGrid]
+    [itemId, activeIdSV, dragX, dragY, autoScrollY, slotX, slotY, isGrid]
   );
 
   // Web pointer handler using window listeners
@@ -209,16 +212,18 @@ function DraggableItemInner<T extends { id: number }>({
       const prevBodyTouchAction =
         typeof document !== "undefined" ? document.body.style.touchAction : "";
 
-      const holdMs = callbacksRef.current.isReordering ? 90 : 260;
+      const holdMs = callbacksRef.current.isReordering ? 90 : 220;
       const timer = setTimeout(() => {
         activated = true;
         blockClickRef.current = true;
         if (typeof document !== "undefined") {
           document.body.style.touchAction = "none";
         }
+        activeIdSV.value = itemId;
         dragX.value = 0;
         dragY.value = 0;
-        callbacksRef.current.onActivate(callbacksRef.current.id, startY);
+        autoScrollY.value = 0;
+        callbacksRef.current.onActivate(itemId, startY);
       }, holdMs);
 
       const onTouchMove = (touchEvt: TouchEvent) => {
@@ -253,6 +258,11 @@ function DraggableItemInner<T extends { id: number }>({
         const wasActive = activated;
         cleanup();
         if (wasActive) {
+          if (activeIdSV.value === itemId) {
+            slotX.value = slotX.value + (isGrid ? dragX.value : 0);
+            slotY.value = slotY.value + dragY.value + autoScrollY.value;
+            activeIdSV.value = -1;
+          }
           callbacksRef.current.onRelease();
           setTimeout(() => {
             blockClickRef.current = false;
@@ -284,12 +294,14 @@ function DraggableItemInner<T extends { id: number }>({
       window.addEventListener("dragstart", preventBrowserHold, true);
       window.addEventListener("selectstart", preventBrowserHold, true);
     },
-    [dragX, dragY, isGrid]
+    [itemId, activeIdSV, dragX, dragY, autoScrollY, slotX, slotY, isGrid]
   );
 
   const baseStyle: any = slot
     ? {
         position: "absolute",
+        left: 0,
+        top: 0,
         width: slot.width,
       }
     : {
@@ -351,7 +363,6 @@ export function DraggableList<T extends { id: number }>({
   onDragEnd,
   onReorder,
   onAutoScroll,
-  scrollOffsetY = 0,
   renderItem,
   gap = 12,
 }: DraggableListProps<T>) {
@@ -386,17 +397,10 @@ export function DraggableList<T extends { id: number }>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey]);
 
+  const activeIdSV = useSharedValue(-1);
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
   const autoScrollY = useSharedValue(0);
-  const startScrollYRef = useRef(0);
-  const currentScrollYRef = useRef(scrollOffsetY);
-  currentScrollYRef.current = scrollOffsetY;
-
-  // Keep autoScrollY synced to exact (currentScrollY - startScrollY)
-  if (isDraggingRef.current) {
-    autoScrollY.value = scrollOffsetY - startScrollYRef.current;
-  }
 
   const startSlotPos = useRef<SlotRect | null>(null);
   const lastTranslation = useRef({ x: 0, y: 0 });
@@ -451,60 +455,6 @@ export function DraggableList<T extends { id: number }>({
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
 
-  const checkSwap = useCallback(
-    (tx: number, ty: number) => {
-      if (!isDraggingRef.current || draggedIdRef.current === null) return;
-      const origin = startSlotPos.current;
-      if (!origin) return;
-
-      const curCenterX = origin.x + origin.width / 2 + (layout === "grid" ? tx : 0);
-      const curCenterY = origin.y + origin.height / 2 + ty + autoScrollY.value;
-
-      const currentIds = orderIdsRef.current;
-      const currentIdx = currentIds.indexOf(draggedIdRef.current);
-      if (currentIdx === -1) return;
-
-      // Measure how far our center is from the current slot's center
-      const curRect = slotsRef.current.get(currentIds[currentIdx]);
-      const curCx = (curRect?.x ?? 0) + (curRect?.width ?? 0) / 2;
-      const curCy = (curRect?.y ?? 0) + (curRect?.height ?? 0) / 2;
-      const distFromOwn =
-        layout === "list"
-          ? Math.abs(curCenterY - curCy)
-          : Math.hypot(curCenterX - curCx, curCenterY - curCy);
-
-      // Find the nearest other slot's center
-      let targetIdx = -1;
-      let bestDist = Infinity;
-      for (let i = 0; i < currentIds.length; i++) {
-        if (i === currentIdx) continue;
-        const rect = slotsRef.current.get(currentIds[i]);
-        if (!rect) continue;
-        const cx = rect.x + rect.width / 2;
-        const cy = rect.y + rect.height / 2;
-        const dist =
-          layout === "list"
-            ? Math.abs(curCenterY - cy)
-            : Math.hypot(curCenterX - cx, curCenterY - cy);
-        if (dist < bestDist) {
-          bestDist = dist;
-          targetIdx = i;
-        }
-      }
-
-      // Swap the instant our center is closer to any other slot than to our own —
-      // no dead-zone, no half-height threshold, fires immediately.
-      if (targetIdx !== -1 && targetIdx !== currentIdx && bestDist < distFromOwn) {
-        const nextIds = [...currentIds];
-        const [moved] = nextIds.splice(currentIdx, 1);
-        nextIds.splice(targetIdx, 0, moved);
-        orderIdsRef.current = nextIds;
-        setOrderIds(nextIds);
-      }
-    },
-    [layout, autoScrollY]
-  );
-
   const handleMeasureHeight = useCallback((id: number, height: number) => {
     const prev = heightsRef.current.get(id);
     if (prev === undefined || Math.abs(prev - height) > 0.5) {
@@ -519,8 +469,6 @@ export function DraggableList<T extends { id: number }>({
       startSlotPos.current = rect;
       isDraggingRef.current = true;
       draggedIdRef.current = id;
-      startScrollYRef.current = currentScrollYRef.current;
-      autoScrollY.value = 0;
       lastTranslation.current = { x: 0, y: 0 };
       setDraggedId(id);
 
@@ -532,7 +480,7 @@ export function DraggableList<T extends { id: number }>({
 
       onDragStart?.();
     },
-    [autoScrollY, onDragStart]
+    [onDragStart]
   );
 
   const handleMove = useCallback(
@@ -540,15 +488,15 @@ export function DraggableList<T extends { id: number }>({
       if (!isDraggingRef.current || draggedIdRef.current === null) return;
       lastTranslation.current = { x: translationX, y: translationY };
 
-      // Check edge auto-scroll
+      // Check edge auto-scroll (no React re-renders during drag)
       if (onAutoScroll) {
         const screenH = Dimensions.get("window").height;
         const edgeZone = 120;
         let speed = 0;
         if (absY > screenH - edgeZone) {
-          speed = 10;
+          speed = 12;
         } else if (absY < edgeZone) {
-          speed = -10;
+          speed = -12;
         }
 
         if (speed !== 0) {
@@ -556,39 +504,82 @@ export function DraggableList<T extends { id: number }>({
           if (!autoScrollTimerRef.current) {
             autoScrollTimerRef.current = setInterval(() => {
               if (!isDraggingRef.current) return;
-              onAutoScroll(autoScrollDeltaRef.current);
-              checkSwap(lastTranslation.current.x, lastTranslation.current.y);
+              const applied = onAutoScroll(autoScrollDeltaRef.current);
+              if (typeof applied === "number" && applied !== 0) {
+                autoScrollY.value += applied;
+              }
             }, 16);
           }
         } else {
           stopAutoScroll();
         }
       }
-
-      checkSwap(translationX, translationY);
     },
-    [onAutoScroll, checkSwap, stopAutoScroll]
+    [onAutoScroll, autoScrollY, stopAutoScroll]
   );
 
   const handleRelease = useCallback(() => {
     if (!isDraggingRef.current) return;
+    const droppedId = draggedIdRef.current;
+    const origin = startSlotPos.current;
+    const tx = lastTranslation.current.x;
+    const ty = lastTranslation.current.y;
+    const scrollDelta = autoScrollY.value;
+
     isDraggingRef.current = false;
     draggedIdRef.current = null;
     startSlotPos.current = null;
     stopAutoScroll();
 
+    activeIdSV.value = -1;
     dragX.value = 0;
     dragY.value = 0;
     autoScrollY.value = 0;
     setDraggedId(null);
 
-    const newOrderedItems = orderIdsRef.current
+    // Rearrange once on drop based on nearest slot center
+    let finalIds = orderIdsRef.current;
+    if (droppedId !== null && origin) {
+      const curCenterX = origin.x + origin.width / 2 + (layout === "grid" ? tx : 0);
+      const curCenterY = origin.y + origin.height / 2 + ty + scrollDelta;
+      const currentIdx = finalIds.indexOf(droppedId);
+
+      if (currentIdx !== -1) {
+        let targetIdx = currentIdx;
+        let bestDist = Infinity;
+        for (let i = 0; i < finalIds.length; i++) {
+          const rect = slotsRef.current.get(finalIds[i]);
+          if (!rect) continue;
+          const cx = rect.x + rect.width / 2;
+          const cy = rect.y + rect.height / 2;
+          const dist =
+            layout === "list"
+              ? Math.abs(curCenterY - cy)
+              : Math.hypot(curCenterX - cx, curCenterY - cy);
+          if (dist < bestDist) {
+            bestDist = dist;
+            targetIdx = i;
+          }
+        }
+
+        if (targetIdx !== currentIdx) {
+          const nextIds = [...finalIds];
+          const [moved] = nextIds.splice(currentIdx, 1);
+          nextIds.splice(targetIdx, 0, moved);
+          finalIds = nextIds;
+          orderIdsRef.current = nextIds;
+          setOrderIds(nextIds);
+        }
+      }
+    }
+
+    const newOrderedItems = finalIds
       .map((id) => dataMapRef.current.get(id))
       .filter((item): item is T => item !== undefined);
 
     onReorder(newOrderedItems);
     onDragEnd?.();
-  }, [dragX, dragY, autoScrollY, onReorder, onDragEnd, stopAutoScroll]);
+  }, [layout, activeIdSV, dragX, dragY, autoScrollY, onReorder, onDragEnd, stopAutoScroll]);
 
   return (
     <View
@@ -616,7 +607,7 @@ export function DraggableList<T extends { id: number }>({
           isReordering={isReordering}
           isDragged={draggedId === item.id}
           slot={slots.get(item.id)}
-          startPos={draggedId === item.id ? startSlotPos.current : null}
+          activeIdSV={activeIdSV}
           dragX={dragX}
           dragY={dragY}
           autoScrollY={autoScrollY}
