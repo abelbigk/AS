@@ -67,6 +67,18 @@ export default function SettingsScreen() {
   } | null>(null);
 
   const isAdmin = user?.role === "admin";
+  const utils = trpc.useUtils();
+
+  const deleteContentMutation = trpc.content.delete.useMutation({
+    onSuccess: () => {
+      utils.content.listUncategorized.invalidate();
+      utils.content.listByStatus.invalidate();
+      showToast("Content deleted", "success");
+    },
+    onError: (err) => {
+      showToast(err.message || "Failed to delete content", "error");
+    },
+  });
 
   // Queries
   const {
@@ -301,7 +313,14 @@ export default function SettingsScreen() {
                       <ContentCard
                         key={item.id}
                         item={item as any}
-                        onPress={() => setContentToCategorize(item as any)}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/content/[id]",
+                            params: { id: String(item.id) },
+                          })
+                        }
+                        onCategorize={() => setContentToCategorize(item as any)}
+                        onDelete={() => deleteContentMutation.mutate({ itemId: item.id })}
                       />
                     ))}
                 </View>
@@ -313,7 +332,14 @@ export default function SettingsScreen() {
                       <ContentCard
                         key={item.id}
                         item={item as any}
-                        onPress={() => setContentToCategorize(item as any)}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/content/[id]",
+                            params: { id: String(item.id) },
+                          })
+                        }
+                        onCategorize={() => setContentToCategorize(item as any)}
+                        onDelete={() => deleteContentMutation.mutate({ itemId: item.id })}
                       />
                     ))}
                 </View>

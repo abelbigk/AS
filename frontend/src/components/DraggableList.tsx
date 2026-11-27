@@ -152,6 +152,11 @@ function DraggableItem<T extends { id: number }>({
       }
     };
 
+    const preventBrowserHold = (ev: Event) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+
     const onPointerMove = (moveEvt: PointerEvent) => {
       const dx = moveEvt.clientX - startX;
       const dy = moveEvt.clientY - startY;
@@ -187,6 +192,9 @@ function DraggableItem<T extends { id: number }>({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("contextmenu", preventBrowserHold, true);
+      window.removeEventListener("dragstart", preventBrowserHold, true);
+      window.removeEventListener("selectstart", preventBrowserHold, true);
       webCleanupRef.current = null;
     };
 
@@ -195,6 +203,9 @@ function DraggableItem<T extends { id: number }>({
     window.addEventListener("pointermove", onPointerMove, { passive: false });
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("contextmenu", preventBrowserHold, true);
+    window.addEventListener("dragstart", preventBrowserHold, true);
+    window.addEventListener("selectstart", preventBrowserHold, true);
   }, []);
 
   const activePos = isDragged && startPos ? startPos : slot;
