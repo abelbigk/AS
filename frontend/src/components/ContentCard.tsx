@@ -297,29 +297,6 @@ export function ContentCard({
               )}
             </View>
           )}
-
-          {/* 3-dot menu button on image */}
-          {!isSelectMode && menuItems.length > 0 && (
-            <View style={styles.moreBtnWrapper}>
-              <DropdownMenu
-                align="right"
-                trigger={(open) => (
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      lastMenuActionTime.current = Date.now() + 1000;
-                      open();
-                    }}
-                    style={styles.moreBtn}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <MoreVertical size={14} color="rgba(255, 255, 255, 0.85)" />
-                  </Pressable>
-                )}
-                items={menuItems}
-              />
-            </View>
-          )}
         </View>
       ) : (
         /* No image - show colored block matching web */
@@ -340,28 +317,39 @@ export function ContentCard({
               )}
             </View>
           )}
+        </View>
+      )}
 
-          {!isSelectMode && menuItems.length > 0 && (
-            <View style={styles.moreBtnWrapper}>
-              <DropdownMenu
-                align="right"
-                trigger={(open) => (
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      lastMenuActionTime.current = Date.now() + 1000;
-                      open();
-                    }}
-                    style={styles.moreBtn}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <MoreVertical size={14} color={colors.textMuted} />
-                  </Pressable>
-                )}
-                items={menuItems}
-              />
-            </View>
-          )}
+      {/* 3-dot menu – rendered outside imageWrapper so overflow:hidden never clips it */}
+      {!isSelectMode && menuItems.length > 0 && (
+        <View style={styles.moreBtnWrapper}>
+          <DropdownMenu
+            align="right"
+            trigger={(open) => (
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  lastMenuActionTime.current = Date.now() + 1000;
+                  open();
+                }}
+                style={[
+                  styles.moreBtn,
+                  !item.posterImageUrl && { backgroundColor: "rgba(0, 0, 0, 0.25)" },
+                ]}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <MoreVertical
+                  size={14}
+                  color={
+                    item.posterImageUrl
+                      ? "rgba(255, 255, 255, 0.85)"
+                      : colors.textMuted
+                  }
+                />
+              </Pressable>
+            )}
+            items={menuItems}
+          />
         </View>
       )}
 
